@@ -1,0 +1,3 @@
+# The package core, its CLI and its tests are stdlib-only.
+# yfinance is needed only for `--source yfinance`.
+yfinance>=0.2.40
