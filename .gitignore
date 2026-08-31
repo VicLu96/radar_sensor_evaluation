@@ -1,0 +1,23 @@
+# Zephyr / nRF Connect SDK
+build/
+twister-out*/
+.west/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Recorded frame data - large and regenerable by re-running a scenario.
+# Keep the scenario definitions and the derived results, not the raw frames.
+data/raw/
+
+# ST packages - licensed, downloaded locally, never vendored
+vendor/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/settings.local.json
