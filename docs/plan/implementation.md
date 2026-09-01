@@ -1,209 +1,168 @@
-# Implementation plan — firmware and test setup
+# Implementation plan
 
-Written 2026-08-31. Phases are ordered by **risk retired per week**, not by how
-satisfying they are to build. The riskiest thing here is not the algorithm; it is
-whether the sensor talks over I²C at a useful rate and what it costs in energy.
+Written 2026-08-31, restructured around Victor's four stages.
 
-## Phase 0 — Answer the four questions that could invalidate the design *(first)*
+**Hardware is a given.** Multiple fabricated boards carrying the ISP2454-LL and the
+VL53L9CX, Victor writes the Zephyr board files, logic analyser and Power Profiler Kit II
+available, and he debugs hardware faults himself. This plan assumes the board works.
 
-Do these before writing application code. Each has a cheap answer and an expensive
-consequence if wrong.
+## The four stages
 
-| # | Question | How to answer | If the answer is bad |
-|---|---|---|---|
-| 0.1 | **How big is the firmware blob, and how long does it take to load over I²C?** | Load it on the STM32 eval board with a scope on SCL | A multi-second boot forbids power-cycling, and the whole duty-cycle strategy changes |
-| 0.2 | **What reduced-resolution modes exist?** | X-CUBE-53L9A1 headers and UM3656 | If 54×42 is the only mode, the energy-accuracy curve — the paper's core — has one point on it |
-| 0.3 | **What does standby cost, and is firmware retained?** | Datasheet, then measure | Decides the whole sleep architecture |
-| 0.4 | **Max I²C clock, sensor and nRF54L15 both** | Datasheets, then scope | 400 kHz vs 1 MHz doubles per-frame bus energy |
-| 0.5 | **Can the board measure sensor and MCU rails separately?** | Look at the schematic | **If the rails are shared, the paper's central claim cannot be made** without a bodge — see below |
-
-### 0.5 deserves its own note
-
-The contribution is an energy breakdown *attributed by phase and by component*. That
-requires measuring the sensor rail independently of the MCU rail. Victor has the Power
-Profiler Kit II, which measures one rail at a time.
-
-- **If the board already separates them** (or has a jumper / 0 Ω link on the sensor
-  supply): nothing to do, and Phase 2 is straightforward.
-- **If they share a rail**: cut a trace and fit a shunt, or wire the sensor supply
-  through an external link. Unpleasant on an assembled board, so **check the schematic
-  now** rather than after Phase 1.
-- **If neither is possible**: the fallback is differential measurement — total energy
-  with the sensor idle versus active, subtracting to attribute. Weaker, noisier, and
-  it should be stated as a limitation rather than presented as direct measurement.
-
-This is a hardware question with a paper-shaped consequence, which is why it is in
-Phase 0 rather than Phase 2.
-
-**Do not skip to Phase 1 because Phase 0 is boring.** Every one of these can force a
-redesign, and all four are answerable in days with the eval board.
-
-## Phase 1 — Bring-up on the custom board, staged
-
-**Constraint (Victor, 2026-08-31): there is no DK and no ST evaluation board.** The
-custom PCB carries the ISP2454-LL and the VL53L9CX together, and Victor writes the
-Zephyr board files.
-
-This is fine for the firmware architecture — a board file is a board file. It is *not*
-fine for risk, and pretending otherwise is how bring-ups lose a month. Without a
-known-good reference, the first time the sensor stays silent there are **four suspects
-at once**: solder/assembly, board design, our driver port, and the sensor init
-sequence. The DK existed to eliminate two of them.
-
-**The replacement is a staged bring-up with hard gates.** Do not proceed past a gate
-until it passes — each one eliminates a suspect, which is exactly what the reference
-board would have done.
-
-| Gate | Proves | How |
+| Stage | Deliverable | Why in this order |
 |---|---|---|
-| **1.0 Board alive** | Power, clocks, SWD, Zephyr boots | Blink an LED, RTT prints |
-| **1.1 Bus electrically sane** | Pull-ups, levels, wiring | **Logic analyser on SDA/SCL.** Not optional here — with no reference board this instrument *is* the reference |
-| **1.2 Sensor ACKs its address** | Sensor powered, addressed, alive | I²C scan. **This is the milestone that separates hardware from software.** If it ACKs, the board is broadly right and every later bug is ours |
-| **1.3 Device ID reads back correct** | Bus timing and register access | Read the ID register, compare to datasheet |
-| **1.4 Firmware blob uploads and the sensor reports ready** | The hard part of init | Also yields the Phase 0.1 measurement for free |
-| **1.5 One frame, any resolution** | End to end | Dump raw over RTT |
-| **1.6 Frames render on a host** | Sanity of the data itself | Live depth-map viewer |
+| **1. Driver** | ST ULD ported to Zephyr over I²C | Everything else is blocked on frames existing |
+| **2. Telemetry** | Frames/counts over BLE to a web interface | Makes the system observable — you cannot tune what you cannot see |
+| **3. Algorithm** | On-device people counting | Needs stage 2 to collect and validate against |
+| **4. Power** | Per-domain gating, duty-cycle optimisation | **Last on purpose** — see below |
 
-**Gate 1.2 is the important one.** An I²C scan that finds the sensor is cheap, takes an
-afternoon, and converts "nothing works" into "the hardware is fine, keep debugging
-software" — which is the single most valuable piece of information in the whole
-project. Get there first, before any driver work.
+### Why power comes last, and why that is right
 
-### Substitutes for the missing reference board
+Optimising before the algorithm exists means optimising the wrong thing: you do not yet
+know the frame rate, resolution or wake pattern the counting actually needs, so any
+power architecture built now is a guess that later constrains the algorithm.
 
-- **Logic analyser** — mandatory, not a nice-to-have. It replaces the eval board as the
-  arbiter of whether the sensor is responding.
-- **`github.com/earlynerd/VL53L9-Arduino`** — a community port that reports working
-  init, blob upload and frame reads. It is not our transport (they used I3C), but it is
-  a **known-good init sequence** to diff ours against. This is now the closest thing to
-  a reference implementation we have; read it before writing the port.
-- **X-CUBE-53L9A1** — ST's own driver source. Read the init order from it even without
-  the STM32 hardware.
-- **A second populated board**, if any exist. Two boards failing identically means
-  design; one failing means assembly. Worth knowing whether more than one exists.
+Stage 4 is also where the paper is. Doing it last means it is measured against a
+*working* system rather than a stub, which is the difference between a real result and a
+microbenchmark.
 
-### Then the driver
+**One exception.** Stage 1 must measure the **firmware blob reload time and energy**,
+because that number decides the entire stage-4 architecture and it is nearly free to
+capture during driver work. See the crossover below.
 
-Port ST's ULD-style driver as a Zephyr out-of-tree module. There is no in-tree Zephyr
-driver for this part; wrap ST's C driver behind a thin platform layer (`i2c_write`,
-`i2c_read`, `wait_ms`) rather than rewriting it — a rewrite adds a fifth suspect.
+---
 
-**Pin the nRF Connect SDK version now** and record it in `DECISIONS.md`.
+## Stage 1 — The driver *(the big task)*
 
-Build the **live depth-map viewer early**. With no reference hardware it is the main way
-to tell a plausible-looking frame from a subtly wrong one, and it pays for itself many
-times over.
+Full design in [`driver-port.md`](driver-port.md). Summary:
 
-**Done when:** a 54×42 frame renders on a laptop from the custom board, and the init
-sequence is reproducible from cold power-on.
+ST ships a platform-independent ULD in C. **We do not rewrite it** — we implement the
+five platform functions it expects, wrap it in a Zephyr out-of-tree module, and expose
+a device driver. A rewrite would mean owning ST's calibration and init sequencing, which
+is a large amount of subtle work with no upside.
 
-## Phase 2 — The measurement rig *(before the algorithm)*
+Steps:
 
-The paper is an energy argument. The instrument comes before the thing being measured.
+1. Download **X-CUBE-53L9A1** from ST; keep it in `vendor/` (gitignored — licensed).
+2. Out-of-tree Zephyr module skeleton: `zephyr/module.yml`, `Kconfig`, `CMakeLists.txt`.
+3. **Devicetree binding** for the sensor on I²C, with the reset/interrupt GPIOs and the
+   power-domain control lines the board provides.
+4. **Platform layer** — ST's `RdByte`/`WrByte`/`RdMulti`/`WrMulti`/`WaitMs` mapped onto
+   Zephyr's `i2c_write_dt` / `i2c_burst_read_dt` / `k_sleep`.
+5. **Blob in flash**, streamed to the sensor at init. Measure this: time and energy.
+6. Frame read, exposed as a Zephyr device API plus a raw-frame callback.
+7. RTT/UART frame dump and a host-side viewer in `tools/`.
 
-- **Power Profiler Kit II** (Victor has one) on the module rail, with the sensor rail
-  separable — attributing energy to *sensor* versus *MCU+radio* is the whole point.
-  Settled in Phase 0.5; if the rails are shared, a shunt goes in before Phase 2 rather
-  than after.
-- A **GPIO trace pin** toggled around each phase (sensor integration, I²C read,
-  processing, BLE) so the power trace can be segmented by activity.
-- **Repeatable capture:** scripted runs, fixed duration, results to CSV, in `tools/`.
+**Done when:** a 54×42 frame renders on a laptop, reproducibly from cold power-on, and
+the blob load time is measured.
 
-**Done when:** energy per frame can be reported in µJ, split by phase, reproducibly.
+## Stage 2 — Telemetry to a web interface
 
-## Phase 3 — Detection pipeline, classical first
+The point is observability, not product polish.
 
-Implemented on-device in C, mirrored in Python for offline work on recorded frames.
+- **Custom GATT service**: config (mode, resolution, rate), status, and a data
+  characteristic. Frames are large — use notifications with a chunked frame protocol,
+  and expect to need a **larger ATT MTU and 2M PHY** to move 9 KB in reasonable time.
+- **Two data paths, deliberately separate:**
+  - **Debug path** — raw frames, high bandwidth, used during development only
+  - **Product path** — counts and events only, a few bytes
+- **Web interface**: a browser page using **Web Bluetooth** talking directly to the
+  device is the least-infrastructure option and works on desktop Chrome. A Raspberry Pi
+  bridge to a small web app is the fallback if Web Bluetooth proves limiting.
+- Live depth heat-map plus a count readout. This becomes the demo *and* the debugging
+  tool for stage 3.
 
-1. Per-zone **background depth model** (running median), confidence-gated.
-2. **Foreground segmentation** against background.
-3. **Connected-component clustering**; centroid and area per cluster.
-4. **Track association** across frames, with track lifetime.
-5. **Line-crossing counter** with direction; **occupancy** as live track count.
+**Note for the paper:** the raw-frame path must be **compile-time removable**. The
+privacy claim is that frames never leave the device; that has to be architectural, not
+a runtime setting.
 
-Record raw frames to a host during data collection so the offline copy can be re-run
-against new algorithm versions without re-staging every experiment. **Recorded data is
-the reusable asset here** — stage each scenario once.
+**Done when:** a browser shows a live depth map from the board.
+
+## Stage 3 — People counting
+
+Classical first, on-device, mirrored in Python for offline iteration on recorded frames.
+
+1. Per-zone **background depth model** (running median), confidence-gated
+2. **Foreground segmentation** against background
+3. **Connected-component clustering**; centroid, area, min-depth per cluster
+4. **Track association** across frames, with track lifetime
+5. **Line-crossing count** with direction; occupancy as live track count
+
+Record raw frames per scenario via stage 2 so algorithm changes can be re-run offline
+without re-staging every walk-through. **Recorded scenarios are the reusable asset** —
+stage each one once, carefully.
+
+Scenario list is unchanged and is in [`../research/people-detection.md`](../research/people-detection.md);
+the headline experiment is **two people abreast**, which is where 2268 zones earn the
+part over a 64-zone one.
 
 **Done when:** counts match ground truth on a scripted walk-through.
 
-## Phase 4 — The energy-accuracy sweep *(this is the paper)*
+## Stage 4 — Power
 
-Systematically vary, measuring accuracy and energy at each point:
+The board can **gate each power domain separately during idle** — this is the lever the
+whole paper turns on.
 
-- **Resolution** — every mode found in 0.2
+### The crossover that decides the architecture
+
+Powering the sensor fully off saves idle current but forces a **firmware blob reload**
+on the next wake. Reloading ~84 KB (VL53L8CX scale; VL53L9CX **VERIFY**) over I²C at
+400 kHz is on the order of **2 seconds of bus activity**, which is not free.
+
+So there is a threshold idle period `T*` where the two strategies cross:
+
+```
+E_reload  vs  P_standby x T
+
+full power-down wins when   T > E_reload / P_standby
+```
+
+**Measure `E_reload` and `P_standby` in stage 1, then compute `T*`.** Below it, keep
+the sensor in standby; above it, power the domain off. For a 1 Hz counter, `T` is one
+second and standby almost certainly wins — but that is a prediction, and the measurement
+is a genuinely publishable figure because nobody has it for this part.
+
+### Sweep for the paper
+
+- **Resolution** — every mode available *(Phase 0.2 unknown — see below)*
 - **Frame rate** — 0.2, 0.5, 1, 2, 5 Hz
-- **Duty strategy** — continuous low-rate vs. burst-on-event
-- Optionally **integration time**, if exposed
+- **Duty strategy** — continuous low-rate vs. burst-on-event vs. full power-down
+- **Peripheral instance** — the nRF54L15 has peripherals in different power domains, and
+  Nordic's own data shows the low-power-domain instance costing less for the same
+  transfer. Measure both; it is a free result.
+- **BLE** — connection vs. connectionless advertising for a 1 Hz scalar
 
-Output: an **energy-per-correct-count Pareto front**, and the projected battery life at
-each operating point. This is the contribution; everything before it is scaffolding.
+Output: energy per correct count, and projected battery life per operating point.
 
-## Phase 5 — BLE and the system demo
+### Then validate
 
-- Custom GATT service: count, direction, occupancy, dwell, battery, and a config
-  characteristic for mode.
-- **Counts only — never frames.** The privacy claim is architectural and free if the
-  design never has a raw-frame path off the device.
-- Connectionless **BLE advertising** for the periodic count is worth measuring against a
-  connection: for a 1 Hz scalar it is very likely cheaper, and that is itself a
-  reportable result.
-- Phone or Raspberry Pi collector app, logging to CSV for the evaluation.
+Multi-day deployment with independent ground truth, and a **measured discharge curve**
+against the projection. A prediction that survives contact with a real battery is a much
+stronger claim than either number alone.
 
-## Phase 6 — Long-run validation
+---
 
-- Multi-day deployment on a real doorway with independent ground truth (a second
-  sensor, or timestamped video reviewed offline and then deleted).
-- Battery-life measurement against the Phase 4 projection. **A measured discharge curve
-  that matches a prediction is a far stronger claim than either alone.**
+## Still unknown — carry these into stage 1
 
-## Test setup — what to build
+These do not block starting, but each has a consequence worth knowing early.
 
-**Bench rig:**
-- **Logic analyser on I²C** — with no reference board this is the primary diagnostic
-  instrument, not an accessory
-- Adjustable-height mount, 2.0–3.0 m, marked in 10 cm increments
-- Floor tape marking the FoV footprint at the chosen height
-- Fixed positions for repeatable single/double/abreast walk-throughs
-- Power Profiler Kit II, sensor and MCU rails separated
-- Host capture over RTT/UART, timestamped
-
-**Scenario list — run every one at every operating point:**
-
-| Scenario | Tests |
-|---|---|
-| Single person, normal walk | Baseline |
-| Two abreast | **The resolution claim** — the headline experiment |
-| Two in single file, close | Track separation |
-| Walk, stop in FoV, continue | Background-model freeze |
-| Person with trolley / large bag | False-positive shape handling |
-| Dark clothing, dark hair | 940 nm absorption dropouts |
-| Direct sunlight through the doorway | Ambient IR floor |
-| Empty room, 1 hour | False-positive rate — **the most under-reported metric in this field** |
-| Child-height target | Threshold sensitivity |
+| # | Question | Consequence |
+|---|---|---|
+| 1 | **Blob size and I²C load time** | Sets `T*` and the whole stage-4 architecture. **Measure during stage 1** |
+| 2 | **Which reduced-resolution modes exist** | If 54×42 is the only one, the paper's central curve collapses to a point; fall back to frame rate as the swept axis |
+| 3 | **Standby current, and whether the blob survives standby** | The other half of `T*` |
+| 4 | **Max I²C clock** — sensor and nRF54L15 both | 400 kHz vs 1 MHz halves per-frame bus energy |
+| 5 | **Can sensor and MCU rails be measured separately?** | The paper claims a per-component breakdown. Shared rail → shunt, or a weaker differential measurement stated as a limitation |
 
 ## Repository layout
 
 ```
-firmware/          Zephyr application, nRF Connect SDK
-  drivers/vl53l9cx/  out-of-tree Zephyr driver wrapping ST's ULD
-  src/               sampling, detection, BLE
-  boards/            ISP2454-LL board definition
-tools/             host capture, frame viewer, energy post-processing
-data/              recorded frame sets per scenario  (gitignored if large)
-docs/              this research
-notes/             YYYY-MM-DD.md session log
+firmware/
+  drivers/vl53l9cx/   out-of-tree Zephyr driver wrapping ST's ULD
+  app/                sampling, detection, BLE
+  boards/             ISP2454-LL board definition (Victor)
+tools/                host frame viewer, web interface, energy post-processing
+vendor/               ST X-CUBE-53L9A1  (gitignored, licensed)
+data/raw/             recorded frame sets  (gitignored, large)
+docs/                 research and plans
+notes/                YYYY-MM-DD.md session log
 ```
-
-## Risks, honestly
-
-| Risk | Severity | Mitigation |
-|---|---|---|
-| Blob load makes power-cycling uneconomic | **High** | Phase 0.1 answers it in days; standby-retain architecture if so |
-| Only full resolution available | **High** — halves the paper | Phase 0.2; fall back to frame-rate and duty-cycle sweep as the axis |
-| I²C at 400 kHz limits frame rate below what counting needs | Medium | Measure; reduced resolution; the application only wants ~1 Hz |
-| No in-tree Zephyr driver; ST driver assumes STM32 HAL | Medium | Thin platform shim; ST's ULD is written to be portable |
-| Shared power rail prevents attributing energy | **High** | Phase 0.5 — check the schematic now. Shunt if needed; differential measurement as a weak fallback |
-| **Bring-up bugs confounded — no reference board** | **High** | Staged gates in Phase 1; logic analyser as the arbiter; gate 1.2 (I²C ACK) separates hardware from software early. Read the community port's init sequence before writing ours |
-| Assembly fault on a one-off board mistaken for a design fault | Medium | Establish whether a second populated board exists. Two failing identically means design; one means assembly |
-| 150 mW makes battery life unimpressive | Medium | It is the finding either way — report it honestly, that is the paper |

@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config VL53L9CX
+	bool "STMicroelectronics VL53L9CX time-of-flight sensor"
+	default y
+	depends on DT_HAS_ST_VL53L9CX_ENABLED
+	select I2C
+	help
+	  Driver for the VL53L9CX dToF LiDAR module (up to 54x42 zones) over
+	  I2C, wrapping ST's Ultra Lite Driver.
+
+if VL53L9CX
+
+config VL53L9CX_ULD_PATH
+	string "Path to ST X-CUBE-53L9A1 ULD sources"
+	default "../../../vendor/x-cube-53l9a1"
+	help
+	  ST's package is licensed and is not vendored into this repository.
+	  Download X-CUBE-53L9A1 and point this at its driver directory. The
+	  build fails with a clear message if the path does not resolve.
+
+config VL53L9CX_FRAME_BUF_COUNT
+	int "Frame buffers"
+	default 2
+	range 1 4
+	help
+	  A full 54x42 frame is roughly 9 KB. Two buffers allow the next frame
+	  to be received while the previous one is processed; one is enough if
+	  processing is faster than the ~225 ms an I2C frame read takes at
+	  400 kHz. Each buffer costs real RAM out of 256 KB, so do not raise
+	  this without a reason.
+
+config VL53L9CX_LOG_BOOT_TIME
+	bool "Log firmware blob upload duration at init"
+	default y
+	help
+	  The blob upload happens on every cold start and takes seconds over
+	  I2C. Its duration decides whether powering the sensor domain down
+	  during idle beats keeping it in standby, so it is a measurement
+	  rather than a debug line. Leave this on.
+
+module = VL53L9CX
+module-str = VL53L9CX
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # VL53L9CX

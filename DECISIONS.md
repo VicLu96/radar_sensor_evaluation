@@ -74,3 +74,34 @@ Expected to be wrong if: bring-up stalls at a gate for more than about a week wi
 way to tell hardware from software apart. At that point one ST evaluation board becomes
 much cheaper than the time being spent, and buying it is the right call rather than a
 concession.
+
+## 2026-08-31 — Four stages, power optimisation last
+What: Driver -> BLE telemetry to a web interface -> people counting -> power
+optimisation. The board can gate each power domain separately during idle.
+Why: Victor's sequencing, and it is right. Optimising power before the algorithm exists
+means optimising against a guessed frame rate, resolution and wake pattern, and any
+architecture built on that guess later constrains the algorithm. Doing it last also
+means the paper's measurements are taken against a working system rather than a stub.
+One exception carved out: the firmware blob reload time must be measured during stage 1,
+because it decides the entire stage-4 architecture and is nearly free to capture while
+the driver is being brought up.
+Expected to be wrong if: the sensor turns out to have no usable standby state, in which
+case power architecture stops being a late optimisation and becomes a stage-1
+constraint - every wake would pay a multi-second blob reload and the duty cycle would
+have to be designed around it from the start.
+
+## 2026-08-31 — ST driver used unmodified; we write only the platform layer
+What: ST's ULD source stays byte-identical to their release. We implement the six
+platform functions it calls (RdByte, WrByte, RdMulti, WrMulti, WaitMs, SwapBuffer) on
+Zephyr I2C, wrap it in an out-of-tree module, and expose a small custom API.
+Why: The ULD carries the init sequence, blob upload protocol, calibration and frame
+unpacking, much of it undocumented outside the code and some of it timing-sensitive.
+Rewriting means owning all of it with no reference when a frame comes back subtly
+wrong. The port is a few hundred lines; a rewrite is the project.
+Also decided: the public API is NOT Zephyr's sensor API. That API is built around scalar
+channels fetched one at a time, and this device produces a 2268-zone frame - forcing it
+through sensor_channel_get would mean either 2268 calls or a channel that lies about
+what it returns.
+Expected to be wrong if: ST's L9 driver turns out to differ enough from the
+VL53L5CX/L8CX convention that the platform layer needs rewriting anyway, or if it is
+distributed under a licence that forbids the integration shape we want.

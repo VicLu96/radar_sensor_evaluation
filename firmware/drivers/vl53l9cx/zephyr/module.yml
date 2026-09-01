@@ -1,0 +1,8 @@
+# VL53L9CX out-of-tree Zephyr module
+# SPDX-License-Identifier: Apache-2.0
+name: vl53l9cx
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .

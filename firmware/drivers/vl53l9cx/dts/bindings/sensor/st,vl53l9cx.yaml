@@ -1,0 +1,57 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  STMicroelectronics VL53L9CX direct time-of-flight 3D LiDAR module.
+
+  Up to 54x42 = 2268 zones, 5 cm to 8.8 m, over I2C. The part also supports
+  MIPI I3C on the same SDA/SCL pins; this binding covers the I2C connection
+  only.
+
+  NOTE ON THE ADDRESS. ST documents the device address as 0x52, which is the
+  8-bit write address. Zephyr's "reg" is the 7-bit address, so it is 0x29.
+  Writing 0x52 here is a common mistake and presents as the device never
+  acknowledging.
+
+compatible: "st,vl53l9cx"
+
+include: [i2c-device.yaml]
+
+properties:
+  xshut-gpios:
+    type: phandle-array
+    description: |
+      Shutdown / reset pin (XSHUT), active low. Held low keeps the sensor in
+      reset. Required for a deterministic power-on sequence and to bring
+      several sensors up on one bus.
+
+  int-gpios:
+    type: phandle-array
+    description: |
+      Data-ready interrupt output from the sensor, active low.
+
+      Optional, but strongly recommended: polling for frame completion keeps
+      the CPU awake across the sensor's integration time, which is exactly the
+      energy this design exists to avoid. Without it, the driver falls back to
+      polling and says so at init.
+
+  power-gpios:
+    type: phandle-array
+    description: |
+      Control line for the board's sensor power domain, active high.
+
+      Present because this board can gate the sensor domain independently of
+      the MCU. Dropping the domain removes standby current entirely but costs a
+      full firmware blob reload on the next wake, which is seconds of I2C
+      traffic. The driver models this as PM_DEVICE_ACTION_TURN_OFF, distinct
+      from SUSPEND, so the trade can be measured rather than assumed.
+
+  blob-chunk-size:
+    type: int
+    default: 1024
+    description: |
+      Bytes per I2C write while streaming the firmware blob to the sensor.
+
+      Larger chunks mean fewer transaction overheads and a faster upload;
+      smaller chunks reduce peak buffer use. Exposed because the upload happens
+      on every cold start and its cost is a direct input to the power model.
