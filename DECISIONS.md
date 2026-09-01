@@ -105,3 +105,41 @@ what it returns.
 Expected to be wrong if: ST's L9 driver turns out to differ enough from the
 VL53L5CX/L8CX convention that the platform layer needs rewriting anyway, or if it is
 distributed under a licence that forbids the integration shape we want.
+
+## 2026-08-31 — Sensor facts source-verified from a community I2C driver
+What: Could not fetch ST's X-CUBE-53L9A1 automatically — it sits behind a licence
+acceptance on st.com, which is Victor's click to make rather than something to
+automate. Instead cloned two BSD-3-Clause community drivers into vendor/:
+VanBruce/vl53l9cx-python (pure-Python I2C, hardware-validated — our exact transport)
+and earlynerd/VL53L9-Arduino (I3C via PIO).
+
+Resolved from the Python driver's source, replacing five VERIFY items:
+- Firmware blob: 9,865 bytes, patch v0.17, extracted byte-for-byte from ST's
+  X-CUBE-53L9A1 v1.0.0 with documented provenance and SHA-256
+- SIX resolution modes: 54x42, 24x20, 18x14, 12x10, 8x6, 4x4, set by a binning
+  register. 24x20 and 8x6 transmit square arrays with an on-device crop
+- Frame layout: three uint16 per zone (depth, amplitude, ambient) = 6 bytes/zone.
+  Depth is 15-bit mm with a VALID flag in bit 15
+- I2C address 0x29 7-bit (0x52 is the 8-bit form), 16-bit register indices
+
+Two consequences that change the plan:
+
+1. The blob is 9,865 bytes, not the ~84 KB extrapolated from the VL53L8CX. At
+   400 kHz that is ~250 ms — about one full-resolution frame read. This REVERSES
+   the earlier conclusion: full power-down almost certainly beats standby at any
+   duty period beyond a fraction of a second, so the architecture should default
+   to TURN_OFF between readings.
+
+2. Six resolution modes spanning 2268 down to 16 zones — 142x in zones, ~150x in
+   bus time. The paper's central energy-accuracy curve has six real points across
+   two orders of magnitude, which is the best news the project has had.
+
+New open question that matters to the central claim: does binning preserve the
+field of view or narrow it? The crop offsets on the square formats suggest zones
+are merged within the same FoV, but if low-resolution modes see a smaller area
+then accuracy-vs-zones is not a like-for-like comparison.
+
+Expected to be wrong if: the community driver diverges from ST's official package —
+it is a port, not the authority. Re-verify against X-CUBE-53L9A1 once downloaded,
+particularly the register offsets, which the author notes were ported against patch
+version 0.17 specifically.

@@ -34,29 +34,47 @@ firmware design is about keeping it off, not about optimising the radio. Anythin
 reduces active sensor time by 2× roughly doubles battery life; shaving MCU cycles does
 almost nothing. **Design accordingly.**
 
-**2. I²C makes the frame the bottleneck** *(Victor's decision, 2026-08-31)*.
-2268 zones × ~4 bytes (distance + status, minimum useful) ≈ **9 KB per frame**, and
-considerably more if IR or reflectance planes are pulled.
+**2. Six resolution modes — this is the power lever** *(source-verified 2026-08-31)*.
 
-| I²C clock | Effective throughput | Time for one 9 KB frame |
-|---|---|---|
-| 400 kHz | ~40 KB/s | **~225 ms** |
-| 1 MHz | ~100 KB/s | **~90 ms** |
+Confirmed from a hardware-validated driver's register map (see Sources). Each mode is
+an on-device binning factor; the square formats transmit a square array with a crop
+offset applied on-device.
 
-So the interface, not the sensor, caps you at roughly **4–10 fps** at full resolution.
-That is fine — the application wants ~1 Hz — but it must be stated in the paper rather
-than discovered late. It also means **the bus is a significant share of the energy per
-frame**, which makes reduced-resolution modes doubly valuable.
+| Mode | Zones | Binning | Transmitted | Frame bytes | @400 kHz | @1 MHz |
+|---|---|---|---|---|---|---|
+| **54×42** | 2268 | 2 | 54×42 | **~13.6 KB** | **~370 ms** | ~148 ms |
+| **24×20** | 480 | 4 | 24×24 (crop y+2) | ~3.5 KB | ~86 ms | ~35 ms |
+| **18×14** | 252 | 6 | 18×14 | ~1.5 KB | ~38 ms | ~15 ms |
+| **12×10** | 120 | 8 | 12×10 | ~0.7 KB | ~18 ms | ~7 ms |
+| **8×6** | 48 | 12 | 8×8 (crop y+1) | ~0.4 KB | ~10 ms | ~4 ms |
+| **4×4** | 16 | 24 | 4×4 | ~96 B | **~2.4 ms** | ~1 ms |
 
-**3. The firmware blob is a cold-start tax.** These parts load a firmware image over
-the bus at every power-on. The comparable VL53L8CX blob is **~84 KB**; the VL53L9CX's
-is **VERIFY** but is very unlikely to be smaller given 35× the zones.
+**That is a 142× span in zones and a ~150× span in bus time.** The energy-accuracy
+curve the paper needs has six real points across two orders of magnitude — the single
+best piece of news for the project.
 
-At 400 kHz, 84 KB is **~2.1 s of bus activity before the first measurement** — and
-proportionally more if the blob is larger. **This inverts the naive power strategy:**
-fully power-cycling the sensor between readings would cost more energy in re-boot than
-it saves in idle. The design must use a standby state that *retains* the firmware, and
-the reboot cost must be measured early because it sets the minimum useful duty period.
+**Frame format:** three `uint16` per zone — **depth, amplitude, ambient** — so **6 bytes
+per zone**, plus a status line. Depth is **15-bit millimetres with a VALID flag in bit
+15**; a zero flag means no or bad measurement and the value must not be used.
+
+At full resolution the **bus, not the sensor, caps the frame rate** at roughly 2.7 fps
+(400 kHz) — well below the sensor's 100 Hz. Fine for a ~1 Hz counter, but it belongs in
+the paper rather than being discovered late. At 4×4 the bus is irrelevant.
+
+**3. The firmware blob is small — and this reverses the earlier conclusion.**
+
+**9,865 bytes**, patch version 0.17, extracted byte-for-byte from ST's
+X-CUBE-53L9A1 v1.0.0 (`vl53l9_patch.h`, `g_vl53l9_fw_patch[]`) and redistributed
+BSD-3-Clause. Loaded to device RAM after **every power or XSHUT cycle**.
+
+At 400 kHz that is **~250 ms** — *about the cost of a single full-resolution frame
+read*, not the ~2 s extrapolated from the VL53L8CX's 84 KB blob.
+
+**This inverts the power strategy in the favourable direction.** A cold start is cheap
+enough that fully powering the sensor domain down between readings is likely to beat
+holding it in standby at any duty period beyond a fraction of a second — the opposite of
+the earlier assumption. See the crossover in
+[`../plan/implementation.md`](../plan/implementation.md).
 
 ## Failure modes to design and test against
 
@@ -71,19 +89,31 @@ Optical dToF, not radar — so:
 - **Glass and mirrors** produce phantom returns.
 - **Multipath** in corridors and near walls.
 
-## Open questions — **VERIFY before designing against**
+## Resolved 2026-08-31 — was VERIFY, now source-verified
 
-1. **Firmware blob size** and load time over I²C. Sets the cold-start energy and the
-   minimum sensible duty cycle. Highest-priority unknown.
-2. **Reduced-resolution modes.** The VL53L5CX offers 4×4 and 8×8; the VL53L9CX almost
-   certainly offers sub-modes of 54×42, but the exact grid options and their frame
-   rates are unconfirmed. **This is the main power lever** — the energy-accuracy curve
-   in the paper depends on it.
-3. **Standby / low-power state current**, and whether firmware is retained across it.
-4. **Maximum I²C clock the part accepts** (400 kHz vs 1 MHz) — doubles or halves the
-   per-frame bus cost.
-5. **Per-zone data layout and actual bytes per frame** for each output combination.
-6. Whether the 150 mW figure is at 100 Hz full resolution, and how it scales down.
+| Was unknown | Answer | Source |
+|---|---|---|
+| Firmware blob size | **9,865 bytes**, patch v0.17 | Extraction from X-CUBE-53L9A1 v1.0.0 |
+| Reduced-resolution modes | **Six**: 54×42, 24×20, 18×14, 12×10, 8×6, 4×4 | Driver register map |
+| Per-zone data layout | **6 bytes** — depth, amplitude, ambient as `uint16` | Driver frame parser |
+| I²C address | **0x29 (7-bit)** — 0x52 is the 8-bit form | Driver constant, commented explicitly |
+| Register index width | **16-bit** | Driver register addresses (e.g. `0xD208`) |
+
+## Still open — **VERIFY before designing against**
+
+1. **Standby current, and whether the blob survives standby.** Now the main unknown in
+   the power model — though with a 250 ms reload, full power-down is cheap enough that
+   standby may simply not be worth using.
+2. **Maximum I²C clock the part accepts** (400 kHz vs 1 MHz). Halves or doubles every
+   figure in the table above.
+3. **Whether the 150 mW figure is at 100 Hz full resolution**, and how it scales with
+   binning. The datasheet quotes one number; the paper needs the curve.
+4. **Integration time per mode** — the other half of the frame period, alongside bus
+   time. At 4×4 the bus is negligible and integration dominates.
+5. **Does binning change the field of view or only the sampling within it?** The crop
+   offsets on the square formats suggest the FoV is preserved and zones are merged, but
+   this must be confirmed before claiming that low-resolution modes cover the same area.
+   **It matters to the counting accuracy claim.**
 
 ## Software
 
@@ -94,9 +124,24 @@ Optical dToF, not radar — so:
 - **UM3656** — getting started with X-CUBE-53L9A1.
 - **STSW-IMG052** — the GUI for X-NUCLEO-53L9A1; reported to 404 on ST's site and may
   need to be requested from ST directly.
-- **Community port:** `github.com/earlynerd/VL53L9-Arduino` (RP2040/RP2350) reports
-  working I3C transport, ST driver init, firmware patch upload and raw frame reads.
-  Useful as a reference for the init sequence even though our transport is I²C.
+### Community drivers — cloned to `vendor/`, and the best reference we have
+
+**ST's own package cannot be fetched automatically**: X-CUBE-53L9A1 sits behind a
+licence acceptance on st.com, which is Victor's click to make, not something to
+automate. These two fill the gap in the meantime and are BSD-3-Clause.
+
+- **`VanBruce/vl53l9cx-python`** — pure-Python **I²C** driver, hardware-validated.
+  **Our exact transport**, and the source of every figure resolved above: the register
+  map, the six binning modes, the frame layout, and the firmware patch itself
+  (`vl53l9cx_fw_patch.bin`, 9,865 bytes, extracted from ST's package with documented
+  provenance and SHA-256). **Read this before writing the Zephyr port** — it is a
+  working implementation of exactly what we are building.
+- **`earlynerd/VL53L9-Arduino`** (RP2040/RP2350) — I3C transport via PIO, plus ST driver
+  init and frame reads. Different transport, same init ordering.
+
+Both are cloned into `vendor/` (gitignored). ST's official package is still worth
+downloading — it is the authority, and the community work is a port of it — but it is no
+longer blocking.
 
 ## Evaluation boards worth having
 

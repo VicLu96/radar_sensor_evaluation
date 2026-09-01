@@ -42,7 +42,7 @@ is a large amount of subtle work with no upside.
 
 Steps:
 
-1. Download **X-CUBE-53L9A1** from ST; keep it in `vendor/` (gitignored — licensed).
+1. **Reference drivers already cloned to `vendor/`** (gitignored): `vl53l9cx-python`, a hardware-validated I2C driver — our exact transport — plus `VL53L9-Arduino`. Both BSD-3-Clause. ST's X-CUBE-53L9A1 is still the authority and worth downloading, but is no longer blocking.
 2. Out-of-tree Zephyr module skeleton: `zephyr/module.yml`, `Kconfig`, `CMakeLists.txt`.
 3. **Devicetree binding** for the sensor on I²C, with the reset/interrupt GPIOs and the
    power-domain control lines the board provides.
@@ -61,7 +61,7 @@ The point is observability, not product polish.
 
 - **Custom GATT service**: config (mode, resolution, rate), status, and a data
   characteristic. Frames are large — use notifications with a chunked frame protocol,
-  and expect to need a **larger ATT MTU and 2M PHY** to move 9 KB in reasonable time.
+  and expect to need a **larger ATT MTU and 2M PHY** to move a 13.6 KB full-resolution frame in reasonable time. At 4x4 a frame is 96 bytes and fits a single notification.
 - **Two data paths, deliberately separate:**
   - **Debug path** — raw frames, high bandwidth, used during development only
   - **Product path** — counts and events only, a few bytes
@@ -104,26 +104,28 @@ whole paper turns on.
 
 ### The crossover that decides the architecture
 
-Powering the sensor fully off saves idle current but forces a **firmware blob reload**
-on the next wake. Reloading ~84 KB (VL53L8CX scale; VL53L9CX **VERIFY**) over I²C at
-400 kHz is on the order of **2 seconds of bus activity**, which is not free.
-
-So there is a threshold idle period `T*` where the two strategies cross:
+Powering the sensor domain fully off removes idle current but forces a **firmware blob
+reload** on the next wake. The threshold idle period `T*` where the strategies cross:
 
 ```
-E_reload  vs  P_standby x T
-
-full power-down wins when   T > E_reload / P_standby
+full power-down wins when   T_idle  >  E_reload / P_standby
 ```
 
-**Measure `E_reload` and `P_standby` in stage 1, then compute `T*`.** Below it, keep
-the sensor in standby; above it, power the domain off. For a 1 Hz counter, `T` is one
-second and standby almost certainly wins — but that is a prediction, and the measurement
-is a genuinely publishable figure because nobody has it for this part.
+**Source-verified 2026-08-31: the blob is 9,865 bytes**, not the ~84 KB extrapolated
+from the VL53L8CX. At 400 kHz that is **~250 ms of bus activity — about the cost of one
+full-resolution frame read.**
+
+**This reverses the earlier expectation.** A cold start that cheap means full power-down
+very likely beats standby at any duty period beyond a fraction of a second, so the
+architecture should default to `TURN_OFF` between readings rather than `SUSPEND`. For a
+1 Hz counter that is emphatically the right side of the crossover.
+
+Still measure both — `P_standby` is the remaining unknown, and the *measured* `T*` is a
+publishable number nobody has for this part. But design for power-down first.
 
 ### Sweep for the paper
 
-- **Resolution** — every mode available *(Phase 0.2 unknown — see below)*
+- **Resolution** — all six confirmed modes: 4x4, 8x6, 12x10, 18x14, 24x20, 54x42
 - **Frame rate** — 0.2, 0.5, 1, 2, 5 Hz
 - **Duty strategy** — continuous low-rate vs. burst-on-event vs. full power-down
 - **Peripheral instance** — the nRF54L15 has peripherals in different power domains, and
@@ -147,11 +149,12 @@ These do not block starting, but each has a consequence worth knowing early.
 
 | # | Question | Consequence |
 |---|---|---|
-| 1 | **Blob size and I²C load time** | Sets `T*` and the whole stage-4 architecture. **Measure during stage 1** |
-| 2 | **Which reduced-resolution modes exist** | If 54×42 is the only one, the paper's central curve collapses to a point; fall back to frame rate as the swept axis |
-| 3 | **Standby current, and whether the blob survives standby** | The other half of `T*` |
-| 4 | **Max I²C clock** — sensor and nRF54L15 both | 400 kHz vs 1 MHz halves per-frame bus energy |
-| 5 | **Can sensor and MCU rails be measured separately?** | The paper claims a per-component breakdown. Shared rail → shunt, or a weaker differential measurement stated as a limitation |
+| 1 | ~~Blob size~~ | **RESOLVED: 9,865 bytes, ~250 ms at 400 kHz.** Full power-down beats standby |
+| 2 | ~~Which resolution modes exist~~ | **RESOLVED: six** — 54x42, 24x20, 18x14, 12x10, 8x6, 4x4. The paper's curve has six real points spanning 142x in zones |
+| 3 | **Standby current** — is standby even worth using given a 250 ms reload? | The remaining half of `T*` |
+| 4 | **Max I2C clock** — sensor and nRF54L15 both | Halves or doubles every frame-time figure |
+| 5 | **Can sensor and MCU rails be measured separately?** | The paper claims a per-component breakdown. Shared rail -> shunt, or a weaker differential measurement stated as a limitation |
+| 6 | **Does binning preserve the field of view** or narrow it? | If low-resolution modes see a smaller area, the accuracy-vs-zones comparison is not like-for-like. **Matters to the central claim** |
 
 ## Repository layout
 
