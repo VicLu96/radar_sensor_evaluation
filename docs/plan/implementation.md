@@ -152,7 +152,7 @@ These do not block starting, but each has a consequence worth knowing early.
 | 1 | ~~Blob size~~ | **RESOLVED: 9,865 bytes, ~250 ms at 400 kHz.** Full power-down beats standby |
 | 2 | ~~Which resolution modes exist~~ | **RESOLVED: six** — 54x42, 24x20, 18x14, 12x10, 8x6, 4x4. The paper's curve has six real points spanning 142x in zones |
 | 3 | **Standby current** — is standby even worth using given a 250 ms reload? | The remaining half of `T*` |
-| 4 | **Max I2C clock** — sensor and nRF54L15 both | Halves or doubles every frame-time figure |
+| 4 | **Max I2C clock — GO/NO-GO** | At 400 kHz, 54x42 gives ~2.7 fps, which is ~2 frames on a walking person at a 2.8 m ceiling — not enough to track. At 1 MHz it is ~5. See [frame-rate-budget.md](frame-rate-budget.md) |
 | 5 | **Can sensor and MCU rails be measured separately?** | The paper claims a per-component breakdown. Shared rail -> shunt, or a weaker differential measurement stated as a limitation |
 | 6 | **Does binning preserve the field of view** or narrow it? | If low-resolution modes see a smaller area, the accuracy-vs-zones comparison is not like-for-like. **Matters to the central claim** |
 

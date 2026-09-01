@@ -143,3 +143,27 @@ Expected to be wrong if: the community driver diverges from ST's official packag
 it is a port, not the authority. Re-verify against X-CUBE-53L9A1 once downloaded,
 particularly the register offsets, which the author notes were ported against patch
 version 0.17 specifically.
+
+## 2026-08-31 — Full 54x42 resolution, frame rate traded for I2C bandwidth
+What: Run the sensor at full 54x42 and lower the frame rate to fit I2C, rather than
+using a reduced binning mode.
+Why: Victor's decision, and it is the right one for the contribution. Resolution is what
+makes the "two people abreast" claim, which is the only thing distinguishing this sensor
+from a 64-zone part costing a fraction as much. Frame rate is the cheaper thing to
+spend.
+Consequence, worked out in docs/plan/frame-rate-budget.md rather than discovered during
+experiments: a 54x42 frame is 13,608 bytes, so ~370 ms at 400 kHz and a ceiling of
+~2.7 fps. A person walking at 1.4 m/s under a 2.8 m mount is in view at head height for
+only ~0.8 s, which at 2.7 fps is about TWO frames - enough to notice something passed,
+not enough to track, establish direction, or separate two people. At 1 MHz it is ~5
+frames, which works.
+So the maximum I2C clock is promoted from a tuning detail to a GO/NO-GO item, and mount
+height becomes a design parameter rather than a convenience - 3.5 m instead of 2.8 m
+buys 75% more time in view.
+Also motivates an event-triggered hybrid: 4x4 continuously at 96 bytes a frame to answer
+"is anything there", bursting to 54x42 only while someone is crossing. Average energy
+then follows doorway traffic rather than the clock, and it preserves the resolution claim
+exactly where it matters. This is a better paper result than a fixed-rate sweep.
+Expected to be wrong if: 1 MHz is unavailable AND the ceiling cannot go higher, in which
+case full resolution at a fixed rate cannot track walking people and the hybrid stops
+being an optimisation and becomes mandatory.
