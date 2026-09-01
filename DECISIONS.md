@@ -167,3 +167,30 @@ exactly where it matters. This is a better paper result than a fixed-rate sweep.
 Expected to be wrong if: 1 MHz is unavailable AND the ceiling cannot go higher, in which
 case full resolution at a fixed rate cannot track walking people and the hybrid stops
 being an optimisation and becomes mandatory.
+
+## 2026-08-31 — Scope is room occupancy where people dwell, not doorway counting
+What: The target is monitoring a room where people stay for a while, not a highly
+dynamic environment. Lead application becomes room / desk-cluster occupancy and dwell;
+doorway counting drops to a secondary demo of the same pipeline.
+Why: Victor's scoping.
+What it fixes: the frame-rate crunch disappears. Dwell needs 0.05-0.2 Hz rather than
+3-5 fps, so 54x42 over 400 kHz is comfortable, the 1 MHz question drops back to a tuning
+detail, and the duty cycle falls to a few percent - which makes full power-down clearly
+correct and the multi-month battery claim a comfortable margin rather than a stretch.
+What it breaks, and it is not small:
+1. Coverage. 54 x 42 degrees at 2.8 m gives roughly a 3 x 2 m floor patch - a desk
+   cluster, not a room. This was harmless for a doorway, which is narrow by definition,
+   and is now the binding constraint on the whole test setup.
+2. The hard problem moves from timing to segmentation. A doorway counter can lean on
+   motion; a person sitting still for forty minutes is, to a depth sensor, furniture.
+   Background models WILL absorb stationary people given hours of frames at 0.1 Hz, and
+   the failure is silent - occupancy quietly reads zero while the room is full, which is
+   the worst possible failure for an HVAC or safety application.
+Approaches recorded in docs/plan/room-occupancy.md, including one worth testing early:
+depth is reported as 15-bit millimetres, and a seated person is never perfectly still
+while furniture is. Millimetre-scale variance between frames minutes apart may separate
+occupants from objects with no motion tracking at all. Whether the noise floor permits
+it is unknown and a static-scene noise characterisation answers it cheaply.
+Expected to be wrong if: the intended room is much larger than one unit covers, in which
+case either the scope narrows to "desk cluster" explicitly or the product becomes
+multi-unit, which is a different paper.

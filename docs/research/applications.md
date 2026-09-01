@@ -13,9 +13,31 @@ argues for the cheaper part. A good demo must need either the **angular resoluti
 
 That rules out more ideas than it sounds like, and it is the right filter.
 
-## Primary — battery people counter over BLE (Victor's proposal)
+> **Re-ranked 2026-08-31.** Victor scoped the goal as monitoring a room where people
+> stay, not a dynamic doorway. The lead application is now **room / desk-cluster
+> occupancy and dwell**, and doorway counting drops to a secondary demo of the same
+> pipeline. See [../plan/room-occupancy.md](../plan/room-occupancy.md).
 
-**Keep it.** It is the right lead application and the paper's backbone.
+## Primary — room / desk-cluster occupancy and dwell
+
+Overhead, ceiling-mounted, reporting how many people are present and for how long.
+
+- **Why this sensor:** shape and height priors across 2268 zones are what separate a
+  seated person from a chair. That replaces the two-abreast argument, which belonged to
+  the doorway framing.
+- **Why low power matters:** at 0.1 Hz the duty cycle is a few percent, so a battery
+  room sensor lasting a year is realistic. That is the commercial unlock, and it is what
+  the energy work buys.
+- **The hard part:** a person sitting still becomes background. See
+  [`../plan/room-occupancy.md`](../plan/room-occupancy.md) — this is now the central
+  technical problem, not a footnote.
+- **Honest scope:** one unit covers roughly 3 × 2 m at ceiling height. A desk cluster or
+  a small meeting table, **not** a whole room. Claim that, and multi-unit coverage is
+  future work.
+
+## Secondary — battery people counter over BLE (was primary)
+
+Same pipeline, different aggregation. Worth keeping as a demo.
 
 - **Geometry:** overhead, doorway or corridor.
 - **Why this sensor:** two people walking abreast merge into one blob at 8×8; at 54×42

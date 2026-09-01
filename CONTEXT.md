@@ -21,7 +21,7 @@ Research and planning only. **No firmware written, no hardware measured.**
 - **Interface: I²C** (Victor, 2026-08-31) — not I3C
 - **Hardware: a single custom PCB** carrying both parts. **No DK, no ST eval board.**
   Victor writes the Zephyr board files and has a Power Profiler Kit II.
-- **Lead application:** overhead battery-powered people counter, counts over BLE
+- **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —`  people who STAY, not a dynamic doorway. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"
 
 ## Project shape — Victor's four stages
@@ -43,6 +43,12 @@ Research and planning only. **No firmware written, no hardware measured.**
    architecture and is nearly free to capture now.
 6. Check which **reduced-resolution modes** exist in the ST headers. If only 54x42
    exists, the paper's central curve collapses to a point.
+
+## The question that now gates the test setup
+**What room, and how big?** One unit covers roughly 3 x 2 m at ceiling height - a desk
+cluster or a small meeting table, not a whole room. Coverage is the binding constraint
+and everything follows from it: mount height, whether one unit suffices, and what the
+paper can claim.
 
 ## Open questions for Victor
 - Can the board measure **sensor and MCU rails separately**? The paper claims a

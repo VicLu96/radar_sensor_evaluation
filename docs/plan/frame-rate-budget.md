@@ -1,4 +1,12 @@
-# Frame-rate budget at 54×42
+# Frame-rate budget at 54x42
+
+> **SUPERSEDED IN PART, 2026-08-31.** This page assumes doorway counting of walking
+> people, which set the tight frame-rate requirement below. Victor has since scoped the
+> goal as **room occupancy where people stay for a while** — see
+> [room-occupancy.md](room-occupancy.md). Under that framing the required rate drops to
+> 0.05-0.2 Hz, 400 kHz is comfortable, and the 1 MHz question is a tuning detail rather
+> than go/no-go. The bandwidth arithmetic below remains correct and is kept because the
+> doorway case stays a secondary demo.
 
 Written 2026-08-31, after the decision to run full resolution and trade frame rate for
 I²C bandwidth.
