@@ -15,38 +15,96 @@ consequence if wrong.
 | 0.2 | **What reduced-resolution modes exist?** | X-CUBE-53L9A1 headers and UM3656 | If 54×42 is the only mode, the energy-accuracy curve — the paper's core — has one point on it |
 | 0.3 | **What does standby cost, and is firmware retained?** | Datasheet, then measure | Decides the whole sleep architecture |
 | 0.4 | **Max I²C clock, sensor and nRF54L15 both** | Datasheets, then scope | 400 kHz vs 1 MHz doubles per-frame bus energy |
+| 0.5 | **Can the board measure sensor and MCU rails separately?** | Look at the schematic | **If the rails are shared, the paper's central claim cannot be made** without a bodge — see below |
+
+### 0.5 deserves its own note
+
+The contribution is an energy breakdown *attributed by phase and by component*. That
+requires measuring the sensor rail independently of the MCU rail. Victor has the Power
+Profiler Kit II, which measures one rail at a time.
+
+- **If the board already separates them** (or has a jumper / 0 Ω link on the sensor
+  supply): nothing to do, and Phase 2 is straightforward.
+- **If they share a rail**: cut a trace and fit a shunt, or wire the sensor supply
+  through an external link. Unpleasant on an assembled board, so **check the schematic
+  now** rather than after Phase 1.
+- **If neither is possible**: the fallback is differential measurement — total energy
+  with the sensor idle versus active, subtracting to attribute. Weaker, noisier, and
+  it should be stated as a limitation rather than presented as direct measurement.
+
+This is a hardware question with a paper-shaped consequence, which is why it is in
+Phase 0 rather than Phase 2.
 
 **Do not skip to Phase 1 because Phase 0 is boring.** Every one of these can force a
 redesign, and all four are answerable in days with the eval board.
 
-## Phase 1 — Bring-up on known-good hardware
+## Phase 1 — Bring-up on the custom board, staged
 
-Goal: a frame on a screen, with the smallest possible number of unknowns.
+**Constraint (Victor, 2026-08-31): there is no DK and no ST evaluation board.** The
+custom PCB carries the ISP2454-LL and the VL53L9CX together, and Victor writes the
+Zephyr board files.
 
-1. **STM32 + STEVAL-VL53L9 / X-NUCLEO-53L9A1 with ST's X-CUBE-53L9A1.** Not our target
-   platform — that is the point. It establishes that the sensor, the blob and our
-   understanding of the init sequence are correct *before* introducing Zephyr, the
-   nRF54L15 and a custom board simultaneously.
-2. **nRF54L15-DK + sensor over I²C**, nRF Connect SDK, sensor firmware blob in flash.
-   **Pin the SDK version now** and record it in `DECISIONS.md`.
-3. Port ST's ULD-style driver as a Zephyr out-of-tree module. There is no in-tree
-   Zephyr driver for this part; wrap ST's C driver behind a thin platform layer
-   (`i2c_write`, `i2c_read`, `wait_ms`) rather than rewriting it.
-4. **Stream raw frames to a host over UART/RTT** and view them. A live depth map is the
-   single most valuable debugging artefact in the project — build it early, it pays for
-   itself ten times.
+This is fine for the firmware architecture — a board file is a board file. It is *not*
+fine for risk, and pretending otherwise is how bring-ups lose a month. Without a
+known-good reference, the first time the sensor stays silent there are **four suspects
+at once**: solder/assembly, board design, our driver port, and the sensor init
+sequence. The DK existed to eliminate two of them.
 
-**Done when:** a 54×42 frame renders on a laptop from the DK, and the init sequence is
-reproducible from cold.
+**The replacement is a staged bring-up with hard gates.** Do not proceed past a gate
+until it passes — each one eliminates a suspect, which is exactly what the reference
+board would have done.
+
+| Gate | Proves | How |
+|---|---|---|
+| **1.0 Board alive** | Power, clocks, SWD, Zephyr boots | Blink an LED, RTT prints |
+| **1.1 Bus electrically sane** | Pull-ups, levels, wiring | **Logic analyser on SDA/SCL.** Not optional here — with no reference board this instrument *is* the reference |
+| **1.2 Sensor ACKs its address** | Sensor powered, addressed, alive | I²C scan. **This is the milestone that separates hardware from software.** If it ACKs, the board is broadly right and every later bug is ours |
+| **1.3 Device ID reads back correct** | Bus timing and register access | Read the ID register, compare to datasheet |
+| **1.4 Firmware blob uploads and the sensor reports ready** | The hard part of init | Also yields the Phase 0.1 measurement for free |
+| **1.5 One frame, any resolution** | End to end | Dump raw over RTT |
+| **1.6 Frames render on a host** | Sanity of the data itself | Live depth-map viewer |
+
+**Gate 1.2 is the important one.** An I²C scan that finds the sensor is cheap, takes an
+afternoon, and converts "nothing works" into "the hardware is fine, keep debugging
+software" — which is the single most valuable piece of information in the whole
+project. Get there first, before any driver work.
+
+### Substitutes for the missing reference board
+
+- **Logic analyser** — mandatory, not a nice-to-have. It replaces the eval board as the
+  arbiter of whether the sensor is responding.
+- **`github.com/earlynerd/VL53L9-Arduino`** — a community port that reports working
+  init, blob upload and frame reads. It is not our transport (they used I3C), but it is
+  a **known-good init sequence** to diff ours against. This is now the closest thing to
+  a reference implementation we have; read it before writing the port.
+- **X-CUBE-53L9A1** — ST's own driver source. Read the init order from it even without
+  the STM32 hardware.
+- **A second populated board**, if any exist. Two boards failing identically means
+  design; one failing means assembly. Worth knowing whether more than one exists.
+
+### Then the driver
+
+Port ST's ULD-style driver as a Zephyr out-of-tree module. There is no in-tree Zephyr
+driver for this part; wrap ST's C driver behind a thin platform layer (`i2c_write`,
+`i2c_read`, `wait_ms`) rather than rewriting it — a rewrite adds a fifth suspect.
+
+**Pin the nRF Connect SDK version now** and record it in `DECISIONS.md`.
+
+Build the **live depth-map viewer early**. With no reference hardware it is the main way
+to tell a plausible-looking frame from a subtly wrong one, and it pays for itself many
+times over.
+
+**Done when:** a 54×42 frame renders on a laptop from the custom board, and the init
+sequence is reproducible from cold power-on.
 
 ## Phase 2 — The measurement rig *(before the algorithm)*
 
 The paper is an energy argument. The instrument comes before the thing being measured.
 
-- **Power Profiler Kit II** on the module rail, with the sensor rail separable —
-  attributing energy to *sensor* versus *MCU+radio* separately is the whole point, and
-  it is impossible to retrofit if the board has one shared rail. **Check this against
-  Victor's board now**; if it cannot be split, plan a shunt or a bodge wire.
+- **Power Profiler Kit II** (Victor has one) on the module rail, with the sensor rail
+  separable — attributing energy to *sensor* versus *MCU+radio* is the whole point.
+  Settled in Phase 0.5; if the rails are shared, a shunt goes in before Phase 2 rather
+  than after.
 - A **GPIO trace pin** toggled around each phase (sensor integration, I²C read,
   processing, BLE) so the power trace can be segmented by activity.
 - **Repeatable capture:** scripted runs, fixed duration, results to CSV, in `tools/`.
@@ -102,6 +160,8 @@ each operating point. This is the contribution; everything before it is scaffold
 ## Test setup — what to build
 
 **Bench rig:**
+- **Logic analyser on I²C** — with no reference board this is the primary diagnostic
+  instrument, not an accessory
 - Adjustable-height mount, 2.0–3.0 m, marked in 10 cm increments
 - Floor tape marking the FoV footprint at the chosen height
 - Fixed positions for repeatable single/double/abreast walk-throughs
@@ -143,6 +203,7 @@ notes/             YYYY-MM-DD.md session log
 | Only full resolution available | **High** — halves the paper | Phase 0.2; fall back to frame-rate and duty-cycle sweep as the axis |
 | I²C at 400 kHz limits frame rate below what counting needs | Medium | Measure; reduced resolution; the application only wants ~1 Hz |
 | No in-tree Zephyr driver; ST driver assumes STM32 HAL | Medium | Thin platform shim; ST's ULD is written to be portable |
-| Shared power rail prevents attributing energy | Medium | **Check the board now**, before Phase 2 |
-| Custom board bring-up bugs confounded with firmware bugs | Medium | DK first, always |
+| Shared power rail prevents attributing energy | **High** | Phase 0.5 — check the schematic now. Shunt if needed; differential measurement as a weak fallback |
+| **Bring-up bugs confounded — no reference board** | **High** | Staged gates in Phase 1; logic analyser as the arbiter; gate 1.2 (I²C ACK) separates hardware from software early. Read the community port's init sequence before writing ours |
+| Assembly fault on a one-off board mistaken for a design fault | Medium | Establish whether a second populated board exists. Two failing identically means design; one means assembly |
 | 150 mW makes battery life unimpressive | Medium | It is the finding either way — report it honestly, that is the paper |

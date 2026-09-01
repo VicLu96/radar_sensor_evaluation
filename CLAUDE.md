@@ -28,7 +28,10 @@ Owner: Victor, Zurich. He designed the hardware.
   proposed optimisation against this before spending effort on it.
 - **Counts leave the device, frames never do.** The privacy claim is architectural and
   free — do not add a raw-frame transmit path.
-- **DK before custom board.** Never debug new firmware and new hardware at once.
+- **There is no DK and no ST eval board** — a single custom PCB carries both parts, and
+  Victor writes the board files. So bring-up has no known-good reference: never assume
+  a silent sensor is a software bug. Work the staged gates in the implementation plan,
+  and treat the **logic analyser as the reference instrument**.
 - **`DECISIONS.md` is append-only.** Never edit a past entry.
 - Commit and push finished work to `main`. Never force-push, never rewrite pushed
   history, never touch the stocks branch.

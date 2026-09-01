@@ -51,3 +51,26 @@ Expected to be wrong if: the VL53L9CX exposes only one resolution mode, which co
 the central curve to a point. Fall back to frame rate and duty cycle as the swept axis.
 Also wrong if ST or a competitor publishes the same characterisation first — the part
 is months old, so this is a real deadline rather than a hypothetical.
+
+## 2026-08-31 — Custom PCB only: no DK, no ST evaluation board
+What: Development targets a single custom PCB carrying the ISP2454-LL and the
+VL53L9CX. Victor writes the Zephyr board files and has a Power Profiler Kit II. There
+is no nRF54L15-DK and no STEVAL-VL53L9 / X-NUCLEO-53L9A1.
+Why: Victor built the hardware; buying reference boards to duplicate it is avoidable
+cost, and the firmware abstraction is genuinely unaffected — a board file is a board
+file.
+Consequence, which is NOT neutral and is the reason this is recorded: the plan had used
+"DK first, always" as its main bring-up risk control. Without a known-good reference, a
+silent sensor has four suspects at once — assembly, board design, our driver port, and
+the init sequence — and no cheap way to separate them. The mitigation is replaced
+rather than dropped: staged bring-up gates with the I2C address ACK (gate 1.2) as the
+hardware/software divider, a logic analyser promoted to primary diagnostic instrument,
+and the community VL53L9-Arduino port read as a reference init sequence.
+Also promoted to Phase 0: whether the board can measure the sensor and MCU rails
+separately. The paper claims a per-component energy breakdown, so a shared rail forces
+either a shunt or a weaker differential measurement, and that is a schematic question
+best answered before anything is built.
+Expected to be wrong if: bring-up stalls at a gate for more than about a week with no
+way to tell hardware from software apart. At that point one ST evaluation board becomes
+much cheaper than the time being spent, and buying it is the right call rather than a
+concession.
