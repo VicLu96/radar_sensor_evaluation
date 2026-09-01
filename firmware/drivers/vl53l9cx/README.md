@@ -66,9 +66,15 @@ I²C. ST defines `VL53L9_DEFAULT_ADDRESS (0x52)` and passes it straight into
 `I3C_PrivateTypeDef.TargetAddr`, which the STM32 HAL documents as a **7-bit** field.
 One of the two is a shift error.
 
-Expect the device at **0x29**; if nothing acknowledges, scan and check 0x52 before
-suspecting anything else. This one bites almost everyone once, and the symptom is a
-device that never acknowledges.
+Expect the device at **0x29**, and check 0x52 if nothing answers. Probe the two
+addresses **individually, in read-byte mode** — the device does not support the empty
+START+STOP transactions a general `i2cdetect` sweep uses to probe some ranges, and such
+a scan can wedge it.
+
+**Before blaming the address, check the clock.** The sensor needs 6-27 MHz on AP_CLK
+(12 MHz on every reference design) and **does not acknowledge its I²C address at all
+until that clock is running** — see `docs/plan/st-package-audit.md` §7. A silent bus is
+far more likely to be a missing clock than a wrong address.
 
 ## Power management
 

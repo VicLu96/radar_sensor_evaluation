@@ -185,6 +185,72 @@ Read `vl53l9.h` for the full surface. The parts that change plans:
   misconfigures the analogue front end. Needs Victor's schematic.
 - **Whether calibration data survives a power cycle**, per above.
 
+## 7. The three board values, and the clock that turns out to gate bring-up
+
+`vl53l9_init()` requires exactly three board facts. Two are supply rails and are a
+straight lookup; the third is not a "value" at all but a signal the PCB must generate.
+
+| Getter | Type | Legal values | ST's reference board |
+|---|---|---|---|
+| `vl53l9_get_config_vdda` | `vl53l9_vdda_t` | `VDDA_2V8` (0) or `VDDA_3V3` (1) — **those two only** | `VDDA_2V8` |
+| `vl53l9_get_config_vddio` | `vl53l9_vddio_t` | `VDDIO_1V2` (0) or `VDDIO_1V8` (1) — **those two only** | `VDDIO_1V8` |
+| `vl53l9_get_config_ext_clock` | `uint32_t`, Hz | 6–27 MHz | **12 MHz** |
+
+The rails are enums, not measurements — the driver is being told which of two supported
+configurations the board implements, so the answer comes off the schematic and cannot be
+"about 3 V".
+
+### AP_CLK is a bring-up gate, not a configuration detail
+
+The sensor needs an external clock on **AP_CLK / HOST_CLKIN** — 6–27 MHz at IOVDD level,
+±100 ppm — and **it does not acknowledge its I²C address until that clock is running.**
+A missing clock presents exactly as a dead sensor or a wiring fault.
+
+Three independent sources agree:
+
+- ST's driver treats external-clock mode as the **normal run state**. It switches to the
+  internal fast clock only to permit burst reads in standby, and explicitly switches
+  back afterwards — `COMMAND_SWITCH_TO_EXT_CLOCK`, "restore external clock mode"
+  (`vl53l9.c:262`). ST's reference board declares 12 MHz.
+- The Arduino/Pico port generates a **12 MHz PWM** on a host GPIO for this pin,
+  "matching the ST reference configuration", and lists "confirm GPIO11 is producing a
+  12 MHz clock" as a bring-up step.
+- The Python port states it outright: **"No clock, no ACK."** It also documents that on
+  the STEVAL-VL53L9 the onboard 12 MHz oscillator ships *disabled* in favour of a
+  host-supplied clock, and that leaving the strap resistors in the shipped state with
+  the header pin floating feeds the sensor shifter noise instead of a clock — so it
+  boots *occasionally*, which is the worst possible symptom.
+
+This matters beyond bring-up. **If the clock comes from the nRF54L15**, it costs a GPIO
+and a peripheral (PWM or TIMER), it must be running before any I²C traffic, and it must
+be **gated as part of the sensor power domain** in stage 4 — a 12 MHz output left
+running during the >90% of the duty cycle when the sensor is off would quietly spend
+part of the energy budget the paper is about. If the clock comes from an **onboard
+oscillator**, its enable line belongs in the same power domain for the same reason, and
+its own current draw lands in the sensor's energy budget rather than the MCU's.
+
+**VERIFY, and it is the first thing to check at bring-up**: does the board have a 12 MHz
+oscillator for the sensor, is it host-driven, and what enables it? Confirm with a scope
+on AP_CLK before suspecting anything in software.
+
+### Correction to the address plan
+
+An earlier note in this repo suggested settling the 0x29/0x52 question with a bus scan.
+**Do not use a general bus scan.** The Python port documents that the device does not
+support the empty START+STOP transactions `i2cdetect` uses to probe some address ranges,
+and that such a scan can wedge it. Probe the two candidate addresses specifically, in
+read-byte mode — and only once AP_CLK is confirmed running, since without it nothing
+answers at either address.
+
+Also from the same source, both worth knowing before the first bring-up: **XSHUT must be
+actively driven high** (there is no internal pull-up), and the device **NAKs for some
+milliseconds after the XSHUT rising edge** while its ROM boots, so the driver must poll
+through the NAKs rather than treat the first one as failure.
+
+These three items are community-sourced and marked **VERIFY**, but the AP_CLK
+requirement is corroborated by ST's own driver and reference board, which is as close to
+confirmed as anything gets before the bench.
+
 ## Consequences for the devicetree binding
 
 `vl53l9_device_t` (`vl53l9_interface.h`) is effectively ST's own statement of what a
@@ -194,7 +260,7 @@ board must provide, and the binding should mirror it:
 |---|---|
 | `address` | `reg` |
 | `vdda`, `vddio` | enum properties — **from the schematic** |
-| `ext_clock` | `ext-clock-frequency`, Hz |
+| `ext_clock` | `ext-clock-frequency`, Hz — plus whatever generates it: a `clocks` phandle, or a PWM the driver must start before first contact |
 | `xshut` | `xshut-gpios` |
 | `intr` | `int-gpios` |
 | `instance_id` | implicit per node |

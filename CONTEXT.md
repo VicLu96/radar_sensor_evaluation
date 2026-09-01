@@ -51,15 +51,20 @@ measured.** ST's driver arrived today and stage 1 is unblocked.
    in-band interrupt — there is no IBI on plain I²C.
 5. **Log `vl53l9_get_status()` from the first frame.** Eight health bits, and on a board
    with no reference they are the only second opinion available.
-6. At bring-up, capture cheaply and immediately: **blob upload duration**, **integration
-   time per binning mode** (the last unknown in the frame budget), and a **bus scan** to
-   settle the address.
+6. At bring-up, in this order: **scope AP_CLK first** (no clock, no ACK), then probe
+   0x29 and 0x52 **individually in read-byte mode** — a general `i2cdetect` scan uses
+   empty START+STOP transactions the device does not support and can wedge it. Then
+   capture, cheaply and immediately: **blob upload duration** and **integration time per
+   binning mode**, the last unknown in the frame budget.
 
 ## The two questions that gate everything
-1. **VDDA, VDDIO and the external clock frequency.** No longer curiosities —
-   `vl53l9_init()` writes all three into the device, and a wrong value misconfigures the
-   analogue front end rather than failing loudly. **The port cannot be finished without
-   the schematic.**
+1. **VDDA, VDDIO and AP_CLK.** `vl53l9_init()` writes all three into the device. The
+   rails are two-way enums off the schematic (2.8 or 3.3 V; 1.2 or 1.8 V). **The clock
+   is the serious one: the sensor does not acknowledge its I²C address until a 6-27 MHz
+   external clock is running on AP_CLK** — 12 MHz on every reference design seen. Does
+   the board have an oscillator, or must the nRF54L15 generate it? Either way it must be
+   gated with the sensor domain in stage 4. **The port cannot be finished, and bring-up
+   cannot start, without this.**
 2. **What room, and how big?** One unit covers roughly 3 × 2 m at ceiling height — a
    desk cluster or a small meeting table, not a whole room. Coverage is the binding
    constraint on the test setup and on what the paper can claim.
