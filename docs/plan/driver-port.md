@@ -1,5 +1,12 @@
 # Porting the ST ULD to Zephyr over I²C
 
+> **CORRECTED 2026-09-01.** Written before ST's driver was available, against the
+> VL53L5CX / VL53L8CX "ULD" convention. The VL53L9 driver is a **new generation** with a
+> different API and a different platform contract, so the function table below has been
+> replaced with ST's real one. The *strategy* on this page — implement the platform
+> layer, never modify ST's driver — survived the audit intact, as did all three traps.
+> Full findings: [st-package-audit.md](st-package-audit.md).
+
 Written 2026-08-31. This is stage 1 — everything else is blocked on it.
 
 ## The strategy in one line
@@ -23,7 +30,7 @@ lines; a rewrite is the project.
         |
   Zephyr device driver     vl53l9cx.c        our code, Zephyr idioms
         |                                     device API, devicetree, PM
-  ST ULD                   vl53l9cx_api.c    ST's code, unmodified
+  ST driver                st/vl53l9.c       ST's code, unmodified
         |
   platform layer           vl53l9cx_platform.c  our code, ~150 lines
         |
@@ -36,17 +43,31 @@ sharp — which matters when a bring-up goes quiet.
 
 ## The platform layer — the actual work
 
-ST's ULD for this family expects roughly these (**VERIFY the exact signatures against
-X-CUBE-53L9A1; they are stable across VL53L5CX/L8CX but must be confirmed for L9**):
+ST's contract, source-verified against `st/vl53l9_platform.h` on 2026-09-01. Thirteen
+functions, all returning `int` (`VL53L9_ERROR_NONE` = 0), all taking an opaque
+`void *const p_dev` — into which we pass the Zephyr `struct device *` unchanged:
 
 | ST function | Zephyr implementation |
 |---|---|
-| `VL53L9CX_RdByte` | `i2c_write_read_dt` — 16-bit register index, 1 byte out |
-| `VL53L9CX_WrByte` | `i2c_write_dt` — index + 1 byte |
-| `VL53L9CX_RdMulti` | `i2c_write_read_dt` — index, then N bytes |
-| `VL53L9CX_WrMulti` | `i2c_write_dt` — index + N bytes |
-| `VL53L9CX_WaitMs` | `k_sleep(K_MSEC(n))` |
-| `VL53L9CX_SwapBuffer` | endianness swap, pure C, no Zephyr needed |
+| `vl53l9_read` | `i2c_transfer_dt` — 16-bit BE index, then N bytes |
+| `vl53l9_read8` / `read16` / `read32` | same, 1 / 2 / 4 bytes, byte-swapped on the way out |
+| `vl53l9_read_async` | DMA-backed split read. **Stub to `VL53L9_ERROR_PLATFORM` for bring-up** — the synchronous `vl53l9_get_frame()` path is complete without it |
+| `vl53l9_write` | `i2c_transfer_dt` — index + N bytes, chunked (trap 2) |
+| `vl53l9_write8` / `write16` / `write32` | same, 1 / 2 / 4 bytes |
+| `vl53l9_wait_ms` | `k_sleep(K_MSEC(n))`, busy-wait below one tick (trap 3) |
+| `vl53l9_get_config_vddio` | devicetree enum — **from the schematic** |
+| `vl53l9_get_config_vdda` | devicetree enum — **from the schematic** |
+| `vl53l9_get_config_ext_clock` | devicetree, Hz — **from the schematic** |
+
+Two things to notice. **The sized accessors are not optional** — ST calls `read8` and
+friends directly rather than routing through `read`, and `vl53l9.c` uses them
+constantly. And **there is no `SwapBuffer`**: endianness is handled inside the sized
+accessors, so the byte order convention is ours to get right in four small functions
+rather than in one shared helper.
+
+The three config getters are called by `vl53l9_init()` (`vl53l9.c:163-176`), which
+writes each value into the device. They are **mandatory**, and a wrong value
+misconfigures the analogue front end rather than failing loudly.
 
 ### Three traps in that table
 

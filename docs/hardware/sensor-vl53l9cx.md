@@ -96,8 +96,21 @@ Optical dToF, not radar — so:
 | Firmware blob size | **9,865 bytes**, patch v0.17 | Extraction from X-CUBE-53L9A1 v1.0.0 |
 | Reduced-resolution modes | **Six**: 54×42, 24×20, 18×14, 12×10, 8×6, 4×4 | Driver register map |
 | Per-zone data layout | **6 bytes** — depth, amplitude, ambient as `uint16` | Driver frame parser |
-| I²C address | **0x29 (7-bit)** — 0x52 is the 8-bit form | Driver constant, commented explicitly |
+| I²C address | **0x29 (7-bit)** — 0x52 is the 8-bit form. ⚠ Re-opened 2026-09-01: ST's own code passes 0x52 into a 7-bit HAL field. Scan at bring-up | Community driver constant / ST `VL53L9_DEFAULT_ADDRESS` |
 | Register index width | **16-bit** | Driver register addresses (e.g. `0xD208`) |
+
+## Resolved 2026-09-01 — from X-CUBE-53L9A1 v1.0.0 itself
+
+| Was unknown | Answer | Source |
+|---|---|---|
+| Exact frame size, all six modes | 14,842 / 3,844 / 1,738 / 880 / 516 / 204 bytes | `vl53l9.c:65-84` |
+| Fixed per-frame overhead | **100-byte status line** on every frame, any mode | `VL53L9_STATUS_SIZE` |
+| Does binning preserve the FoV | Yes within the wide family, no across families | `vl53l9_set_binning()` |
+| Sensor power modes | Three: `REGULAR`, `LOW`, `ULTRA_LOW` | `vl53l9_power_mode_t` |
+| Single-shot capture | Supported — `trigger_frame()` + `poll_frame()` | `vl53l9.h` |
+| Two on-device configurations | `CONTEXT_SHORT` / `CONTEXT_LONG`, independent binning and exposure | `vl53l9_set_context()` |
+| Per-frame health telemetry | 8 error bits: VHV, SPAD supply, HV boost, PLL lock, ref array, internal FW | `vl53l9_status_t` |
+| Factory calibration | **2,332 bytes**, retrievable via `vl53l9_get_calib_data()` | `VL53L9_CALIB_DATA_SIZE` |
 
 ## Still open — **VERIFY before designing against**
 
@@ -110,10 +123,13 @@ Optical dToF, not radar — so:
    binning. The datasheet quotes one number; the paper needs the curve.
 4. **Integration time per mode** — the other half of the frame period, alongside bus
    time. At 4×4 the bus is negligible and integration dominates.
-5. **Does binning change the field of view or only the sampling within it?** The crop
-   offsets on the square formats suggest the FoV is preserved and zones are merged, but
-   this must be confirmed before claiming that low-resolution modes cover the same area.
-   **It matters to the counting accuracy claim.**
+5. ~~**Does binning change the field of view or only the sampling within it?**~~
+   **Answered 2026-09-01** from `vl53l9_set_binning()` in ST's driver. Field preserved
+   within the *wide* family — 54×42, 18×14, 12×10 — which merges zones with no crop.
+   The *square* family — 24×20, 8×6, 4×4 — transmits a square array with an on-device
+   crop window and does **not** cover the same vertical field. The paper's central
+   curve therefore uses binning 2 / 6 / 8 only. See
+   [st-package-audit.md](../plan/st-package-audit.md) §4.
 
 ## Software
 

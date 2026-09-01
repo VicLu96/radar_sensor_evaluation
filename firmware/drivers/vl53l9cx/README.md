@@ -1,18 +1,23 @@
 # VL53L9CX Zephyr driver
 
-Out-of-tree Zephyr module wrapping ST's Ultra Lite Driver for I²C.
+Out-of-tree Zephyr module wrapping ST's VL53L9 driver for I²C.
 
 ## Status
 
-**Scaffolding — does not build yet.** What is here is the part that does not depend
-on having ST's source: the platform binding, the devicetree binding, the public API and
-the module plumbing. Two things are still missing:
+**Scaffolding, and part of it is now known wrong.** ST's driver arrived 2026-09-01
+(X-CUBE-53L9A1) and it is a new generation, not the VL53L5CX / VL53L8CX ULD carried
+forward. Three things follow:
 
-1. **ST's ULD**, which is licensed and deliberately not vendored. Download
-   **X-CUBE-53L9A1** from st.com into `vendor/x-cube-53l9a1/`.
-2. **`vl53l9cx.c`** — the Zephyr device wrapper (init, PM actions, frame plumbing).
-   It cannot be written correctly until ST's API is in front of us, and guessing at it
-   would produce code that looks finished and is not.
+1. **`vl53l9cx_platform.[ch]` must be rewritten.** It was written to the L5/L8
+   convention — six `VL53L9CX_RdByte`-style functions returning `uint8_t`. ST's real
+   contract is thirteen functions returning `int`, with an opaque `void *const p_dev`.
+   See `docs/plan/st-package-audit.md` §1.
+2. **`vl53l9cx.c`** — the Zephyr device wrapper (init, PM actions, frame plumbing) is
+   still to write, and can now be written against a visible API rather than guessed at.
+3. **The devicetree binding needs VDDA, VDDIO and the external clock**, which
+   `vl53l9_init()` requires and which come from the schematic.
+
+ST's sources are now in the repo — see `st/PROVENANCE.md`.
 
 ## Layout
 
@@ -22,38 +27,48 @@ Kconfig               options, including the path to ST's sources
 CMakeLists.txt        builds our files plus ST's, unmodified
 dts/bindings/         st,vl53l9cx.yaml
 include/vl53l9cx/     public API
-vl53l9cx_platform.[ch]  THE PORT — ST's hardware hooks on Zephyr I2C
+st/                   ST's driver, byte-identical, BSD-3-Clause — do not edit
+st-reference/         ST's own platform port for STM32H5 — reference, not built
+vl53l9cx_platform.[ch]  THE PORT — ST's hardware hooks on Zephyr I2C (to rewrite)
 vl53l9cx.c            (to write) Zephyr device driver
 ```
 
 ## The design decision
 
-**ST's driver is used unmodified.** We implement the six platform functions it calls
-and wrap the result. Keeping their source byte-identical to the release means their
-updates drop in, and it keeps the line between "our bug" and "their bug" sharp — which
-is worth a great deal when a sensor goes quiet and there is no reference board.
+**ST's driver is used unmodified.** We implement the thirteen platform functions it
+calls and wrap the result. Keeping their source byte-identical to the release means
+their updates drop in, and it keeps the line between "our bug" and "their bug" sharp —
+which is worth a great deal when a sensor goes quiet and there is no reference board.
 
 ## Three traps, all handled in `vl53l9cx_platform.c`
+
+All three are confirmed against ST's source, 2026-09-01.
 
 **1. Register indices are 16-bit.** Zephyr's `i2c_reg_read_byte_dt()` assumes an 8-bit
 register address and will not work here. Every access writes a two-byte big-endian index
 first. This is the most common way this port fails, and it presents as the device
 acknowledging its address then returning nonsense.
 
-**2. The firmware blob arrives as one huge `WrMulti`.** Tens of kilobytes in a single
-logical write. Chunked via `i2c_transfer_dt()` with a two-message transfer, so no
-contiguous index+payload buffer is ever allocated. Chunk size is a devicetree property
-because it is a genuine tuning knob against a cost paid on every cold start.
+**2. The firmware blob arrives as one huge `vl53l9_write()`.** 9,865 bytes in a single
+logical write — `vl53l9.c:179`. Chunked via `i2c_transfer_dt()` with a two-message
+transfer, so no contiguous index+payload buffer is ever allocated. Chunk size is a
+devicetree property because it is a genuine tuning knob against a cost paid on every
+cold start.
 
-**3. `WaitMs` below one tick.** `k_sleep()` cannot resolve sub-tick, so a requested 1 ms
-silently becomes a full tick — at 100 Hz ticks that stretches a blob upload tenfold. The
-platform layer busy-waits below a tick and sleeps above it.
+**3. `vl53l9_wait_ms` below one tick.** `k_sleep()` cannot resolve sub-tick, so a
+requested 1 ms silently becomes a full tick — at 100 Hz ticks that stretches a blob
+upload tenfold. The platform layer busy-waits below a tick and sleeps above it.
 
-## Address
+## Address — **VERIFY**, the sources disagree
 
-ST documents the device as `0x52`. That is the **8-bit** write address; devicetree
-`reg` wants the **7-bit** address, `0x29`. **VERIFY** — this one bites almost everyone
-once, and the symptom is a device that never acknowledges.
+The community Python driver uses **0x29** 7-bit (`0x52` 8-bit) and works over Linux
+I²C. ST defines `VL53L9_DEFAULT_ADDRESS (0x52)` and passes it straight into
+`I3C_PrivateTypeDef.TargetAddr`, which the STM32 HAL documents as a **7-bit** field.
+One of the two is a shift error.
+
+Expect the device at **0x29**; if nothing acknowledges, scan and check 0x52 before
+suspecting anything else. This one bites almost everyone once, and the symptom is a
+device that never acknowledges.
 
 ## Power management
 

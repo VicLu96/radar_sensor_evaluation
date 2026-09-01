@@ -194,3 +194,66 @@ it is unknown and a static-scene noise characterisation answers it cheaply.
 Expected to be wrong if: the intended room is much larger than one unit covers, in which
 case either the scope narrows to "desk cluster" explicitly or the product becomes
 multi-unit, which is a different paper.
+
+## 2026-09-01 — X-CUBE-53L9A1 acquired; ST's BSD-3-Clause driver tracked in-repo
+What: Victor supplied X-CUBE-53L9A1 (STM32CubeExpansion_53L9A1_V1.0.0). The full 39 MB
+package lives at `vendor/x-cube-53l9a1/` and stays gitignored. The two BSD-3-Clause
+pieces we build against are copied byte-identical into the repo and ARE tracked:
+`Drivers/BSP/Components/vl53l9/` to `firmware/drivers/vl53l9cx/st/`, and
+`Utilities/vl53l9-common/` to `firmware/drivers/vl53l9cx/st-reference/`.
+Why: the earlier rule ("ST packages are licensed, never vendored") was written before
+the terms were read. The package SBOM in `Package_license.md` licenses the driver and
+the reference platform port as BSD-3-Clause; only the middleware and the NUCLEO demo
+projects are SLA0111, and neither is needed. Tracking the driver makes the build
+reproducible from a clone; excluding the SLA parts and the 35 MB of STM32H5 HAL and
+CMSIS keeps the repo honest and small.
+Consequence: stage 1 is unblocked. Full audit in `docs/plan/st-package-audit.md`.
+Expected to be wrong if: a future release relicenses the component, or ST's terms are
+read differently by whoever reviews the paper's artifact release. The copyright notices
+are retained in every file, which is what BSD-3-Clause asks for.
+
+## 2026-09-01 — The platform scaffolding is wrong and will be rewritten
+What: `firmware/drivers/vl53l9cx/vl53l9cx_platform.[ch]` was written to the
+VL53L5CX / VL53L8CX ULD convention — six functions, `uint8_t VL53L9CX_RdByte(...)`, a
+named `VL53L9CX_Platform` struct. ST's VL53L9 driver is a new generation and none of
+that is right. The real contract is thirteen functions returning `int`, taking an
+opaque `void *const p_dev`, including sized accessors (`read8/16/32`, `write8/16/32`)
+that ST calls directly, an async DMA read, and three board-config getters.
+Why: source-verified against `vl53l9_platform.h`.
+Consequence: the rewrite is the immediate next task, and it is a smaller job than it
+sounds — the opaque `p_dev` means the Zephyr `struct device *` passes straight through,
+and there is no `SwapBuffer` to get right. Three genuine gains: `read_async` can be
+stubbed for bring-up because the synchronous frame path is complete; the sized
+accessors localise every endianness decision; and the three config getters (VDDA,
+VDDIO, external clock) turn a hardware curiosity into a **blocking** schematic question,
+because `vl53l9_init()` writes all three into the device and a wrong value
+misconfigures the analogue front end rather than failing loudly.
+What survived the audit unchanged: the strategy (implement the platform layer, never
+modify ST's driver) and all three documented traps — 16-bit big-endian register index,
+the firmware blob as one 9,865-byte write, and sub-tick `wait_ms`.
+Expected to be wrong if: nothing here is guesswork; it is ST's header.
+
+## 2026-09-01 — Frame sizes corrected; the energy-accuracy curve narrows and changes shape
+What: two numbers the paper depends on were wrong, both from counting zone data only.
+1. A 54x42 frame is **14,842 bytes, not 13,608** — the 1,134-byte DSS array and a fixed
+   100-byte status line were missed (`vl53l9.c:65-84`). At 400 kHz that is ~404 ms
+   rather than ~370 ms, and the bus ceiling is ~2.5 fps rather than ~2.7.
+2. The span across the six modes is **72.8x, not ~150x**. The 100-byte status line is a
+   fixed floor: at 4x4 the frame is 204 bytes, of which half is status.
+Why: source-verified against ST's driver.
+Consequence: correction 1 is immaterial for room dwell at 0.1 Hz and mildly worse for
+the doorway demo, which was already marginal. Correction 2 matters more, and is
+arguably a better result than the clean 150x would have been - the curve **flattens
+hard at the low end**, so dropping below 12x10 buys almost nothing on the bus, and the
+optimum sits mid-range rather than at the bottom. A fixed per-frame overhead that
+dominates the cheapest mode generalises to any zone-count sweep on a serial bus, which
+is a more portable finding than one part's numbers.
+Also resolved: **binning preserves the field of view within the wide family only.**
+54x42, 18x14 and 12x10 merge zones with no crop; 24x20, 8x6 and 4x4 transmit a square
+array with an on-device crop window and cover a different vertical field
+(`vl53l9_set_binning()`). So the paper's central curve is binning 2 / 6 / 8 - three
+like-for-like points spanning 2268 to 120 zones, 18.9x - and the square modes are
+reported separately. This closes the open question raised on 2026-08-31.
+Expected to be wrong if: integration time, not bus time, dominates at low resolution -
+which would change the shape of the energy curve without changing these byte counts.
+Still VERIFY, and now the most valuable cheap measurement at bring-up.

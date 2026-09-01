@@ -19,12 +19,22 @@ where they sit, because discovering it during experiments would be expensive.
 
 ## What the bus allows
 
-A 54×42 frame is 2268 zones × 6 bytes = **13,608 bytes**, plus a status line.
+> **Numbers corrected 2026-09-01** against ST's source. A 54×42 frame is **14,842
+> bytes**, not 13,608: the estimate below counted the three 16-bit zone planes and
+> missed the 1,134-byte DSS array and the fixed 100-byte status line
+> (`vl53l9.c:65-84`). Everything in this section is ~9% optimistic; corrected figures
+> are in the right-hand columns.
 
-| I²C clock | Effective | Transfer | Max fps (bus alone) |
-|---|---|---|---|
-| 400 kHz | ~40 KB/s | **~370 ms** | **~2.7** |
-| **1 MHz** | ~100 KB/s | **~148 ms** | **~6.7** |
+A 54×42 frame is 2268 zones × 6 bytes = 13,608 bytes of zone data, **plus 1,134 bytes
+of DSS and a 100-byte status line = 14,842 bytes on the wire**.
+
+| I²C clock | Effective | Transfer (est.) | **Transfer (actual)** | Max fps (est.) | **Max fps (actual)** |
+|---|---|---|---|---|---|
+| 400 kHz | ~40 KB/s | ~370 ms | **~404 ms** | ~2.7 | **~2.5** |
+| **1 MHz** | ~100 KB/s | ~148 ms | **~162 ms** | ~6.7 | **~6.2** |
+
+The full six-mode table, and why the fixed status line flattens the low end of the
+energy-accuracy curve, is in [st-package-audit.md](st-package-audit.md) §3.
 
 Integration time adds to this and is **VERIFY** — but the bus is clearly the dominant
 term at full resolution.

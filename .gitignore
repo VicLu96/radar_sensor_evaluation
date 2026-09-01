@@ -12,7 +12,10 @@ __pycache__/
 # Keep the scenario definitions and the derived results, not the raw frames.
 data/raw/
 
-# ST packages - licensed, downloaded locally, never vendored
+# Third-party packages downloaded locally, not redistributed here.
+# The BSD-3-Clause parts of X-CUBE-53L9A1 that we actually build against are
+# copied into firmware/drivers/vl53l9cx/st{,-reference}/ and ARE tracked.
+# See docs/plan/st-package-audit.md for the licensing breakdown.
 vendor/
 
 # OS / editor
