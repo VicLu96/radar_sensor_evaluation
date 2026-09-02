@@ -4,33 +4,55 @@ Out-of-tree Zephyr module wrapping ST's VL53L9 driver for I²C.
 
 ## Status
 
-**Scaffolding, and part of it is now known wrong.** ST's driver arrived 2026-09-01
-(X-CUBE-53L9A1) and it is a new generation, not the VL53L5CX / VL53L8CX ULD carried
-forward. Three things follow:
+**Written, complete, and never compiled.** As of 2026-09-01 the port exists in full —
+platform layer, Zephyr driver, devicetree binding, power management — written against
+ST's real API rather than guessed at. What it has not done is meet a compiler or a
+sensor.
 
-1. **`vl53l9cx_platform.[ch]` must be rewritten.** It was written to the L5/L8
-   convention — six `VL53L9CX_RdByte`-style functions returning `uint8_t`. ST's real
-   contract is thirteen functions returning `int`, with an opaque `void *const p_dev`.
-   See `docs/plan/st-package-audit.md` §1.
-2. **`vl53l9cx.c`** — the Zephyr device wrapper (init, PM actions, frame plumbing) is
-   still to write, and can now be written against a visible API rather than guessed at.
-3. **The devicetree binding needs VDDA, VDDIO and the external clock**, which
-   `vl53l9_init()` requires and which come from the schematic.
+Be precise about what that means:
 
-ST's sources are now in the repo — see `st/PROVENANCE.md`.
+| | |
+|---|---|
+| ST's 13 platform functions | **Implemented.** Signatures checked one by one against `st/vl53l9_platform.h` |
+| Every ST function this driver calls | **Checked** against `st/vl53l9.h` — names, arity, argument types |
+| Frame layout, byte counts, binning geometry | **Read out of ST's source**, not estimated |
+| Compiles | **Unknown.** No toolchain on the machine this was written on |
+| Runs | **Unknown.** No hardware |
+| Three board values | **Missing.** `vdda-microvolt`, `vddio-microvolt`, `ext-clock-frequency` are `required: true`, so a board file that omits one fails at build time rather than misbehaving at run time |
+
+So: first compile is expected to surface ordinary mistakes — a missing include, a
+Zephyr API that moved. Treat that as normal. What should *not* need rework is the
+shape of the port, because that came from ST's headers rather than from the VL53L5CX
+family conventions the earlier scaffolding assumed.
+
+## First bring-up, in order
+
+The board has no known-good reference, so the order matters more than usual:
+
+1. **Scope AP_CLK.** No clock, no ACK — the sensor is silent without it and looks dead.
+2. **Probe 0x29** in read-byte mode. Not a general `i2cdetect` sweep: the device does
+   not support the empty START+STOP transactions it uses to probe some ranges and such
+   a scan can wedge it.
+3. **Watch the blob upload on a logic analyser.** 9,865 bytes, chunked. Its duration is
+   also a measurement the power model needs — `vl53l9cx_last_boot_ms()`.
+4. **Log the status line from the first frame.** Eight health bits, and on this board
+   they are the only second opinion available.
+5. **Point it at an asymmetric scene** before trusting any spatial logic — the driver
+   does not rotate or flip, and the community Python driver flips by default.
 
 ## Layout
 
 ```
 zephyr/module.yml     registers this as an out-of-tree module
-Kconfig               options, including the path to ST's sources
+Kconfig               options
 CMakeLists.txt        builds our files plus ST's, unmodified
 dts/bindings/         st,vl53l9cx.yaml
-include/vl53l9cx/     public API
+include/vl53l9cx/     public API — frames, not Zephyr sensor channels
 st/                   ST's driver, byte-identical, BSD-3-Clause — do not edit
 st-reference/         ST's own platform port for STM32H5 — reference, not built
-vl53l9cx_platform.[ch]  THE PORT — ST's hardware hooks on Zephyr I2C (to rewrite)
-vl53l9cx.c            (to write) Zephyr device driver
+vl53l9cx_platform.c   THE PORT — ST's 13 hardware hooks on Zephyr I2C
+vl53l9cx_private.h    config/data structs shared by the two .c files
+vl53l9cx.c            Zephyr device driver: init, PM, frame plumbing
 ```
 
 ## The design decision
@@ -59,17 +81,17 @@ cold start.
 requested 1 ms silently becomes a full tick — at 100 Hz ticks that stretches a blob
 upload tenfold. The platform layer busy-waits below a tick and sleeps above it.
 
-## Address — **VERIFY**, the sources disagree
+## Address — resolved
 
-The community Python driver uses **0x29** 7-bit (`0x52` 8-bit) and works over Linux
-I²C. ST defines `VL53L9_DEFAULT_ADDRESS (0x52)` and passes it straight into
-`I3C_PrivateTypeDef.TargetAddr`, which the STM32 HAL documents as a **7-bit** field.
-One of the two is a shift error.
+**0x29 is the 7-bit address.** Put that in devicetree `reg`.
 
-Expect the device at **0x29**, and check 0x52 if nothing answers. Probe the two
-addresses **individually, in read-byte mode** — the device does not support the empty
-START+STOP transactions a general `i2cdetect` sweep uses to probe some ranges, and such
-a scan can wedge it.
+The sources looked like they disagreed: ST defines `VL53L9_DEFAULT_ADDRESS (0x52)` and
+their STM32 sample passes it straight into a HAL field documented as 7-bit, while the
+community Python driver uses 0x29 and demonstrably works. ST's own driver settles it —
+`vl53l9_set_com_config()` writes `address >> 1` into the device's address register and
+`vl53l9_get_com_config()` reads it back shifted left (`st/vl53l9.c:203-227`). So ST's
+`address` field is the 8-bit form throughout, 0x29 is the real 7-bit address, and their
+sample has a shift bug.
 
 **Before blaming the address, check the clock.** The sensor needs 6-27 MHz on AP_CLK
 (12 MHz on every reference design) and **does not acknowledge its I²C address at all
@@ -80,9 +102,14 @@ far more likely to be a missing clock than a wrong address.
 
 `SUSPEND` and `TURN_OFF` are deliberately distinct:
 
-- **SUSPEND** — stop ranging, sensor standby, rail stays up, firmware retained
-- **TURN_OFF** — drop the board's sensor power domain; the next resume pays a full
-  firmware blob reload, which is seconds of I²C traffic
+- **SUSPEND** — stop ranging, `VL53L9_POWER_ULTRA_LOW`, rail and clock stay up,
+  firmware retained. Cheap to resume.
+- **TURN_OFF** — drop XSHUT, gate AP_CLK, drop the sensor power domain. Zero standby
+  current, but the next resume pays a full firmware blob reload: 9,865 bytes, about
+  250 ms at 400 kHz.
+
+ST gives three power modes (`REGULAR`, `LOW`, `ULTRA_LOW`), which was not in the plan
+and adds a third axis to the stage-4 sweep at the cost of a register write.
 
 Keeping them separate makes the idle-strategy crossover a runtime choice rather than a
 rebuild, so the stage-4 energy sweep is a configuration matrix instead of four firmware

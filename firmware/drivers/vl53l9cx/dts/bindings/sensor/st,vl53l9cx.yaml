@@ -5,19 +5,83 @@ description: |
   STMicroelectronics VL53L9CX direct time-of-flight 3D LiDAR module.
 
   Up to 54x42 = 2268 zones, 5 cm to 8.8 m, over I2C. The part also supports
-  MIPI I3C on the same SDA/SCL pins; this binding covers the I2C connection
-  only.
+  MIPI I3C and CSI-2; this binding covers the I2C connection only.
 
-  NOTE ON THE ADDRESS. ST documents the device address as 0x52, which is the
-  8-bit write address. Zephyr's "reg" is the 7-bit address, so it is 0x29.
-  Writing 0x52 here is a common mistake and presents as the device never
-  acknowledging.
+  This binding mirrors ST's own vl53l9_device_t (Utilities/vl53l9-common/
+  vl53l9_interface.h), which is effectively their statement of what a board
+  must provide.
+
+  THE ADDRESS. ST's VL53L9_DEFAULT_ADDRESS is 0x52, which is the 8-BIT form.
+  Their own vl53l9_set_com_config() writes `address >> 1` into the device's
+  address register, which settles it: the 7-bit address is 0x29, and that is
+  what Zephyr's "reg" wants. (ST's STM32 sample passes 0x52 straight into a
+  HAL field documented as 7-bit; that is a bug in their sample, not a second
+  address.)
+
+  BEFORE BLAMING THE ADDRESS, CHECK THE CLOCK. The sensor does not acknowledge
+  its I2C address at all until AP_CLK is running — see ext-clock-frequency.
 
 compatible: "st,vl53l9cx"
 
 include: [i2c-device.yaml]
 
 properties:
+  vdda-microvolt:
+    type: int
+    required: true
+    enum: [2800000, 3300000]
+    description: |
+      Analogue supply rail the board implements. REQUIRED and deliberately
+      without a default.
+
+      ST's driver takes this as a two-way choice, not a measurement:
+      vl53l9_init() writes it into the device (VDDA_2V8 = 0, VDDA_3V3 = 1) and
+      a wrong value misconfigures the analogue front end rather than failing
+      loudly. Guessing it would produce firmware that runs and lies.
+
+  vddio-microvolt:
+    type: int
+    required: true
+    enum: [1200000, 1800000]
+    description: |
+      I/O supply rail the board implements. REQUIRED, same reasoning as
+      vdda-microvolt (VDDIO_1V2 = 0, VDDIO_1V8 = 1).
+
+      Note this is also the logic level AP_CLK must be driven at.
+
+  ext-clock-frequency:
+    type: int
+    required: true
+    description: |
+      Frequency of the external clock on AP_CLK / HOST_CLKIN, in Hz. Legal
+      range 6-27 MHz; 12 MHz on every reference design seen (ST's NUCLEO
+      sample, the Arduino/Pico port, the STEVAL board's onboard oscillator).
+
+      THIS IS A BRING-UP GATE, NOT A TUNING VALUE. The sensor does not
+      acknowledge its I2C address until this clock is running, so a missing or
+      stopped clock is indistinguishable from a dead sensor or a wiring fault.
+      vl53l9_init() also writes the value into the device, so it must match
+      what the pin actually sees.
+
+      Set this whether the clock comes from a board oscillator or from the MCU;
+      add clock-pwms only in the latter case.
+
+  clock-pwms:
+    type: phandle-array
+    description: |
+      PWM channel driving AP_CLK, when the MCU generates the clock rather than
+      the board carrying its own oscillator.
+
+      Present because it changes the driver's behaviour, not just its wiring:
+      if this is set, the driver starts the PWM before any I2C contact and
+      stops it on PM_DEVICE_ACTION_TURN_OFF. Gating it matters — a 12 MHz
+      output left running through the >90% of the duty cycle when the sensor
+      is off would quietly spend part of the energy budget this project exists
+      to measure.
+
+      Omit if a board oscillator supplies the clock; then its enable line, if
+      any, belongs on power-gpios for the same reason.
+
   xshut-gpios:
     type: phandle-array
     description: |
@@ -25,15 +89,23 @@ properties:
       reset. Required for a deterministic power-on sequence and to bring
       several sensors up on one bus.
 
+      Must be ACTIVELY DRIVEN high — the pin has no internal pull-up. The
+      device then NAKs for some milliseconds after the rising edge while its
+      ROM boots; ST's driver polls through that, so a first NAK is not a
+      failure.
+
   int-gpios:
     type: phandle-array
     description: |
-      Data-ready interrupt output from the sensor, active low.
+      Data-ready interrupt output from the sensor.
 
       Optional, but strongly recommended: polling for frame completion keeps
       the CPU awake across the sensor's integration time, which is exactly the
-      energy this design exists to avoid. Without it, the driver falls back to
-      polling and says so at init.
+      energy this design exists to avoid. Without it the driver falls back to
+      polling and warns at init.
+
+      The driver configures the device for interrupt-pad signalling rather than
+      an in-band interrupt, because there is no IBI on plain I2C.
 
   power-gpios:
     type: phandle-array
@@ -42,8 +114,8 @@ properties:
 
       Present because this board can gate the sensor domain independently of
       the MCU. Dropping the domain removes standby current entirely but costs a
-      full firmware blob reload on the next wake, which is seconds of I2C
-      traffic. The driver models this as PM_DEVICE_ACTION_TURN_OFF, distinct
+      full firmware blob reload on the next wake — 9,865 bytes, about 250 ms at
+      400 kHz. The driver models this as PM_DEVICE_ACTION_TURN_OFF, distinct
       from SUSPEND, so the trade can be measured rather than assumed.
 
   blob-chunk-size:

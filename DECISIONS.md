@@ -257,3 +257,68 @@ reported separately. This closes the open question raised on 2026-08-31.
 Expected to be wrong if: integration time, not bus time, dominates at low resolution -
 which would change the shape of the energy curve without changing these byte counts.
 Still VERIFY, and now the most valuable cheap measurement at bring-up.
+
+## 2026-09-01 — The I2C address is settled: 0x29, and ST's sample has a shift bug
+What: the 7-bit address is 0x29. `VL53L9_DEFAULT_ADDRESS (0x52)` is the 8-bit form.
+Why: ST's own driver decides it. `vl53l9_set_com_config()` writes `address >> 1` into
+the device's address register and `vl53l9_get_com_config()` reads it back shifted left
+(st/vl53l9.c:203-227). So ST treats their `address` field as the 8-bit form throughout,
+and their STM32 sample passing 0x52 into a HAL field documented as 7-bit is a bug in the
+sample rather than evidence of a second address. This closes the VERIFY opened earlier
+today.
+Consequence: devicetree `reg = <0x29>`. Still probe it rather than assume, and probe it
+individually in read-byte mode - not with a general i2cdetect sweep, which uses empty
+START+STOP transactions the device does not support and can wedge it.
+Expected to be wrong if: the board straps the device to a non-default address.
+
+## 2026-09-01 — Stage 1 driver written in full, against ST's API, without a compiler
+What: the complete Zephyr port now exists - `vl53l9cx_platform.c` (ST's 13 functions),
+`vl53l9cx.c` (init, PM, frame plumbing), `vl53l9cx_private.h`, a rewritten devicetree
+binding, and a corrected public API. The old L5/L8-shaped scaffolding is gone.
+Why: Victor asked to prepare the port while the three board values are still outstanding.
+Everything except those three values is knowable from ST's source, and waiting would
+have left the whole of stage 1 idle for a schematic lookup.
+What is verified, and what is not - stated plainly because the difference matters:
+- VERIFIED: all 13 platform signatures against st/vl53l9_platform.h; every ST function
+  the driver calls, checked name-by-name against st/vl53l9.h; the frame wire layout
+  (three PLANES then DSS then a 100-byte status line, little-endian, depth in bits 14:0)
+  against vl53l9_get_frame() and ST's own parse helper; binning geometry and buffer
+  sizes against vl53l9_set_binning() and RAW_BUFFER_SIZE.
+- NOT VERIFIED: it has never been compiled. There is no C toolchain on this machine and
+  no nRF Connect SDK workspace. First build will surface ordinary mistakes.
+Three design decisions worth recording:
+1. `p_dev` is the Zephyr `struct device *` passed straight through. ST never
+   dereferences it, so the port needs no shadow struct - this is why the new contract is
+   easier than the one the scaffolding assumed, not harder.
+2. `vl53l9_read_async()` returns VL53L9_ERROR_PLATFORM rather than quietly running
+   synchronously. A caller that believes a transfer is in flight and reads early gets a
+   torn frame, which looks exactly like a sensor fault. The synchronous frame path is
+   complete without it.
+3. The three board values are `required: true` in the binding, with no defaults. A
+   board file that omits one fails to build. Defaulting them would produce firmware that
+   runs and lies, because a wrong VDDA or VDDIO misconfigures the analogue front end
+   rather than failing loudly.
+Also changed the public API: `vl53l9cx_start()` now takes a period in milliseconds
+rather than a rate in `uint8_t` Hz, which could not express the 0.05-0.2 Hz that room
+dwell actually needs, and a `vl53l9cx_capture()` single-shot entry point was added
+because that - not autonomous streaming - is the dwell path that makes the duty cycle
+low enough to matter.
+Expected to be wrong if: the first compile shows a Zephyr API has moved, or the frame
+orientation needs a flip - the hardware-validated Python driver flips 180 degrees by
+default and this driver deliberately does not, leaving orientation to the board file.
+
+## 2026-09-01 — If the MCU must source AP_CLK, PWM is probably the wrong peripheral
+What: the binding accepts `clock-pwms` so the nRF54L15 can generate AP_CLK, and the
+driver starts it before any I2C contact and gates it on TURN_OFF. But 12 MHz is a
+demanding ask of a general-purpose PWM: from a 16 MHz base a divider gives 16, 8 or
+5.33 MHz, not 12, and an 83 ns period leaves no duty resolution.
+Why it is recorded rather than solved: which way this goes depends on the schematic. If
+the board carries its own oscillator the question disappears. If not, the options are a
+clock output or a TIMER/GPIOTE/PPI path instead of PWM, or - since the legal range is
+6-27 MHz - choosing a divider-friendly frequency such as 8 MHz and writing that into
+`ext-clock-frequency`.
+Consequence: the devicetree can express the intent either way, so this does not block
+the port. It does block bring-up if the board has no oscillator.
+Expected to be wrong if: the nRF54L15 PWM has a clock source or mode that reaches 12 MHz
+cleanly - worth ten minutes with the product specification before building anything
+exotic.

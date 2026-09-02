@@ -5,39 +5,31 @@ config VL53L9CX
 	default y
 	depends on DT_HAS_ST_VL53L9CX_ENABLED
 	select I2C
+	select PWM if $(dt_compat_any_has_prop,$(DT_COMPAT_ST_VL53L9CX),clock-pwms)
 	help
 	  Driver for the VL53L9CX dToF LiDAR module (up to 54x42 zones) over
-	  I2C, wrapping ST's Ultra Lite Driver.
+	  I2C, wrapping ST's VL53L9 driver from X-CUBE-53L9A1. ST's sources are
+	  vendored under st/ — see st/PROVENANCE.md.
 
 if VL53L9CX
 
-config VL53L9CX_ULD_PATH
-	string "Path to ST X-CUBE-53L9A1 ULD sources"
-	default "../../../vendor/x-cube-53l9a1"
+config VL53L9CX_INIT_PRIORITY
+	int "Init priority"
+	default 90
 	help
-	  ST's package is licensed and is not vendored into this repository.
-	  Download X-CUBE-53L9A1 and point this at its driver directory. The
-	  build fails with a clear message if the path does not resolve.
-
-config VL53L9CX_FRAME_BUF_COUNT
-	int "Frame buffers"
-	default 2
-	range 1 4
-	help
-	  A full 54x42 frame is roughly 9 KB. Two buffers allow the next frame
-	  to be received while the previous one is processed; one is enough if
-	  processing is faster than the ~225 ms an I2C frame read takes at
-	  400 kHz. Each buffer costs real RAM out of 256 KB, so do not raise
-	  this without a reason.
+	  Must be after the I2C, GPIO and (where used) PWM drivers. Not tied to
+	  CONFIG_SENSOR_INIT_PRIORITY because this driver deliberately does not
+	  use Zephyr's sensor subsystem — see include/vl53l9cx/vl53l9cx.h.
 
 config VL53L9CX_LOG_BOOT_TIME
 	bool "Log firmware blob upload duration at init"
 	default y
 	help
-	  The blob upload happens on every cold start and takes seconds over
-	  I2C. Its duration decides whether powering the sensor domain down
-	  during idle beats keeping it in standby, so it is a measurement
-	  rather than a debug line. Leave this on.
+	  The 9,865-byte blob upload happens on every cold start and takes
+	  roughly 250 ms at 400 kHz. Its duration decides whether powering the
+	  sensor domain down during idle beats keeping it in standby, so it is
+	  a measurement rather than a debug line. Leave this on — it is also
+	  available at runtime via vl53l9cx_last_boot_ms().
 
 module = VL53L9CX
 module-str = VL53L9CX

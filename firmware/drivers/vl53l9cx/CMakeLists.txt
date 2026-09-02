@@ -11,19 +11,17 @@ if(CONFIG_VL53L9CX)
     vl53l9cx.c
   )
 
-  # ST code: used unmodified so their updates drop in cleanly and the
-  # boundary between our bugs and theirs stays sharp.
-  set(ULD ${CMAKE_CURRENT_SOURCE_DIR}/${CONFIG_VL53L9CX_ULD_PATH})
-  if(NOT EXISTS ${ULD})
-    message(FATAL_ERROR
-      "ST ULD sources not found at ${ULD}.\n"
-      "Download X-CUBE-53L9A1 from st.com and place it there, or set "
-      "CONFIG_VL53L9CX_ULD_PATH. The package is licensed and is deliberately "
-      "not vendored into this repository.")
-  endif()
+  # ST's driver, byte-identical to X-CUBE-53L9A1 v1.0.0 and BSD-3-Clause.
+  # Vendored here (see st/PROVENANCE.md) so a clone builds without anyone
+  # re-downloading a 39 MB package from st.com. Used unmodified so their
+  # updates drop in cleanly and the boundary between our bugs and theirs
+  # stays sharp.
+  zephyr_library_include_directories(st)
+  zephyr_library_sources(st/vl53l9.c)
 
-  zephyr_library_include_directories(${ULD})
-  # VERIFY the actual filenames against the downloaded package.
-  zephyr_library_sources(${ULD}/vl53l9cx_api.c)
+  # ST's driver is third-party code held byte-identical; do not let our
+  # warning settings force edits to it.
+  set_source_files_properties(st/vl53l9.c
+    PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter")
 
 endif()

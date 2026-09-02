@@ -2,8 +2,9 @@
 Last updated: 2026-09-01
 
 ## What exists
-Research, planning, and driver scaffolding. **No firmware builds yet, no hardware
-measured.** ST's driver arrived today and stage 1 is unblocked.
+Research, planning, and **the stage-1 driver written in full** — platform layer, Zephyr
+driver, binding, power management. **Never compiled, never run.** No toolchain on this
+machine and no hardware.
 
 | Document | What it holds |
 |---|---|
@@ -32,39 +33,35 @@ measured.** ST's driver arrived today and stage 1 is unblocked.
   the full 39 MB package stays gitignored at `vendor/x-cube-53l9a1/`
 
 ## Project shape — Victor's four stages
-1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(in progress)*
+1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(written; needs a
+   build)*
 2. **Telemetry** — frames/counts over BLE to a web interface
 3. **Algorithm** — on-device occupancy and dwell detection
 4. **Power** — per-domain gating and duty-cycle optimisation. **Last on purpose**, and
    where the paper is
 
 ## Next session — TODO, in order
-1. **Rewrite `vl53l9cx_platform.[ch]`** against ST's real thirteen-function contract.
-   The current file is written to the L5/L8 convention and is wrong. Unblocked, offline,
-   and everything else waits on it.
-2. **Write `vl53l9cx.c`** — the Zephyr device wrapper: init, PM actions (`SUSPEND` /
-   `TURN_OFF`), frame plumbing. Now writable against a visible API.
-3. **Extend the devicetree binding** with `vdda`, `vddio`, `ext-clock-frequency`,
-   `xshut-gpios`, `int-gpios` — mirroring ST's own `vl53l9_device_t`. **Blocked on the
-   schematic** for the three values.
-4. **Set `output_interface` and `signaling_mode`** for interrupt-pad signalling, not
-   in-band interrupt — there is no IBI on plain I²C.
-5. **Log `vl53l9_get_status()` from the first frame.** Eight health bits, and on a board
-   with no reference they are the only second opinion available.
-6. At bring-up, in this order: **scope AP_CLK first** (no clock, no ACK), then probe
-   0x29 and 0x52 **individually in read-byte mode** — a general `i2cdetect` scan uses
-   empty START+STOP transactions the device does not support and can wedge it. Then
-   capture, cheaply and immediately: **blob upload duration** and **integration time per
-   binning mode**, the last unknown in the frame budget.
+1. **Get it to compile.** Needs an nRF Connect SDK workspace and a board file; neither
+   exists yet, and there is no C toolchain on this machine. Expect ordinary first-build
+   errors — a missing include, a moved Zephyr API. The *shape* of the port came from
+   ST's headers and should not need rework.
+2. **Write the board devicetree node.** Blocked on three values only:
+   `vdda-microvolt`, `vddio-microvolt`, `ext-clock-frequency`. They are `required: true`
+   on purpose, so the build fails rather than the firmware lying.
+3. **Decide how AP_CLK is sourced** — board oscillator, or MCU. If MCU, PWM probably
+   cannot make 12 MHz cleanly; see DECISIONS 2026-09-01.
+4. **Pin the nRF Connect SDK version in `west.yml`** — the workspace does not exist yet,
+   so this has never been done.
+5. Then bring-up, in the order in `firmware/drivers/vl53l9cx/README.md`: scope AP_CLK,
+   probe 0x29, watch the blob upload, log the status line, check orientation.
 
 ## The two questions that gate everything
-1. **VDDA, VDDIO and AP_CLK.** `vl53l9_init()` writes all three into the device. The
-   rails are two-way enums off the schematic (2.8 or 3.3 V; 1.2 or 1.8 V). **The clock
-   is the serious one: the sensor does not acknowledge its I²C address until a 6-27 MHz
-   external clock is running on AP_CLK** — 12 MHz on every reference design seen. Does
-   the board have an oscillator, or must the nRF54L15 generate it? Either way it must be
-   gated with the sensor domain in stage 4. **The port cannot be finished, and bring-up
-   cannot start, without this.**
+1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
+   3.3 V; 1.2 or 1.8 V) and the driver will not build without them. **The clock is the
+   serious one: the sensor does not acknowledge its I²C address until a 6-27 MHz
+   external clock is running on AP_CLK** — 12 MHz on every reference design. Does the
+   board have an oscillator, or must the nRF54L15 generate it? Either way it must be
+   gated with the sensor domain in stage 4.
 2. **What room, and how big?** One unit covers roughly 3 × 2 m at ceiling height — a
    desk cluster or a small meeting table, not a whole room. Coverage is the binding
    constraint on the test setup and on what the paper can claim.
@@ -81,6 +78,11 @@ The VL53L9CX shipped mid-2026. **The characterisation gap this paper occupies is
 because the part is new, and it will not stay open.** Sequencing matters more than usual.
 
 ## Last session
+- 2026-09-01 (later): Wrote the whole stage-1 port against ST's API — 13 platform
+  functions, the Zephyr driver, PM actions, a rewritten binding. Every ST symbol checked
+  against their headers; nothing compiled. Also settled the I²C address at 0x29 from
+  ST's own `set_com_config()`, and changed the public API to take a frame *period* in ms
+  rather than a rate in Hz, because dwell needs 0.05-0.2 Hz.
 - 2026-09-01: Victor supplied X-CUBE-53L9A1. Audited it, tracked the BSD-3-Clause driver
   and ST's reference platform port in-repo, and corrected three things it exposed: the
   platform scaffolding follows the wrong driver generation, 54×42 frames are 14,842
