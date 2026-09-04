@@ -36,8 +36,9 @@ schematic and the pin assignments.
   in that message** — see CLAUDE.md. `firmware/boards/pbl/vl53l9_node/` was Claude's
   placeholder and is superseded
 - **AP_CLK is P0.13**, 8 MHz from `pwm20` (Victor, 2026-09-04)
-- **SPI chip select (P2.05) is driven by the port file**, not `cs-gpios` (Victor,
-  2026-09-04). `sdhc0` is disabled because the two cannot both own the pin
+- **SPI chip select is P0.00**, driven by the port file, not `cs-gpios` (Victor,
+  2026-09-04; corrected from P2.05 the same day). `sdhc0` is disabled because the two
+  cannot both own the pin. P2.05 is therefore free
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —
   people who STAY. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"

@@ -580,3 +580,20 @@ Expected to be wrong if: the peripheral instance names. `i2c21`, `spi20`, `pwm20
 `gpiote20/30` are chosen to match the pin domains but are the remaining guess in this
 file. A "node does not exist" error means diffing against
 zephyr/boards/nordic/nrf54l15dk/ in the installed SDK, which settles all of them at once.
+
+## 2026-09-04 - Correction: SPI chip select is P0.00, not P2.05
+What: Victor corrected the pin. CS is **P0.00**. The earlier entry on this page giving
+P2.05 stands as written, per the append-only rule, and is superseded by this one.
+Consequence, and it is small because CS was never in the devicetree: chip select is
+driven in software from the port file, so it appears only in comments. Those are
+corrected, along with the `cs-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>` fallback in the review
+document. No functional change to any board file - the diff is comment lines only.
+Two things this does change:
+1. `&gpio0` is no longer merely enabled out of caution. It is the port chip select lives
+   on, so it has to be enabled, and it happens to be the one the original board file
+   already had right.
+2. **P2.05 is now free.**
+Worth noting for the domain question: a plain GPIO has no power-domain tie to the SPI
+peripheral, so CS on P0 alongside SPI signals on P2 is fine. Only pinctrl signals are
+constrained to their peripheral's domain - which is exactly why AP_CLK on P0.13 still
+needs checking and CS on P0.00 does not.

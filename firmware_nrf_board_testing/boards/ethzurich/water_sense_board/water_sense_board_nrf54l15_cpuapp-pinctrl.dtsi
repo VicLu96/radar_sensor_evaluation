@@ -4,9 +4,12 @@
  *
  *   SCL      P1.08      SDA      P1.13
  *   SCK      P2.01      SDI      P2.04      SDO      P2.02
- *   CS       P2.05      — driven in software from the port file, so it is
+ *   CS       P0.00      — driven in software from the port file, so it is
  *                         deliberately NOT a pinctrl signal. On nRF, chip
- *                         select never is: SPIM does not drive it.
+ *                         select never is: SPIM does not drive it. That is also
+ *                         why CS can sit on P0 while the SPI signals are on P2:
+ *                         a plain GPIO has no power-domain tie to the
+ *                         peripheral, whereas a pinctrl signal does.
  *   AP_CLK   P0.13      — new, 8 MHz to the VL53L9CX
  *
  * SPDX-License-Identifier: Apache-2.0

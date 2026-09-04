@@ -102,10 +102,12 @@
 	};
 };
 
-/* All three ports enabled. The original enabled gpio0 (unused) and left gpio1
- * and gpio2 off, which is where every assigned pin actually is. Pinctrl does
- * not need the GPIO driver, but a software-driven pin does — and chip select on
- * P2.05 is software-driven on this board.
+/* All three ports enabled.
+ *
+ * The original enabled gpio0 and left gpio1 and gpio2 off, which is where the
+ * bus pins are. Pinctrl does not need the GPIO driver, but a software-driven
+ * pin does — and chip select on P0.00 is software-driven here, so gpio0 turns
+ * out to have been the one that was needed all along.
  */
 &gpio0 {
 	status = "okay";
@@ -187,7 +189,7 @@
 	/*
 	 * DISABLED PENDING A DECISION, not deleted.
 	 *
-	 * Chip select on P2.05 is driven in software from the port file. This
+	 * Chip select on P0.00 is driven in software from the port file. This
 	 * node is Zephyr's SD-over-SPI stack, and `reg = <0>` means "SPI device
 	 * 0" — it expects the controller's cs-gpios[0] to exist and drives it
 	 * around every transfer. The two cannot both own the pin: manual
@@ -195,7 +197,7 @@
 	 * timeouts.
 	 *
 	 * So, one or the other:
-	 *   - Zephyr's stack: add `cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;` to
+	 *   - Zephyr's stack: add `cs-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;` to
 	 *     this node's parent and set status = "okay" here.
 	 *   - Port file owns CS: delete this node and talk to the card with raw
 	 *     SPI transactions.
