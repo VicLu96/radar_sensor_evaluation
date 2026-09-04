@@ -671,3 +671,34 @@ advance.
 Driver consequence: the sensor node will have no `pwms` property, so the driver takes its
 existing `clock_from_pwm = false` path and treats AP_CLK as a board-supplied oscillator.
 That path already exists and is now accurate.
+
+## 2026-09-04 - IT BUILDS. Three further board fixes, all found by actually compiling
+What: the bring-up image links. FLASH 33,032 B of 1428 KB, RAM 7,672 B of 188 KB,
+`merged.hex` generated for `water_sense_board/nrf54l15/cpuapp`.
+This was done by running the build here, against Victor's own installed SDK at
+C:/ncs/v3.3.0 with the toolchain at C:/ncs/toolchains/936afb6332 - not by reasoning about
+it. Every remaining question about instance names, pin encodings and memory sizes is now
+answered by artifacts rather than by argument.
+Three fixes it forced, none of which any amount of reading would have found:
+1. **`config BT_CTLR / default BT` aborts the build under NCS 3.3** - "defined without a
+   type", because it is parsed before BT_CTLR has one. The board-level symbol is
+   `HAS_BT_CTLR`, which is what Nordic's own nrf54l15dk uses. Same intent, survives the
+   ordering.
+2. **`&grtc` needs `status = "okay"`, and that is nothing to do with AP_CLK.** The GRTC
+   is this SoC's system timer and the SoC dtsi ships it disabled. Without it
+   CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC is never defined and the build dies inside
+   sys/clock.h with "operator '==' has no left operand", naming nothing useful.
+3. **`owned-channels` and `child-owned-channels` are required on `&grtc`.** The timer
+   driver #errors without them. Values copied from Nordic's
+   nrf54l_05_10_15_cpuapp_common.dtsi: all 12 owned, 3-4 lent to FLPR, 7-11 to Zero
+   Latency IRQs.
+Verified in the generated artifacts rather than assumed: `clkout-fast-frequency-hz` is
+0x7a1200 = 8,000,000; the pinctrl psel is 0x37000000, which decodes to function 55
+(GRTC_CLKOUT_FAST), port 0, pin 0 - so AP_CLK really is on P0.00 at 8 MHz. CONFIG_FLASH_SIZE
+is 1428 and CONFIG_SRAM_SIZE 188, so the partition work is right.
+One warning left, non-fatal: SB_CONFIG_PARTITION_MANAGER is enabled and deprecated. The
+build works; worth turning off in sysbuild.conf when convenient, since this board uses
+DTS partitioning.
+Expected to be wrong if: nothing here. It compiled and linked. What it does NOT prove is
+that any of it is correct on the actual hardware - the pins, the rails and the clock are
+still only as right as the schematic they came from.

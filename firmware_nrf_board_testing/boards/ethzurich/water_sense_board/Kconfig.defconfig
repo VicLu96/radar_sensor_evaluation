@@ -2,9 +2,14 @@
 
 if BOARD_WATER_SENSE_BOARD
 
-# Kept from the original board file. Under hardware model v2 `config BOARD` is
-# generated, so it is no longer set here.
-config BT_CTLR
+# Kept from the original board file, with the symbol corrected.
+#
+# It was `config BT_CTLR / default BT`, which is the legacy nRF5 idiom. Under
+# NCS 3.3 that is parsed before BT_CTLR has a type and the build aborts with
+# "defined without a type". The board-level symbol is HAS_BT_CTLR — "this board
+# has a Bluetooth controller" — which is what Nordic's own nrf54l15dk uses. Same
+# intent, and it survives the ordering.
+config HAS_BT_CTLR
 	default BT
 
 endif # BOARD_WATER_SENSE_BOARD

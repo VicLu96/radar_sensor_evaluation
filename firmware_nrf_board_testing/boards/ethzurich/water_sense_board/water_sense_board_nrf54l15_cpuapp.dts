@@ -160,6 +160,24 @@
  * deciding with the Power Profiler rather than in advance.
  * -------------------------------------------------------------------------*/
 &grtc {
+	/* status = "okay" is not optional and is not about AP_CLK: the GRTC is
+	 * this SoC's system timer, and the SoC dtsi ships it disabled. Without
+	 * this line CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC is never defined and the
+	 * build fails deep inside sys/clock.h with "operator '==' has no left
+	 * operand", which names nothing useful. The original board file did not
+	 * enable it either — it simply never got far enough to find out.
+	 */
+	status = "okay";
+
+	/* Which of the 12 capture/compare channels this core owns, and which it
+	 * lends to the FLPR core and to Zero Latency IRQs. The GRTC timer driver
+	 * #errors without them. Values taken from Nordic's own
+	 * nrf54l_05_10_15_cpuapp_common.dtsi — channels 7-11 for ZLI, 3-4 for
+	 * FLPR — and worth revisiting only if the FLPR core is ever used here.
+	 */
+	owned-channels = <0 1 2 3 4 5 6 7 8 9 10 11>;
+	child-owned-channels = <3 4 7 8 9 10 11>;
+
 	clkout-fast-frequency-hz = <8000000>;
 	pinctrl-0 = <&grtc_default>;
 	pinctrl-1 = <&grtc_sleep>;

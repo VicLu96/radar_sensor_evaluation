@@ -5,6 +5,19 @@ and talking to a host. It touches no peripheral on purpose — if this does not
 print, the fault is the toolchain, the partition offset or the debugger, never
 the sensor or the SD card.
 
+## Status: builds clean
+
+Verified 2026-09-04 against NCS v3.3.0 at `C:/ncs/v3.3.0`:
+
+```
+FLASH:  33032 B    1428 KB   2.26%
+RAM:     7672 B     188 KB   3.99%
+```
+
+`zephyr.elf` links and `merged.hex` is generated. What that proves is the toolchain, the
+board definition, the devicetree and the memory map. What it does not prove is anything
+about the hardware — the pins and rails are still only as right as the schematic.
+
 ## Build and flash
 
 ```bash
