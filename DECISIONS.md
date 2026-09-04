@@ -813,3 +813,32 @@ of fault it was most likely to have caught. Worth turning back on if anything st
 behaving inexplicably.
 Stage A of the IMU plan now has everything it needs. The part marking remains open, and
 stage A does not need it - reading WHO_AM_I is what answers it.
+
+## 2026-09-04 - IMU stage A written: WHO_AM_I and accel XYZ over RTT
+What: the bring-up app now probes the LSM6DSV..BX at 0x6B, identifies it, configures the
+accelerometer and logs XYZ once a second. No driver, no overlay, no Kconfig - direct
+register access with Zephyr's standard 8-bit-register I2C helpers. Builds clean:
+FLASH 37,388 B, RAM 7,744 B.
+Register facts taken from ST's headers in the SDK rather than from memory:
+WHO_AM_I 0x0F, CTRL1 0x10 (ODR_XL [3:0], OP_MODE_XL [6:4]), CTRL8 0x17 (FS_XL [1:0]),
+STATUS_REG 0x1E bit 0 = XLDA, and 0.061 mg/LSB at +/-2g from
+lsm6dsv16bx_from_fs2_to_mg(). Configured for 60 Hz high-performance at +/-2 g.
+Three deliberate choices worth recording:
+1. **WHO_AM_I selects the output register base.** 0x28 on the 16X, 0x2C on the 16BX. The
+   app refuses to read anything until it knows which, because reading the wrong base
+   returns four bytes of neighbouring registers and two of real data - numbers that look
+   like measurements and are not.
+2. **CTRL1 and CTRL8 are read back after writing.** On an unproven bus a write that is
+   silently dropped and a write that lands are indistinguishable otherwise, and that
+   distinction is most of what this exercise is for.
+3. **A magnitude check runs on every sample.** Whatever the orientation, a board at rest
+   measures one gravity, so |a| outside 800-1200 mg warns and names the likely cause -
+   full scale or register base, not the sensor. Integer sqrt, so no float printf support
+   is needed.
+IMU failure is non-fatal: the heartbeat continues, because "the MCU runs but the IMU does
+not" is a state worth observing rather than a reason to stop.
+Not done, and not needed for this: no devicetree node, no application overlay. Stage B in
+docs/plan/imu-lsm6dsv-bx.md still stands for a real driver.
+Expected to be wrong if: the part is neither 0x70 nor 0x71, in which case the app says so
+and stops rather than guessing - and the bus is proven working by the fact that something
+answered at all.

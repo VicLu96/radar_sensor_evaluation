@@ -5,13 +5,46 @@ and talking to a host. It touches no peripheral on purpose — if this does not
 print, the fault is the toolchain, the partition offset or the debugger, never
 the sensor or the SD card.
 
+## What it does
+
+Two stages, in order, because each only means something if the previous one passed:
+
+1. **The MCU is alive and can talk to a host** — banner plus a one-per-second heartbeat.
+2. **The I²C bus works and the IMU is real** — WHO_AM_I at 0x6B, then accelerometer XYZ.
+
+IMU failures are reported and then ignored: the heartbeat carries on regardless, because
+"the MCU runs but the IMU does not" is a state worth being able to observe rather than a
+reason to stop.
+
+Nothing here touches the VL53L9CX. If the IMU answers and the ToF sensor does not, the
+bus is proven and the fault is on the ToF side — worth a great deal on a board where
+nothing else is known good.
+
+### Reading the IMU output
+
+```
+<inf> board_test: WHO_AM_I = 0x71
+<inf> board_test:   -> LSM6DSV16BX. Accel output block at 0x2c.
+<inf> board_test: configured: CTRL1=0x05 (wrote 0x05), CTRL8=0x00 (wrote 0x00)
+<inf> board_test: accel  X    -12 mg   Y      6 mg   Z    998 mg   |a|   998 mg   (raw ...)
+```
+
+**`|a|` is the number to look at.** Whatever the orientation, a board at rest measures one
+gravity. ~1000 mg means the full scale, the register base and the byte order are all
+right. A wrong magnitude means the scaling or the output register base is wrong — not the
+sensor. Odd-looking axes with a correct magnitude are just orientation, and can wait.
+
+`WHO_AM_I` also settles which part is fitted, and the log says what each answer implies:
+`0x71` is the LSM6DSV16BX (no in-tree Zephyr driver), `0x70` is the LSM6DSV16X (Zephyr
+ships one, so a real integration becomes a devicetree node rather than a new driver).
+
 ## Status: builds clean
 
 Verified 2026-09-04 against NCS v3.3.0 at `C:/ncs/v3.3.0`:
 
 ```
-FLASH:  33032 B    1428 KB   2.26%
-RAM:     7672 B     188 KB   3.99%
+FLASH:  37388 B    1428 KB   2.56%
+RAM:     7744 B     188 KB   4.02%
 ```
 
 `zephyr.elf` links and `merged.hex` is generated. What that proves is the toolchain, the
