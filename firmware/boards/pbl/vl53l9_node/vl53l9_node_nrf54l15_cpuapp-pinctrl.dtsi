@@ -1,0 +1,74 @@
+/*
+ * Pin assignments — PLACEHOLDERS.
+ *
+ * Victor has the schematic; every NRF_PSEL below is a guess that compiles, not
+ * a fact. Change them here and nowhere else — the rest of the board file and
+ * the driver reference peripherals, not pins.
+ *
+ * Two constraints that are NOT free choices:
+ *
+ * 1. IOVDD. Every digital pin on the sensor — SDA, SCL, XSHUT, INTR, SYNC_IN,
+ *    AP_CLK — sits in the sensor's 1.2/1.8 V IO domain, absolute max 1.98 V.
+ *    Whatever nRF54L15 pins these land on must be in a matching VDD domain or
+ *    level-shifted. This kills parts, so it is worth checking twice.
+ *
+ * 2. AP_CLK must come from a PWM-capable pin, and the PWM instance chosen for
+ *    it cannot be shared with anything else — it runs continuously whenever the
+ *    sensor is powered.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&pinctrl {
+	/* I2C to the VL53L9CX. 400 kHz. */
+	i2c_sensor_default: i2c_sensor_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+			bias-pull-up;
+		};
+	};
+
+	i2c_sensor_sleep: i2c_sensor_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SDA, 1, 11)>,
+				<NRF_PSEL(TWIM_SCL, 1, 12)>;
+			low-power-enable;
+		};
+	};
+
+	/* AP_CLK — 8 MHz square wave into the sensor. */
+	pwm_apclk_default: pwm_apclk_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 13)>;
+		};
+	};
+
+	pwm_apclk_sleep: pwm_apclk_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 13)>;
+			low-power-enable;
+		};
+	};
+
+	/* Console. Only for bring-up; drop it for the battery measurements —
+	 * a UART held enabled is not free, and this project reports energy.
+	 */
+	uart_console_default: uart_console_default {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 4)>;
+		};
+		group2 {
+			psels = <NRF_PSEL(UART_RX, 1, 5)>;
+			bias-pull-up;
+		};
+	};
+
+	uart_console_sleep: uart_console_sleep {
+		group1 {
+			psels = <NRF_PSEL(UART_TX, 1, 4)>,
+				<NRF_PSEL(UART_RX, 1, 5)>;
+			low-power-enable;
+		};
+	};
+};

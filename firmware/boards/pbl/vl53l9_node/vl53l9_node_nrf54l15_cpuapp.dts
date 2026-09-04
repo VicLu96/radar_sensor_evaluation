@@ -1,0 +1,189 @@
+/*
+ * VL53L9CX occupancy node — custom PCB, ISP2454-LL (nRF54L15) + VL53L9CX.
+ *
+ * Written 2026-09-01 without an SDK installed or hardware to test against.
+ * ---------------------------------------------------------------------------
+ * WHAT TO CHECK FIRST, because it will not build otherwise
+ *
+ * The peripheral instance names below are the part most likely to be wrong.
+ * The nRF54L15 numbers its serial peripherals by power domain rather than
+ * sequentially, so THERE IS NO `i2c1` — the instances are in the 20s and 30s
+ * (i2c20/21/22, i2c30, and similarly for uart and spi). `i2c21` is used here as
+ * the placeholder Victor asked for; check it, and `pwm20`, `uart20`,
+ * `cpuapp_sram`, `cpuapp_rram` and the partition labels, against
+ * `nordic/nrf54l15_cpuapp.dtsi` in the installed SDK and change them here.
+ *
+ * Nothing outside this file and the pinctrl dtsi knows which instances are
+ * used, so that edit is local.
+ * ---------------------------------------------------------------------------
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <nordic/nrf54l15_cpuapp.dtsi>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include "vl53l9_node_nrf54l15_cpuapp-pinctrl.dtsi"
+
+/ {
+	model = "VL53L9CX occupancy node (ISP2454-LL)";
+	compatible = "pbl,vl53l9-node";
+
+	chosen {
+		zephyr,console = &uart20;
+		zephyr,shell-uart = &uart20;
+		zephyr,sram = &cpuapp_sram;
+		zephyr,flash = &cpuapp_rram;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	aliases {
+		tof0 = &tof;
+	};
+
+	/*
+	 * The sensor power domain is a plain GPIO on the node below
+	 * (power-gpios), not a regulator-fixed node. Two reasons: the driver
+	 * already sequences it against XSHUT and AP_CLK, and modelling it as a
+	 * regulator would put a second consumer on the same pin.
+	 *
+	 * If the board has no switchable sensor rail, delete power-gpios and the
+	 * driver simply never powers down — which costs the multi-month battery
+	 * claim, so check the schematic before assuming it.
+	 */
+};
+
+&uart20 {
+	status = "okay";
+	current-speed = <115200>;
+	pinctrl-0 = <&uart_console_default>;
+	pinctrl-1 = <&uart_console_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/*
+ * AP_CLK generator.
+ *
+ * 8 MHz, deliberately: the sensor accepts 6-27 MHz, and 8 MHz is 16 MHz / 2 —
+ * the one frequency in that window a 16 MHz PWM base clock reaches exactly. The
+ * 12 MHz of ST's reference design is NOT reachable from a 16 MHz base (it would
+ * need COUNTERTOP = 1.33), which is why this board does not copy it.
+ *
+ * VERIFY ON A SCOPE BEFORE ANYTHING ELSE. 8 MHz means COUNTERTOP = 2 and a duty
+ * of exactly one tick, which is the extreme edge of what a PWM peripheral will
+ * do — some nRF PWM hardware requires COUNTERTOP >= 3, which would cap this
+ * path at 5.33 MHz and put it BELOW the sensor's 6 MHz minimum. If that turns
+ * out to be the case the answer is not a different frequency, it is a different
+ * mechanism: a TIMER toggling a pin through GPIOTE/DPPI, or an oscillator on
+ * the board. See DECISIONS.md, 2026-09-01.
+ */
+&pwm20 {
+	status = "okay";
+	pinctrl-0 = <&pwm_apclk_default>;
+	pinctrl-1 = <&pwm_apclk_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+&i2c21 {
+	status = "okay";
+	compatible = "nordic,nrf-twim";
+
+	/* 400 kHz. A full 54x42 frame is 14,842 bytes — about 404 ms at this
+	 * clock. Comfortable for room dwell at 0.1 Hz; see
+	 * docs/plan/frame-rate-budget.md before raising it.
+	 */
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	pinctrl-0 = <&i2c_sensor_default>;
+	pinctrl-1 = <&i2c_sensor_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	tof: vl53l9cx@29 {
+		compatible = "st,vl53l9cx";
+		status = "okay";
+
+		/* 7-bit. ST's 0x52 is the 8-bit form; their own code shifts it
+		 * down in set_com_config() and in the legacy-I2C path of their
+		 * platform layer. See the driver README.
+		 */
+		reg = <0x29>;
+
+		/*
+		 * ------------------------------------------------------------
+		 * THE THREE BOARD VALUES. TWO ARE PLACEHOLDERS.
+		 *
+		 * vl53l9_init() writes all three into the device. A wrong rail
+		 * value misconfigures the analogue front end rather than
+		 * failing loudly, so these must be confirmed against the
+		 * schematic before this board is powered with the sensor
+		 * fitted. The app logs all three at startup so a wrong one is
+		 * visible in the first line of console output.
+		 *
+		 * The values below are ST's reference configuration, not
+		 * measurements of this board.
+		 * ------------------------------------------------------------
+		 */
+		vdda-microvolt = <2800000>;   /* PLACEHOLDER: 2800000 or 3300000 */
+		vddio-microvolt = <1800000>;  /* PLACEHOLDER: 1200000 or 1800000 */
+
+		/* Not a placeholder — this is what the PWM above generates. */
+		ext-clock-frequency = <8000000>;
+		/* channel 0, 125 ns period (= 8 MHz), normal polarity. The
+		 * driver takes the frequency from ext-clock-frequency above;
+		 * this cell has to agree with it.
+		 */
+		clock-pwms = <&pwm20 0 125 PWM_POLARITY_NORMAL>;
+
+		xshut-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  /* PLACEHOLDER pin */
+		int-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;     /* PLACEHOLDER pin */
+		power-gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>; /* PLACEHOLDER pin */
+
+		/* Bytes per I2C write during the 9,865-byte blob upload. A
+		 * tuning knob, because that upload happens on every cold start
+		 * and its cost feeds the power model.
+		 */
+		blob-chunk-size = <1024>;
+	};
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpiote20 {
+	status = "okay";
+};
+
+/* Flash layout. VERIFY the partition names and sizes against the SDK's
+ * nrf54l15 partition defaults — these are the conventional ones.
+ */
+&cpuapp_rram {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 DT_SIZE_K(64)>;
+		};
+
+		slot0_partition: partition@10000 {
+			label = "image-0";
+			reg = <0x00010000 DT_SIZE_K(324)>;
+		};
+
+		slot1_partition: partition@61000 {
+			label = "image-1";
+			reg = <0x00061000 DT_SIZE_K(324)>;
+		};
+
+		storage_partition: partition@b2000 {
+			label = "storage";
+			reg = <0x000b2000 DT_SIZE_K(36)>;
+		};
+	};
+};

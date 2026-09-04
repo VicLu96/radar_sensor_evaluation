@@ -16,12 +16,12 @@ if(CONFIG_VL53L9CX)
   # re-downloading a 39 MB package from st.com. Used unmodified so their
   # updates drop in cleanly and the boundary between our bugs and theirs
   # stays sharp.
-  zephyr_library_include_directories(st)
-  zephyr_library_sources(st/vl53l9.c)
+  zephyr_library_include_directories(${CMAKE_CURRENT_SOURCE_DIR}/st)
+  zephyr_library_sources(${CMAKE_CURRENT_SOURCE_DIR}/st/vl53l9.c)
 
   # ST's driver is third-party code held byte-identical; do not let our
   # warning settings force edits to it.
-  set_source_files_properties(st/vl53l9.c
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/st/vl53l9.c
     PROPERTIES COMPILE_FLAGS "-Wno-unused-parameter")
 
 endif()

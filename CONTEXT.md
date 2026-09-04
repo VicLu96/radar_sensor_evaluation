@@ -2,13 +2,15 @@
 Last updated: 2026-09-01
 
 ## What exists
-Research, planning, and **the stage-1 driver written in full** — platform layer, Zephyr
-driver, binding, power management. **Never compiled, never run.** No toolchain on this
-machine and no hardware.
+Research, planning, and **a complete, buildable-shaped stage 1**: driver, board
+definition, bring-up app, west manifest. **Never compiled, never run** — no toolchain on
+this machine and no hardware. The only missing inputs are three values off the
+schematic and the pin assignments.
 
 | Document | What it holds |
 |---|---|
-| `docs/plan/st-package-audit.md` | **What X-CUBE-53L9A1 provides, and the three things it corrected** |
+| `firmware/app/README.md` | **How to build it, and what each bring-up gate tells you** |
+| `docs/plan/st-package-audit.md` | What X-CUBE-53L9A1 provides, and the three things it corrected |
 | `docs/plan/driver-port.md` | Port strategy and ST's real platform contract |
 | `docs/plan/room-occupancy.md` | The dwell reframe: what it fixes, what it breaks |
 | `docs/plan/frame-rate-budget.md` | Bandwidth arithmetic (corrected 2026-09-01) |
@@ -33,27 +35,30 @@ machine and no hardware.
   the full 39 MB package stays gitignored at `vendor/x-cube-53l9a1/`
 
 ## Project shape — Victor's four stages
-1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(written; needs a
-   build)*
+1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(written, with board
+   file and bring-up app; needs a build)*
 2. **Telemetry** — frames/counts over BLE to a web interface
 3. **Algorithm** — on-device occupancy and dwell detection
 4. **Power** — per-domain gating and duty-cycle optimisation. **Last on purpose**, and
    where the paper is
 
 ## Next session — TODO, in order
-1. **Get it to compile.** Needs an nRF Connect SDK workspace and a board file; neither
-   exists yet, and there is no C toolchain on this machine. Expect ordinary first-build
-   errors — a missing include, a moved Zephyr API. The *shape* of the port came from
-   ST's headers and should not need rework.
-2. **Write the board devicetree node.** Blocked on three values only:
-   `vdda-microvolt`, `vddio-microvolt`, `ext-clock-frequency`. They are `required: true`
-   on purpose, so the build fails rather than the firmware lying.
-3. **Decide how AP_CLK is sourced** — board oscillator, or MCU. If MCU, PWM probably
-   cannot make 12 MHz cleanly; see DECISIONS 2026-09-01.
-4. **Pin the nRF Connect SDK version in `west.yml`** — the workspace does not exist yet,
-   so this has never been done.
-5. Then bring-up, in the order in `firmware/drivers/vl53l9cx/README.md`: scope AP_CLK,
-   probe 0x29, watch the blob upload, log the status line, check orientation.
+1. **`west init` a workspace and build it.** `west build -b vl53l9_node/nrf54l15/cpuapp
+   firmware/app`. Set the SDK revision in `west.yml` first — the pin there is a guess.
+2. **Fix the peripheral instance names** in the board DTS. The nRF54L15 numbers serial
+   peripherals by power domain, so there is no `i2c1`; `i2c21`, `pwm20`, `uart20`,
+   `gpiote20`, `cpuapp_sram` and `cpuapp_rram` all need checking against the installed
+   SDK. They are confined to the board DTS and its pinctrl file.
+3. **Fill in the pin numbers** in `vl53l9_node_nrf54l15_cpuapp-pinctrl.dtsi` — all
+   placeholders. Watch the IO domain: every sensor digital pin is 1.2/1.8 V, absolute
+   max 1.98 V, and 3.3 V will kill the part.
+4. **Replace VDDA and VDDIO** in the board DTS with the schematic's real values. They
+   are currently ST's reference numbers, and the app prints them at startup so a wrong
+   one is visible immediately.
+5. **Scope AP_CLK at 8 MHz** before anything else. If the PWM cannot reach it, the
+   answer is a TIMER/GPIOTE/DPPI path or a board oscillator, not a different frequency —
+   5.33 MHz is below the sensor's minimum.
+6. Then the gates in `firmware/app/README.md`, in order.
 
 ## The two questions that gate everything
 1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
@@ -78,6 +83,12 @@ The VL53L9CX shipped mid-2026. **The characterisation gap this paper occupies is
 because the part is new, and it will not stay open.** Sequencing matters more than usual.
 
 ## Last session
+- 2026-09-01 (later still): Added the board definition
+  (`vl53l9_node/nrf54l15/cpuapp`), a staged bring-up app, and `west.yml`. AP_CLK set to
+  **8 MHz** — 16 MHz / 2, the only frequency an nRF PWM reaches exactly inside the
+  sensor's 6-27 MHz window, so ST's 12 MHz is deliberately not copied. Also found and
+  fixed a repeated-start bug in the read path: this part does not support a repeated
+  start and latches into NAK-everything if it sees one.
 - 2026-09-01 (later): Wrote the whole stage-1 port against ST's API — 13 platform
   functions, the Zephyr driver, PM actions, a rewritten binding. Every ST symbol checked
   against their headers; nothing compiled. Also settled the I²C address at 0x29 from

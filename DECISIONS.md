@@ -371,3 +371,53 @@ basic register reads without AP_CLK. That would be unusual and would not change 
 requirement - the FSM those reads interrogate still needs a core clock - but it is the
 one part of this that rests on a community README rather than on ST's source. A scope on
 AP_CLK during the first probe settles it.
+
+## 2026-09-01 - AP_CLK set to 8 MHz, not the reference design's 12 MHz
+What: `ext-clock-frequency = <8000000>` in the board file, with the MCU generating it on
+a PWM channel.
+Why: Victor's call, and the arithmetic supports it. The sensor accepts 6-27 MHz. A
+16 MHz PWM base clock divides to 16, 8 and 5.33 MHz - 12 MHz is not reachable (it would
+need COUNTERTOP = 1.33), and 5.33 MHz is below the sensor's 6 MHz minimum. 8 MHz is the
+only frequency in the legal window an nRF PWM can produce exactly from a 16 MHz base,
+which makes it the right choice rather than a compromise.
+Consequence: this board deliberately does not copy ST's 12 MHz reference configuration.
+The value is written into the device by vl53l9_init(), so the register and the pin agree
+as long as ext-clock-frequency and the clock-pwms period cell agree - both are set to
+8 MHz / 125 ns in the board DTS.
+Still VERIFY, and it is the first thing to check on a scope: 8 MHz means COUNTERTOP = 2
+and a duty of exactly one tick. Some nRF PWM hardware requires COUNTERTOP >= 3, which
+would cap this path at 5.33 MHz - BELOW the sensor's minimum. If that is the case the
+answer is not another frequency but another mechanism: a TIMER toggling a pin via
+GPIOTE/DPPI, or an oscillator fitted to the board.
+Expected to be wrong if: the nRF54L15 PWM has a base clock other than 16 MHz, which
+would change every number above.
+
+## 2026-09-01 - Board file, app and west manifest created; three placeholders in them
+What: a Zephyr board definition (`firmware/boards/pbl/vl53l9_node`, target
+`vl53l9_node/nrf54l15/cpuapp`), a bring-up application (`firmware/app`), and a west
+manifest pinning the nRF Connect SDK.
+Why: Victor asked for them, having earlier owned the board files himself. Nothing here
+is a substitute for the schematic - it is the scaffolding that makes the schematic the
+only remaining input.
+What is real and what is a placeholder, because the difference decides what breaks:
+- REAL: the structure, the driver wiring, 8 MHz AP_CLK, the 0x29 address, 400 kHz I2C,
+  and the gate order in the app.
+- PLACEHOLDER: every pin number in the pinctrl dtsi; VDDA (2.8 V) and VDDIO (1.8 V),
+  which are ST's reference values and not measurements of this board; the SDK revision
+  in west.yml; the flash partition sizes.
+- LIKELY WRONG: the peripheral instance names. The nRF54L15 numbers serial peripherals
+  by power domain, so there is no `i2c1` - the instances are in the 20s and 30s. `i2c21`
+  is used as the placeholder Victor asked for, and `pwm20`, `uart20`, `gpiote20`,
+  `cpuapp_sram` and `cpuapp_rram` need the same check against the installed SDK's
+  nrf54l15_cpuapp.dtsi. These are confined to the board DTS and its pinctrl file.
+Mitigation rather than hope: the app's gate 0 prints VDDA, VDDIO, AP_CLK and the address
+from devicetree before touching the sensor, so a wrong placeholder is visible in the
+first line of console output rather than being diagnosed later as a sensor fault.
+Two smaller decisions: the sensor rail is a plain `power-gpios` line rather than a
+regulator-fixed node, because the driver already sequences it against XSHUT and AP_CLK
+and a regulator would put a second consumer on the same pin. And the driver now selects
+PWM unconditionally rather than conditionally on `clock-pwms` being present - a little
+flash on a board with its own oscillator, against a conditional select that fails
+obscurely on a first build.
+Expected to be wrong if: the ISP2454-LL module does not expose the pins these
+peripherals need, which would move the assignment rather than the design.

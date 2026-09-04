@@ -5,11 +5,16 @@ config VL53L9CX
 	default y
 	depends on DT_HAS_ST_VL53L9CX_ENABLED
 	select I2C
-	select PWM if $(dt_compat_any_has_prop,$(DT_COMPAT_ST_VL53L9CX),clock-pwms)
+	select PWM
 	help
 	  Driver for the VL53L9CX dToF LiDAR module (up to 54x42 zones) over
 	  I2C, wrapping ST's VL53L9 driver from X-CUBE-53L9A1. ST's sources are
 	  vendored under st/ — see st/PROVENANCE.md.
+
+	  PWM is selected unconditionally because the driver can source AP_CLK
+	  from the MCU (clock-pwms). On a board with its own oscillator that
+	  costs a little flash and nothing else, which is a better trade than a
+	  conditional select that fails obscurely on the first build.
 
 if VL53L9CX
 

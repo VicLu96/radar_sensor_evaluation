@@ -1,0 +1,8 @@
+# Custom PCB carrying an Insight SiP ISP2454-LL (Nordic nRF54L15) and an
+# ST VL53L9CX. There is no development kit for this design — see CLAUDE.md.
+board:
+  name: vl53l9_node
+  full_name: VL53L9CX occupancy node (ISP2454-LL)
+  vendor: pbl
+  socs:
+    - name: nrf54l15
