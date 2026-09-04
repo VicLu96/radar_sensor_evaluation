@@ -37,7 +37,17 @@
 		zephyr,shell-uart = &uart20;
 		zephyr,sram = &cpuapp_sram;
 		zephyr,flash = &cpuapp_rram;
-		zephyr,code-partition = &slot0_partition;
+
+		/* NO zephyr,code-partition on purpose.
+		 *
+		 * Pointing it at slot0_partition (0x10000) is correct only when
+		 * MCUboot is in the build. Without a bootloader the image would
+		 * be linked and flashed at 0x10000 and the chip would never jump
+		 * to it — a dead board that looks like a firmware bug, at
+		 * exactly the moment when nothing else is trusted either.
+		 *
+		 * Add it back with sysbuild and MCUboot, not before.
+		 */
 	};
 
 	aliases {
@@ -135,7 +145,8 @@
 		 * driver takes the frequency from ext-clock-frequency above;
 		 * this cell has to agree with it.
 		 */
-		clock-pwms = <&pwm20 0 125 PWM_POLARITY_NORMAL>;
+		pwms = <&pwm20 0 125 PWM_POLARITY_NORMAL>;
+		pwm-names = "apclk";
 
 		xshut-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>;  /* PLACEHOLDER pin */
 		int-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;     /* PLACEHOLDER pin */

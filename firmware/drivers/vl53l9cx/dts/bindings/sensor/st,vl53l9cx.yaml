@@ -14,9 +14,9 @@ description: |
   THE ADDRESS. ST's VL53L9_DEFAULT_ADDRESS is 0x52, which is the 8-BIT form.
   Their own vl53l9_set_com_config() writes `address >> 1` into the device's
   address register, which settles it: the 7-bit address is 0x29, and that is
-  what Zephyr's "reg" wants. (ST's STM32 sample passes 0x52 straight into a
-  HAL field documented as 7-bit; that is a bug in their sample, not a second
-  address.)
+  what Zephyr's "reg" wants. Their platform layer shifts it down again in the
+  legacy-I2C branch of both _i3c_read and _i3c_write, so the convention is
+  consistent throughout: 8-bit in ST's API, 7-bit on the wire.
 
   BEFORE BLAMING THE ADDRESS, CHECK THE CLOCK. The sensor does not acknowledge
   its I2C address at all until AP_CLK is running — see ext-clock-frequency.
@@ -64,13 +64,17 @@ properties:
       what the pin actually sees.
 
       Set this whether the clock comes from a board oscillator or from the MCU;
-      add clock-pwms only in the latter case.
+      add the pwms property only in the latter case.
 
-  clock-pwms:
+  pwms:
     type: phandle-array
     description: |
       PWM channel driving AP_CLK, when the MCU generates the clock rather than
       the board carrying its own oscillator.
+
+      Named `pwms` rather than something descriptive because Zephyr's
+      PWM_DT_SPEC_GET macros are hardwired to that property name — there is no
+      by-name variant. Use `pwm-names = "apclk"` for readability.
 
       Present because it changes the driver's behaviour, not just its wiring:
       if this is set, the driver starts the PWM before any I2C contact and
@@ -81,6 +85,10 @@ properties:
 
       Omit if a board oscillator supplies the clock; then its enable line, if
       any, belongs on power-gpios for the same reason.
+
+  pwm-names:
+    type: string-array
+    description: Name for the AP_CLK channel above. Use "apclk".
 
   xshut-gpios:
     type: phandle-array

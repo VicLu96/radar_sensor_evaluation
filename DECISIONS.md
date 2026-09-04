@@ -421,3 +421,25 @@ flash on a board with its own oscillator, against a conditional select that fail
 obscurely on a first build.
 Expected to be wrong if: the ISP2454-LL module does not expose the pins these
 peripherals need, which would move the assignment rather than the design.
+
+## 2026-09-01 - Two build-blocking defects found by auditing the board wiring
+What: fixed before the first build attempt, both found by cross-checking the DTS against
+the binding against the driver macros rather than by reading the code again.
+1. `clock-pwms` could never have worked. Zephyr's PWM_DT_SPEC_GET macros expand through
+   DT_PWMS_CTLR_BY_IDX, which is hardwired to a property literally named `pwms` - there
+   is no by-property-name variant. The property is renamed to `pwms` with
+   `pwm-names = "apclk"` for readability. This would have failed at devicetree macro
+   expansion with an error naming neither the property nor the driver.
+2. `zephyr,code-partition = <&slot0_partition>` was set with no bootloader in the build.
+   The image would have linked and flashed at 0x10000 and the chip would never have
+   jumped to it - a dead board, at exactly the moment when the sensor, the clock, the
+   pins and the address are all still unproven and nothing is trusted. Removed, with a
+   comment saying to add it back alongside sysbuild and MCUboot rather than before.
+Why it is worth an entry: both were invisible to reading. They came out of a mechanical
+cross-check - every property in the DTS against every property in the binding against
+every DT macro in the driver - which is now the thing to do before claiming any of this
+is ready.
+Also corrected the binding's prose: ST's STM32 sample is not buggy about the address, it
+shifts 0x52 down to 0x29 in the legacy-I2C branch of its platform layer.
+Expected to be wrong if: nothing here is judgement - both are mechanical facts about
+Zephyr.

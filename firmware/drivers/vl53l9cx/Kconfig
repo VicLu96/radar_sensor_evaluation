@@ -12,8 +12,8 @@ config VL53L9CX
 	  vendored under st/ — see st/PROVENANCE.md.
 
 	  PWM is selected unconditionally because the driver can source AP_CLK
-	  from the MCU (clock-pwms). On a board with its own oscillator that
-	  costs a little flash and nothing else, which is a better trade than a
+	  from the MCU (the pwms property). On a board with its own oscillator
+	  that costs a little flash and nothing else, a better trade than a
 	  conditional select that fails obscurely on the first build.
 
 if VL53L9CX

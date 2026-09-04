@@ -43,7 +43,7 @@ static void report_board_config(void)
 		DT_PROP(TOF_NODE, vddio_microvolt));
 	LOG_INF("  AP_CLK         %d Hz", DT_PROP(TOF_NODE, ext_clock_frequency));
 	LOG_INF("  AP_CLK source  %s",
-		DT_NODE_HAS_PROP(TOF_NODE, clock_pwms) ? "MCU PWM" : "board oscillator");
+		DT_NODE_HAS_PROP(TOF_NODE, pwms) ? "MCU PWM" : "board oscillator");
 	LOG_INF("  blob chunk     %d bytes", DT_PROP(TOF_NODE, blob_chunk_size));
 	LOG_INF("----------------------------------------------");
 	LOG_INF("If the sensor never answers: scope AP_CLK first. No clock, no ACK.");

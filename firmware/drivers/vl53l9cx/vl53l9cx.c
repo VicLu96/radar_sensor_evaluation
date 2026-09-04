@@ -673,9 +673,9 @@ static int vl53l9cx_init(const struct device *dev)
 		.xshut = GPIO_DT_SPEC_INST_GET_OR(inst, xshut_gpios, {0}),     \
 		.intr = GPIO_DT_SPEC_INST_GET_OR(inst, int_gpios, {0}),        \
 		.power = GPIO_DT_SPEC_INST_GET_OR(inst, power_gpios, {0}),     \
-		.clk = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, clock_pwms),    \
+		.clk = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, pwms),    \
 				   (PWM_DT_SPEC_INST_GET(inst)), ({0})),       \
-		.clock_from_pwm = DT_INST_NODE_HAS_PROP(inst, clock_pwms),     \
+		.clock_from_pwm = DT_INST_NODE_HAS_PROP(inst, pwms),     \
 		.ext_clock_hz = DT_INST_PROP(inst, ext_clock_frequency),       \
 		.blob_chunk_size = DT_INST_PROP(inst, blob_chunk_size),        \
 		.vdda = DT_INST_ENUM_IDX(inst, vdda_microvolt),                \
