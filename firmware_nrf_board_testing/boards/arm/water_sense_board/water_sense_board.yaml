@@ -1,0 +1,12 @@
+# Copyright (c) 2024 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+
+identifier: water_sense_board
+name: water_sense_board
+type: mcu
+arch: arm
+ram: 188
+flash: 1428
+toolchain:
+  - zephyr
+  - gnuarmemb

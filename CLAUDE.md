@@ -2,7 +2,7 @@
 
 ## What this repo is
 Firmware and evaluation for a **low-power people-counting node**: the ST **VL53L9CX**
-time-of-flight sensor on an **Insight SiP ISP2454-LL** (Nordic nRF54L15), in Zephyr /
+time-of-flight sensor on an **Insight SiP ISP2454-LX** (Nordic nRF54L15), in Zephyr /
 nRF Connect SDK, reporting counts over BLE. The end goal is a **published paper** on
 the energy-accuracy trade-off of high-resolution dToF sensing.
 
@@ -32,6 +32,16 @@ Owner: Victor, Zurich. He designed the hardware.
   Victor writes the board files. So bring-up has no known-good reference: never assume
   a silent sensor is a software bug. Work the staged gates in the implementation plan,
   and treat the **logic analyser as the reference instrument**.
+- **BOARD FILES ARE VICTOR'S. NEVER EDIT THEM — this is absolute.**
+  Everything under `firmware_nrf_board_testing/boards/` (the `water_sense_board`
+  definition: `.dts`, `-pinctrl.dtsi`, `Kconfig.board`, `Kconfig.defconfig`,
+  `board.cmake`, `*_defconfig`, `*.yaml`) is off limits. Do not "fix" them, do not
+  reformat them, do not add a node to them, not even when they are the cause of a
+  build failure. Report what is wrong and let Victor change it.
+  To add hardware the driver needs, use an **application-level `.overlay`** in the app
+  directory — that is not a board file and is the correct Zephyr mechanism anyway.
+  (The older `firmware/boards/pbl/vl53l9_node/` was written by Claude and is superseded
+  by `water_sense_board`; it is not protected, but it is also not the target.)
 - **`DECISIONS.md` is append-only.** Never edit a past entry.
 - Commit and push finished work to `main`. Never force-push, never rewrite pushed
   history, never touch the stocks branch.

@@ -16,7 +16,7 @@ with RF matching, embedded antenna and both crystals integrated. 8 × 8 × 1 mm 
 | Notable | TrustZone, Channel Sounding, AoA direction finding |
 | Integrated | RF matching, antenna, 32 MHz + 32 kHz crystals, DC-DC |
 | Temperature | to +105 °C |
-| Variants | -LL, -LX, -LP share the footprint — **VERIFY** what distinguishes -LL |
+| Variants | -LL, -LX, -LP share the footprint. **RESOLVED 2026-09-04: the fitted part is the -LX.** What distinguishes it from -LL is still **VERIFY** — check whether it changes RF front end, antenna, or available pins before designing against either |
 
 ## Why the memory numbers are comfortable here
 

@@ -443,3 +443,44 @@ Also corrected the binding's prose: ST's STM32 sample is not buggy about the add
 shifts 0x52 down to 0x29 in the legacy-I2C branch of its platform layer.
 Expected to be wrong if: nothing here is judgement - both are mechanical facts about
 Zephyr.
+
+## 2026-09-04 - Victor's board files are off limits to Claude, absolutely
+What: everything under `firmware_nrf_board_testing/boards/` - the `water_sense_board`
+definition - is Victor's. Claude must never edit those files: not to fix them, not to
+reformat them, not to add a node, not even when they are the direct cause of a build
+failure. Report and wait.
+Why: Victor's instruction, and it is the right division. He owns the hardware and the
+schematic; a board file edited by someone who cannot see either is a silent way to
+introduce a fault that presents as a firmware bug.
+Consequence: hardware the driver needs - the VL53L9CX node, the AP_CLK PWM, the I2C
+speed - goes in an application-level `.overlay` in the app directory. That is not a
+board file, and it is the correct Zephyr mechanism for exactly this, so nothing is lost.
+Recorded in CLAUDE.md under Hard rules.
+
+## 2026-09-04 - The fitted module is the ISP2454-LX, not the -LL
+What: Victor confirmed the part is the **LX** variant. The repo said "-LL" throughout,
+from the 2026-08-31 research pass, where it was already flagged that -LL/-LX/-LP share a
+footprint and the distinction was unverified.
+Consequence: corrected in CLAUDE.md, CONTEXT.md and docs/hardware/mcu-isp2454ll.md. The
+filename keeps the old name so history stays greppable.
+Still VERIFY: what actually differs between -LL and -LX. If it is only the RF front end
+or antenna option, nothing in this project changes. If it changes available pins or
+memory, the pin map and partition table are affected. Worth ten minutes with the Insight
+SiP datasheet before the first build, not after.
+
+## 2026-09-04 - The board file and the SDK pin are from different nRF54L15 generations
+What: `water_sense_board` is written against the nRF54L15 **preview** generation - it
+includes `nordic/nrf54L15_M33.dtsi`, selects `SOC_NRF54L15_M33`, and uses the
+**hardware-model v1** board layout (`boards/arm/<board>/` with `Kconfig.board`,
+`Kconfig.defconfig`, `<board>_defconfig`). `west.yml` is currently pinned to NCS v2.9.0,
+which is a later generation: SoC dtsi `nrf54l15_cpuapp.dtsi`, symbol
+`SOC_NRF54L15_CPUAPP`, and hardware-model v2 boards (`boards/<vendor>/<board>/` with
+`board.yml`, board targets like `board/nrf54l15/cpuapp`).
+Why it matters: these are not interchangeable. Under the v2.9-era SDK the board's include
+path and SoC symbol do not exist, and hardware-model v1 is deprecated or removed
+depending on the Zephyr version underneath.
+Resolution: the board file cannot move, so **the SDK pin moves**. Blocked on Victor
+saying which nRF Connect SDK version he actually has installed - that single answer
+decides the pin, and probably decides several of the review findings too.
+Expected to be wrong if: his SDK is new enough that hardware-model v1 is gone entirely,
+in which case the board files need migrating and that is his call, not a pin change.

@@ -23,11 +23,16 @@ schematic and the pin assignments.
 
 ## Decided
 - **Sensor:** VL53L9CX (`VL53L9CXV0VE/1`) — optical dToF, **not radar**
-- **MCU:** ISP2454-LL (Nordic nRF54L15), Zephyr / nRF Connect SDK
+- **MCU:** **ISP2454-LX** (Nordic nRF54L15), Zephyr / nRF Connect SDK. Corrected from
+  "-LL" on 2026-09-04 — Victor confirmed the fitted part is the **LX** variant
 - **Interface: I²C** (Victor, 2026-08-31) — confirmed viable 2026-09-01: ST's own
   reference port runs the STM32 I3C peripheral in legacy I²C mode, and
   `PLATFORM_BUS_I2C` is a first-class option in their interface header
 - **Hardware: a single custom PCB** carrying both parts. **No DK, no ST eval board.**
+- **The board is `water_sense_board`**, in `firmware_nrf_board_testing/boards/arm/`.
+  **Victor owns those files and Claude must never edit them** — see CLAUDE.md. Hardware
+  the driver needs goes in an application `.overlay`, never in the board file.
+  `firmware/boards/pbl/vl53l9_node/` was Claude's placeholder and is superseded
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —
   people who STAY. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"
@@ -43,22 +48,20 @@ schematic and the pin assignments.
    where the paper is
 
 ## Next session — TODO, in order
-1. **`west init` a workspace and build it.** `west build -b vl53l9_node/nrf54l15/cpuapp
-   firmware/app`. Set the SDK revision in `west.yml` first — the pin there is a guess.
-2. **Fix the peripheral instance names** in the board DTS. The nRF54L15 numbers serial
-   peripherals by power domain, so there is no `i2c1`; `i2c21`, `pwm20`, `uart20`,
-   `gpiote20`, `cpuapp_sram` and `cpuapp_rram` all need checking against the installed
-   SDK. They are confined to the board DTS and its pinctrl file.
-3. **Fill in the pin numbers** in `vl53l9_node_nrf54l15_cpuapp-pinctrl.dtsi` — all
-   placeholders. Watch the IO domain: every sensor digital pin is 1.2/1.8 V, absolute
-   max 1.98 V, and 3.3 V will kill the part.
-4. **Replace VDDA and VDDIO** in the board DTS with the schematic's real values. They
-   are currently ST's reference numbers, and the app prints them at startup so a wrong
-   one is visible immediately.
-5. **Scope AP_CLK at 8 MHz** before anything else. If the PWM cannot reach it, the
-   answer is a TIMER/GPIOTE/DPPI path or a board oscillator, not a different frequency —
-   5.33 MHz is below the sensor's minimum.
-6. Then the gates in `firmware/app/README.md`, in order.
+1. **Settle which nRF Connect SDK version is installed**, then pin `west.yml` to it.
+   This is now blocking and is not cosmetic: `water_sense_board` is written against the
+   **nRF54L15 preview generation** (`nordic/nrf54L15_M33.dtsi`, `SOC_NRF54L15_M33`,
+   hardware-model **v1** board layout). The pin currently in `west.yml` is v2.9.0, which
+   is a later generation and uses different names. One of the two has to move, and the
+   board file is not allowed to.
+2. **Report the `water_sense_board` findings to Victor** and wait — do not edit. The
+   substantive ones: SPI **CS (P2.05) is missing entirely**, `&gpio1`/`&gpio2` are not
+   enabled while `&gpio0` is, there is **no console**, and `zephyr,code-partition`
+   requires an MCUboot build.
+3. **Write an application `.overlay`** adding the VL53L9CX node, the AP_CLK PWM and
+   `clock-frequency = <I2C_BITRATE_FAST>` on `&i2c1`. The board file has none of these
+   and must not gain them.
+4. Then build, then the gates in `firmware/app/README.md`.
 
 ## The two questions that gate everything
 1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
