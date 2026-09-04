@@ -41,8 +41,11 @@ schematic and the pin assignments.
   PWM cannot reach port 0. 8 MHz is exactly GRTC's maximum (`pclk` 16 MHz / 2) and lands
   on divider 1; 4 MHz, the next step down, is below the sensor's minimum
 - **A second I²C device is on the board**: an ST **LSM6DSV..BX** IMU (Victor,
-  2026-09-04). No Zephyr driver exists for it — planned, not started, see
-  `docs/plan/imu-lsm6dsv-bx.md`
+  2026-09-04) at **I²C 0x6B**. No Zephyr driver exists for it — planned, not started,
+  see `docs/plan/imu-lsm6dsv-bx.md`
+- **Memory protection is off** (Victor, 2026-09-04): `CONFIG_ARM_MPU=n` and
+  `CONFIG_HW_STACK_PROTECTION=n`, set in `firmware_test/prj.conf` rather than the board
+  defconfig so the board file stays Victor's. Verified absent from the built `.config`
 - **AP_CLK runs continuously and that is accepted** (Victor, 2026-09-04) — measure its
   cost rather than design around a guess. It is reversible in firmware if the
   measurement says otherwise: `nrfy_grtc_clkout_set()` is in the linked HAL. See

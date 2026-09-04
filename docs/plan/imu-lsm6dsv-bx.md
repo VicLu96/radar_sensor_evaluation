@@ -60,10 +60,13 @@ else.
 
 **This is what to do first, and it is about sixty lines in the existing test app.**
 
+Everything it needs is now known. The part marking is the one open question, and stage A
+does not need it — stage A is what *answers* it.
+
 No Zephyr sensor driver, no Kconfig, no out-of-tree module. Talk to the device directly
 with `i2c_write_read_dt()` on the existing bus:
 
-1. **Read WHO_AM_I (0x0F).**
+1. **Read WHO_AM_I (0x0F)** at 7-bit address **0x6B**.
    - `0x71` → it is a 16BX and the register map below is right.
    - `0x70` → it is a plain 16X/DSV, and the in-tree `lsm6dsv16x` driver works as-is.
      Stage B collapses to "enable the existing driver", which would be a good outcome.
@@ -117,8 +120,8 @@ cheap and means stage B changes no wiring.
 ## Open questions for Victor
 
 1. **The exact part marking.** 15BX or 16BX. Branches the whole plan.
-2. **The I²C address.** The family is 0x6A with SA0 low, 0x6B with SA0 high. Which way is
-   SA0 strapped? Stage A can try both, but knowing saves a debugging step.
+2. ~~**The I²C address.**~~ **ANSWERED 2026-09-04: 0x6B** (SA0 strapped high). No
+   collision with the VL53L9CX at 0x29.
 3. **Is it on the same bus as the VL53L9CX** — SCL P1.08, SDA P1.13? Assumed yes, since
    that is the only I²C on the board.
 4. **Are INT1/INT2 wired?** Not needed for stage A polling, and needed for anything

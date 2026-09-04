@@ -792,3 +792,24 @@ The IMU node goes in an application overlay, not the board file.
 Hazard recorded for whoever debugs this bus: the VL53L9CX shares it, wedges on the empty
 START+STOP transactions a general i2cdetect scan uses, and does not acknowledge at all
 without AP_CLK running. Probe 0x6A and 0x6B specifically. No address collision with 0x29.
+
+## 2026-09-04 - IMU address is 0x6B; memory protection disabled
+What: the LSM6DSV..BX sits at I2C 0x6B (SA0 strapped high). No collision with the
+VL53L9CX at 0x29. And memory protection is off at Victor's instruction:
+CONFIG_ARM_MPU=n, CONFIG_HW_STACK_PROTECTION=n.
+Where the MPU setting lives, and why: `firmware_test/prj.conf`, not the board defconfig.
+prj.conf overrides the board default, so the effect is the same, and it keeps the board
+file Victor's while letting the choice travel with the application that wants it. Say so
+if it should be board-wide instead.
+HW_STACK_PROTECTION goes with it rather than as an extra opinion - it is implemented
+using the MPU, so leaving it enabled with the MPU off is unsatisfiable rather than
+stricter.
+Verified rather than assumed: rebuilt, and both symbols are absent from the generated
+.config. FLASH fell from 33,032 to 31,452 bytes, which is the MPU code going away.
+What it costs, recorded so it is a decision and not a default: a stack overflow now
+corrupts adjacent memory silently instead of faulting where it happens. On a build that
+will carry a 14.8 KB frame buffer and a 9.8 KB firmware blob, that is precisely the class
+of fault it was most likely to have caught. Worth turning back on if anything starts
+behaving inexplicably.
+Stage A of the IMU plan now has everything it needs. The part marking remains open, and
+stage A does not need it - reading WHO_AM_I is what answers it.
