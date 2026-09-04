@@ -597,3 +597,49 @@ Worth noting for the domain question: a plain GPIO has no power-domain tie to th
 peripheral, so CS on P0 alongside SPI signals on P2 is fine. Only pinctrl signals are
 constrained to their peripheral's domain - which is exactly why AP_CLK on P0.13 still
 needs checking and CS on P0.00 does not.
+
+## 2026-09-04 - P0.13 does not exist; AP_CLK needs a real pin, and PWM may be the wrong source
+What: verified against the installed SDK (C:/ncs/v3.3.0) rather than reasoned about.
+`nrf54l_05_10_15.dtsi` gives gpio0 `ngpios = <7>`, gpio1 `<16>`, gpio2 `<11>` - so the
+pins are P0.00-P0.06, P1.00-P1.15, P2.00-P2.10. **P0.13 is not a pin on this SoC.**
+CS on P0.00 is fine. Every other assigned pin checks out: SCL P1.08, SDA P1.13, SCK
+P2.01, SDI P2.04, SDO P2.02.
+The dangerous part: this would NOT have failed at build time. NRF_PSEL() encodes port and
+pin into an integer and nothing validates the pin exists, so the build would have
+succeeded, the PSEL register would have selected nothing, and the result would be a
+silent dead clock - which on this project means a VL53L9CX that never acknowledges its
+I2C address and reads as a dead sensor. A previous entry claimed this was self-revealing
+at build time. That was wrong. The pwm20 node is therefore disabled rather than left
+hopeful.
+Second finding, same source: **PWM cannot drive port 0 at all.** PWM_OUT appears only on
+P1 (and P3 on other parts) across every Nordic board in the tree, and P0 carries only
+uart30 and GRTC pin functions - P0 is the 30 power domain, pwm20/21/22 are 20-domain.
+So even a valid P0 pin would not work with this PWM.
+Third finding, and it is an improvement rather than a workaround: **GRTC has a fast clock
+output**, `clkout-fast-frequency-hz`, and the binding's own example is literally
+`<8000000>`. That is our exact frequency from a purpose-built clock output, with none of
+the COUNTERTOP-of-2 marginality that makes 8 MHz a stretch on a PWM. Nordic routes
+GRTC_CLKOUT_FAST to P1.08 on the DK.
+Blocked on Victor: which pin is AP_CLK actually on, in SoC port.pin terms? P2.05 is free
+since CS moved. If the routing allows a GRTC clkout pin, prefer that over PWM.
+
+## 2026-09-04 - Every peripheral instance name in the migration was correct
+What: checked all of them against the SDK instead of leaving them as the "remaining
+guess". `i2c21`, `spi20`, `pwm20`, `gpiote20`, `gpiote30`, `gpio0/1/2`, `cpuapp_rram`,
+`cpuapp_sram` and `adc` all exist in `nrf54l_05_10_15.dtsi`. `wdt0` does not - the
+instances are `wdt30`/`wdt31`, so dropping that alias was right.
+The partition table is exact: `nrf54l15.dtsi` sets `cpuapp_rram` to
+`reg = <0x0 DT_SIZE_K(1428)>` and `cpuapp_sram` to 188 KB, which is precisely the
+1428 KB the new table spans and the figure Victor's original .yaml already carried.
+Consequence: the migration's naming is no longer a guess, and the build output confirms
+it - devicetree resolved as far as
+`/soc/peripheral@50000000/spi@c6000/sdhc@0/mmc`, which means every label reference
+resolved before validation failed on a missing property.
+
+## 2026-09-04 - The build error itself: disk-name, and it predates the migration
+What: `zephyr,sdmmc-disk` marks `disk-name` required; the `mmc` node had no such
+property. Added `disk-name = "SD"`, and set that node `status = "disabled"` to match its
+already-disabled parent - devicetree validates any node that is enabled, regardless of
+whether its parent is, which is why a disabled sdhc0 did not suppress it.
+Why it is worth recording: this was in Victor's original board file unchanged and would
+have failed identically on any SDK version. It is not a migration artifact.
