@@ -204,6 +204,116 @@ later — adding MCUboot then is a partition change and a rebuild, not a redesig
 
 ---
 
+## NCS 3.3 migration checklist
+
+Everything needed to make `water_sense_board` build under NCS v3.3. Work down it; the
+first item is structural and the rest are renames that follow from it.
+
+**Before starting, settle one thing:** open `zephyr/boards/nordic/nrf54l15dk/` in the
+installed tree. That is the authoritative template, it answers every naming question
+below at once, and diffing against it is faster than working from this list. Everything
+here is high-confidence but written without an SDK to check against.
+
+`firmware/boards/pbl/vl53l9_node/` in this repository is already a hardware-model v2
+board for the same SoC. It has never been built either, but the *shape* is right and it
+may be a quicker starting point than converting in place.
+
+### 1. Layout — hardware model v1 to v2
+
+This is the structural change and the reason nothing currently builds: an hwmv1 board is
+not discovered at all by the Zephyr 4.x line NCS 3.x sits on.
+
+| Now | Under hwmv2 |
+|---|---|
+| `boards/arm/water_sense_board/` | `boards/<vendor>/water_sense_board/` — the `arm/` level goes away |
+| `Kconfig.board` | `Kconfig.water_sense_board` |
+| `Kconfig.defconfig` | kept, same name |
+| — | **`board.yml`** — new, and required. Names the board and its SoC |
+| `water_sense_board_defconfig` | `water_sense_board_nrf54l15_cpuapp_defconfig` |
+| `water_sense_board.dts` | `water_sense_board_nrf54l15_cpuapp.dts` |
+| `water_sense_board-pinctrl.dtsi` | `water_sense_board_nrf54l15_cpuapp-pinctrl.dtsi` |
+| `-b water_sense_board` | `-b water_sense_board/nrf54l15/cpuapp` |
+
+`board.yml` is the one genuinely new file:
+
+```yaml
+board:
+  name: water_sense_board
+  full_name: Water sense board (ISP2454-LX)
+  vendor: ethzurich
+  socs:
+    - name: nrf54l15
+```
+
+And `Kconfig.water_sense_board` becomes a select rather than a `depends on`:
+
+```
+config BOARD_WATER_SENSE_BOARD
+	select SOC_NRF54L15_CPUAPP if BOARD_WATER_SENSE_BOARD_NRF54L15_CPUAPP
+```
+
+### 2. SoC identity
+
+| Now | Under NCS 3.3 |
+|---|---|
+| `#include <nordic/nrf54L15_M33.dtsi>` | `#include <nordic/nrf54l15_cpuapp.dtsi>` |
+| `CONFIG_SOC_NRF54L15_M33=y` | `CONFIG_SOC_NRF54L15_CPUAPP=y` |
+| `CONFIG_SOC_SERIES_NRF54X=y` | `CONFIG_SOC_SERIES_NRF54LX=y` — **verify the exact series symbol** |
+| `depends on SOC_NRF54L15_M33` | see the `select` above |
+
+### 3. Memory nodes
+
+| Now | Under NCS 3.3 | Why |
+|---|---|---|
+| `zephyr,sram = &sram0` | `&cpuapp_sram` | per-core naming |
+| `zephyr,flash = &flash0` | `&cpuapp_rram` | the nRF54L15 has **RRAM**, not flash |
+| `&flash0 { partitions ... }` | `&cpuapp_rram { partitions ... }` | same |
+
+Combine this with the resized partition table above — one edit, not two.
+
+### 4. Peripheral instances
+
+The nRF54L15 numbers peripherals by power domain, not sequentially. There is no `i2c1`,
+no `spi2`, no bare `gpiote`.
+
+| Now | Becomes | Note |
+|---|---|---|
+| `&i2c1` | `&i2c20`, `&i2c21` or `&i2c22` | The 20-series lives in the domain that serves **P1** pins, which is where SCL P1.08 and SDA P1.13 are. Consistent |
+| `&spi2` | most likely **`&spi00`** | The 00 instance is the fast one and serves **P2** pins — where SCK P2.01, SDI P2.04, SDO P2.02 are. It is also the only one likely to reach the `spi-max-frequency = <24000000>` already in the node; the 20-series instances are slower. **Verify both claims** against the SDK's pin/instance tables |
+| `&gpiote` | `&gpiote20` and/or `&gpiote30` | numbered per domain |
+| `&wdt0` (alias) | `&wdt30` or `&wdt31` | `wdt0` probably does not exist |
+| `&adc` | likely unchanged | but check `NRF_SAADC_AIN2`/`AIN4` still resolve — nRF54L has its own SAADC binding header |
+
+**The pin domains are the useful cross-check here.** Your I²C is entirely on P1 and your
+SPI entirely on P2, which is exactly how the nRF54L15 splits its peripheral domains. That
+is a good sign the hardware design is coherent; it also means the instance choice is
+largely forced, not free.
+
+### 5. Carried over from the review above
+
+Not NCS 3.3 issues, but they are in the same files and this is one editing pass:
+
+- enable `&gpio1` and `&gpio2`, drop the unused `&gpio0` (or leave it, but it does
+  nothing)
+- resolve CS: either `cs-gpios` on the SPI node, or drop `sdhc0`/`mmc` and drive it from
+  the port file
+- add a console, or accept a silent board
+- drop `zephyr,code-partition` unless MCUboot is in the build
+- remove `label = "GPIO0"` — the property was removed in Zephyr 3.x
+
+### 6. What is already done on this side
+
+- `west.yml` pinned to **v3.3.0**.
+- The driver, its bindings, the platform layer and the bring-up app use no APIs that
+  moved between 3.7 and 4.x. `DEVICE_DT_INST_DEFINE`, `PM_DEVICE_DT_INST_DEFINE`,
+  `pm_device_driver_init`, the I²C/GPIO/PWM `_dt` accessors and the logging macros are
+  all current. No changes expected there — though "expected" is doing real work in that
+  sentence, since none of it has been compiled.
+- One thing to watch rather than fix in advance: **NCS 3.x runs sysbuild by default**. If
+  MCUboot ends up in the build, its configuration goes in `sysbuild.conf`, not `prj.conf`.
+
+---
+
 ## What the VL53L9CX will need, and where it goes
 
 Not in the board file. The sensor node, the AP_CLK PWM and the I²C speed belong in an
