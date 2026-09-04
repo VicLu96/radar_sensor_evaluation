@@ -32,7 +32,7 @@ schematic and the pin assignments.
   `PLATFORM_BUS_I2C` is a first-class option in their interface header
 - **Hardware: a single custom PCB** carrying both parts. **No DK, no ST eval board.**
 - **The board is `water_sense_board`**, now at
-  `firmware_nrf_board_testing/boards/ethzurich/water_sense_board/`, hardware model v2,
+  `firmware_test/boards/ethzurich/water_sense_board/`, hardware model v2,
   target `water_sense_board/nrf54l15/cpuapp`. **Victor owns it: hands off unless he asks
   in that message** — see CLAUDE.md. `firmware/boards/pbl/vl53l9_node/` was Claude's
   placeholder and is superseded
@@ -61,7 +61,7 @@ schematic and the pin assignments.
 
 ## Next session — TODO, in order
 1. **Build and flash the board test.** `west build -b water_sense_board/nrf54l15/cpuapp
-   firmware_nrf_board_testing`, then `west flash`, then open RTT. It touches no
+   firmware_test`, then `west flash`, then open RTT. It touches no
    peripheral: if it prints a heartbeat, the toolchain, the SoC target, the flash offset
    and the debug path are all proven, and nothing else on the board is implicated.
 2. **Fix whatever the first build says.** The likely candidates are the peripheral

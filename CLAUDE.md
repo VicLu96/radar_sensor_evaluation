@@ -35,7 +35,7 @@ Owner: Victor, Zurich. He designed the hardware.
 - **Board files: hands off by default, edit only when Victor asks in that message.**
   Amended 2026-09-04 (was "absolutely forbidden"; Victor lifted it to have the NCS 3.3
   migration done). The standing default is unchanged — do not touch
-  `firmware_nrf_board_testing/boards/**` to fix a build, tidy it, or add a node. Report
+  `firmware_test/boards/**` to fix a build, tidy it, or add a node. Report
   and wait. Only an explicit instruction in the current message ("change the board
   file", "do it on the board file") authorises an edit, and it authorises that edit
   only, not a general licence.

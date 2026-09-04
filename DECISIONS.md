@@ -739,3 +739,21 @@ timebase would poison every timing number the paper reports.
 Also corrected today: the driver's TURN_OFF no longer claims to gate AP_CLK, in both the
 README and the PM comment, and the driver now says at init that AP_CLK is board-supplied
 and not gated - visible in the first lines of console output rather than buried in a doc.
+
+## 2026-09-04 - Renamed firmware_nrf_board_testing to firmware_test, for path length
+What: Victor renamed the folder. Git recorded it as 13 pure renames - 0 insertions, 0
+deletions, content untouched - so history follows the files. The CMake `project()` name
+went with it, which matters: sysbuild names a subdirectory after the project, so the
+rename shortens the build path twice over.
+Why: Windows' 260-character path limit, which is what stopped the build. The arithmetic:
+  old  100 (build dir) + 27 (sysbuild subdir) + 137 (cracen object path) = 264  FAIL
+  new   87              + 14                  + 137                      = 238  OK
+22 characters of margin, which is thin but real. If it bites again the answer is
+`west build -d c:/b`, which is how the build was verified working here earlier today.
+Worth being clear that the error message is actively misleading: the compiler reports
+"opening dependency file ... No such file or directory", which reads as a missing file
+or a broken toolchain. Nothing in the firmware or the board files was ever wrong.
+Note for the next build: the stale `firmware_test/build/` directory still carries the old
+project name in its CMakeCache and generated devicetree. It is gitignored, but a
+non-pristine rebuild against it would be confusing. Use `-p always` or delete it.
+Historical entries above keep the old folder name, per the append-only rule.

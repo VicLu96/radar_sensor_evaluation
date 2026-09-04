@@ -21,7 +21,19 @@ about the hardware — the pins and rails are still only as right as the schemat
 ## Build and flash
 
 ```bash
-west build -b water_sense_board/nrf54l15/cpuapp firmware_nrf_board_testing
+west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always
+```
+
+**Windows path length matters here.** The nRF Connect SDK crypto sources sit very deep,
+and the compiler fails with `opening dependency file ... No such file or directory` —
+which names a missing file rather than the real cause — once a path exceeds 260
+characters. The folder was renamed from `firmware_nrf_board_testing` to `firmware_test`
+for exactly this reason: it removes 13 characters from the build path and another 13
+from the sysbuild subdirectory, which is enough on this machine. If it still bites,
+build somewhere short:
+
+```bash
+west build -b water_sense_board/nrf54l15/cpuapp -d c:/b firmware_test -p always
 ```
 
 ```bash
