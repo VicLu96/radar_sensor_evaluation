@@ -59,24 +59,57 @@ static inline const struct i2c_dt_spec *bus(void *const p_dev)
 	return &cfg->i2c;
 }
 
-/* Index write followed by a read, as ONE transaction with a repeated start.
- * Splitting it into two transactions releases the bus in between, which loses
- * the index if anything else is on the bus.
+/*
+ * TRAP 4 — NO REPEATED START. EVER.
+ *
+ * A read is START/WRITE-index/STOP, then START/READ/STOP: two complete,
+ * separate transactions. The obvious i2c_write_read_dt() is WRONG here — it
+ * emits a repeated start between the index and the data, which this part does
+ * not support (datasheet "known limitations").
+ *
+ * The failure mode is what makes this worth four paragraphs: a repeated start
+ * does not merely fail the transfer, it latches the device into NAK-EVERYTHING
+ * until a clean STOP escapes it. So the first bad read poisons every
+ * subsequent one, and the sensor presents as dead from that point on — which
+ * on a board with no known-good reference is a day lost to suspecting the
+ * hardware.
+ *
+ * ST does the same split: in the legacy-I2C branch of their platform layer,
+ * both the index write and the data read use I2C_PRIVATE_WITHOUT_ARB_STOP
+ * ("Stop between each I2C Private message") and are issued as two separate HAL
+ * transactions (st-reference/vl53l9/vl53l9_platform.c:_i3c_read). Only their
+ * DMA path uses I2C_PRIVATE_WITH_ARB_RESTART.
+ *
+ * Yes, this releases the bus between index and data. On a multi-master bus
+ * another master could interleave and lose us the index. This part gives us no
+ * choice, so if a second master is ever added, the fix is bus-level locking,
+ * not a repeated start.
  */
 static int rd(void *const p_dev, uint16_t address, uint8_t *values, uint32_t size)
 {
+	const struct i2c_dt_spec *i2c;
 	uint8_t idx[IDX_LEN];
 
 	if (p_dev == NULL || values == NULL || size == 0U) {
 		return VL53L9_ERROR_PLATFORM;
 	}
 
+	i2c = bus(p_dev);
 	idx_to_buf(address, idx);
 
-	if (i2c_write_read_dt(bus(p_dev), idx, IDX_LEN, values, size) < 0) {
-		LOG_ERR("read failed: idx 0x%04x, %u bytes", address, size);
+	/* Transaction 1: write the index, then STOP. */
+	if (i2c_write_dt(i2c, idx, IDX_LEN) < 0) {
+		LOG_ERR("read failed at index write: idx 0x%04x", address);
 		return VL53L9_ERROR_PLATFORM;
 	}
+
+	/* Transaction 2: fresh START, read, STOP. */
+	if (i2c_read_dt(i2c, values, size) < 0) {
+		LOG_ERR("read failed at data phase: idx 0x%04x, %u bytes",
+			address, size);
+		return VL53L9_ERROR_PLATFORM;
+	}
+
 	return VL53L9_ERROR_NONE;
 }
 
@@ -186,6 +219,11 @@ int vl53l9_write(void *const p_dev, uint16_t address, uint8_t *p_values, uint32_
 		msg[1].buf = p_values + sent;
 		msg[1].len = chunk;
 		msg[1].flags = I2C_MSG_WRITE | I2C_MSG_STOP;
+
+		/* Two WRITE messages with no I2C_MSG_RESTART between them: one
+		 * START, index bytes, payload, one STOP. A plain write, which
+		 * is what the part wants — see TRAP 4 above.
+		 */
 
 		if (i2c_transfer_dt(&cfg->i2c, msg, 2) < 0) {
 			LOG_ERR("write failed: idx 0x%04x, offset %u of %u",

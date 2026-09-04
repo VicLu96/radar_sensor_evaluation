@@ -322,3 +322,52 @@ the port. It does block bring-up if the board has no oscillator.
 Expected to be wrong if: the nRF54L15 PWM has a clock source or mode that reaches 12 MHz
 cleanly - worth ten minutes with the product specification before building anything
 exotic.
+
+## 2026-09-01 - No repeated start: a bug in the port, found by checking a claim
+What: reads are START/write-index/STOP then START/read/STOP - two separate I2C
+transactions. `i2c_write_read_dt()`, which emits a repeated start between index and
+data, is WRONG for this part and has been removed from `vl53l9cx_platform.c`.
+Why: the device does not support a repeated start between the index write and the data
+read (datasheet "known limitations", via the hardware-validated community Python
+driver). It does not fail cleanly - it latches into NAK-everything until a clean STOP
+escapes it, so the first bad read poisons every later one and the sensor presents as
+dead. ST's own legacy-I2C path does the same split: both phases use
+I2C_PRIVATE_WITHOUT_ARB_STOP ("Stop between each I2C Private message") issued as two
+separate HAL transactions (st-reference/vl53l9/vl53l9_platform.c, _i3c_read). Only their
+DMA path uses I2C_PRIVATE_WITH_ARB_RESTART.
+How it got in: the original scaffolding chose one transaction with a repeated start on
+the general reasoning that it cannot lose the register index on a multi-master bus. That
+reasoning is sound for most I2C parts and wrong for this one. It was found while
+checking whether AP_CLK is used in I2C mode - not by reviewing the code, which three
+passes over that file had not caught.
+Consequence: on a multi-master bus another master can now interleave between index and
+data. The part gives no choice; if a second master is ever added the answer is bus-level
+locking, not a repeated start.
+Correction to the 2026-09-01 address entry above: ST's STM32 sample is NOT buggy. Their
+platform layer shifts the target address right by one in the legacy-I2C branch of both
+_i3c_read and _i3c_write, so 0x52 becomes 0x29 on the wire. The conclusion (0x29 is the
+7-bit address) is unchanged and now has two independent confirmations in ST's own code.
+Expected to be wrong if: an erratum lifts the limitation for some silicon revision - but
+the failure is severe enough that the split is worth keeping regardless.
+
+## 2026-09-01 - AP_CLK is the sensor's system clock, and is required in I2C mode
+What: AP_CLK is not a bus signal and is not tied to the interface choice. It is the
+clock the sensor's digital core runs on. ST's command set makes it explicit:
+COMMAND_SWITCH_TO_EXT_CLOCK (0x8) "turn off the pll and switch the system clock to the
+external clock", COMMAND_SWITCH_TO_FAST_CLOCK (0x7) "turn on the pll and switch the
+system clock to the fast clock" (st/vl53l9.c:102-103). Both sources derive from AP_CLK -
+the external clock directly, the fast clock through a PLL that locks to it, and there is
+a pll_lock error bit in the status word showing the PLL is not free-running.
+Why it is not bus-specific: vl53l9_init() writes VL53L9_REGADDR_EXT_CLOCK first,
+unconditionally, before anything about the output interface is configured, and the
+register lives in BOOT_SETTINGS. ST's interface header keeps bus type and clock
+configuration as separate orthogonal fields. Nothing makes the clock conditional on I3C
+or CSI-2.
+Consequence: SCL clocks the bus; AP_CLK clocks the sensor. Both are needed. Confirmed on
+the I2C side by the community Python driver, which runs plain I2C on Linux and specifies
+6-27 MHz at IOVDD level, +/-100 ppm, with no clock meaning no ACK at all.
+Expected to be wrong if: the device clocks its I2C slave front-end from SCL and answers
+basic register reads without AP_CLK. That would be unusual and would not change the
+requirement - the FSM those reads interrogate still needs a core clock - but it is the
+one part of this that rests on a community README rather than on ST's source. A scope on
+AP_CLK during the first probe settles it.

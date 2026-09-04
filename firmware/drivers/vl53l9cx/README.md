@@ -62,9 +62,9 @@ calls and wrap the result. Keeping their source byte-identical to the release me
 their updates drop in, and it keeps the line between "our bug" and "their bug" sharp —
 which is worth a great deal when a sensor goes quiet and there is no reference board.
 
-## Three traps, all handled in `vl53l9cx_platform.c`
+## Four traps, all handled in `vl53l9cx_platform.c`
 
-All three are confirmed against ST's source, 2026-09-01.
+All four are confirmed against ST's source, 2026-09-01.
 
 **1. Register indices are 16-bit.** Zephyr's `i2c_reg_read_byte_dt()` assumes an 8-bit
 register address and will not work here. Every access writes a two-byte big-endian index
@@ -81,22 +81,34 @@ cold start.
 requested 1 ms silently becomes a full tick — at 100 Hz ticks that stretches a blob
 upload tenfold. The platform layer busy-waits below a tick and sleeps above it.
 
+**4. No repeated start — ever.** A read is START/write-index/STOP, then START/read/STOP:
+two separate transactions. `i2c_write_read_dt()` is wrong here. The part does not
+support a repeated start between index and data (datasheet "known limitations"), and it
+does not merely fail — it latches the device into **NAK-everything** until a clean STOP
+escapes it, so the first bad read makes the sensor look dead from then on. ST's
+legacy-I2C path does the same split.
+
+This one bit us in writing: the first version of `vl53l9cx_platform.c` used
+`i2c_write_read_dt()`, on the reasoning that one transaction cannot lose the index on a
+multi-master bus. Sound for most I2C parts, wrong for this one — and it would have
+produced exactly the "sensor is dead" symptom this repo's rules warn against misreading
+as a software bug.
+
 ## Address — resolved
 
 **0x29 is the 7-bit address.** Put that in devicetree `reg`.
 
-The sources looked like they disagreed: ST defines `VL53L9_DEFAULT_ADDRESS (0x52)` and
-their STM32 sample passes it straight into a HAL field documented as 7-bit, while the
-community Python driver uses 0x29 and demonstrably works. ST's own driver settles it —
-`vl53l9_set_com_config()` writes `address >> 1` into the device's address register and
-`vl53l9_get_com_config()` reads it back shifted left (`st/vl53l9.c:203-227`). So ST's
-`address` field is the 8-bit form throughout, 0x29 is the real 7-bit address, and their
-sample has a shift bug.
+ST's `VL53L9_DEFAULT_ADDRESS` is `0x52`, the 8-bit form, and their code shifts it down
+in two places: `vl53l9_set_com_config()` writes `address >> 1` into the device's address
+register, and the legacy-I2C branch of their platform layer shifts the target address
+right by one before every transfer (`st-reference/vl53l9/vl53l9_platform.c`, both
+`_i3c_read` and `_i3c_write`). Consistent throughout — 8-bit in ST's API, 7-bit on the
+wire.
 
 **Before blaming the address, check the clock.** The sensor needs 6-27 MHz on AP_CLK
-(12 MHz on every reference design) and **does not acknowledge its I²C address at all
-until that clock is running** — see `docs/plan/st-package-audit.md` §7. A silent bus is
-far more likely to be a missing clock than a wrong address.
+(12 MHz on every reference design) and does not acknowledge its I2C address until that
+clock is running — see `docs/plan/st-package-audit.md` section 7. A silent bus is far
+more likely to be a missing clock than a wrong address.
 
 ## Power management
 
