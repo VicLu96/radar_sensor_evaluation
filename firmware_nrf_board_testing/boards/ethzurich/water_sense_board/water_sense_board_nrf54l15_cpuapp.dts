@@ -14,7 +14,7 @@
  *   - flash0/sram0 -> cpuapp_rram/cpuapp_sram; the nRF54L15 has RRAM
  *   - partitions resized from 512 KB to the full 1428 KB, MCUboot dropped
  *   - gpio1 and gpio2 enabled (where the pins actually are), gpio0 too
- *   - AP_CLK: added, then DISABLED — P0.13 does not exist on this SoC
+ *   - AP_CLK: 8 MHz on P0.00 from GRTC clkout-fast, not PWM
  *   - RTT console added, so the board can say something
  *   - sdhc0 disabled pending the chip-select decision — see the note on it
  *
@@ -34,7 +34,6 @@
 #include <zephyr/dt-bindings/adc/adc.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/i2c/i2c.h>
-#include <zephyr/dt-bindings/pwm/pwm.h>
 #include "water_sense_board_nrf54l15_cpuapp-pinctrl.dtsi"
 
 / {
@@ -104,10 +103,11 @@
 
 /* All three ports enabled.
  *
- * The original enabled gpio0 and left gpio1 and gpio2 off, which is where the
- * bus pins are. Pinctrl does not need the GPIO driver, but a software-driven
- * pin does — and chip select on P0.00 is software-driven here, so gpio0 turns
- * out to have been the one that was needed all along.
+ * gpio2 is the one that matters: chip select on P2.05 is driven in software
+ * from the port file, and a software-driven pin needs the GPIO driver even
+ * though pinctrl signals do not. gpio1 and gpio0 carry only pinctrl signals
+ * (the I2C bus and AP_CLK respectively) and would work without this, but there
+ * is no reason to leave ports off on a board still being brought up.
  */
 &gpio0 {
 	status = "okay";
@@ -130,45 +130,39 @@
 };
 
 /* ---------------------------------------------------------------------------
- * AP_CLK for the VL53L9CX — DISABLED, because P0.13 does not exist.
+ * AP_CLK for the VL53L9CX — 8 MHz on P0.00, from the GRTC fast clock output.
  *
- * Checked against the SDK rather than assumed:
- *   nrf54l_05_10_15.dtsi  gpio0 ngpios = <7>    -> P0.00 .. P0.06
- *                         gpio1 ngpios = <16>   -> P1.00 .. P1.15
- *                         gpio2 ngpios = <11>   -> P2.00 .. P2.10
+ * P0.13 was given first and is not a pin on this SoC (gpio0 has ngpios = <7>,
+ * so P0.00..P0.06). Corrected to P0.00 by Victor. That correction also forces
+ * the mechanism: PWM cannot drive port 0, so this is GRTC, not pwm20.
  *
- * So P0.13 is not a pin on this SoC. CS on P0.00 is fine; AP_CLK on P0.13 is
- * not. It is almost certainly an ISP2454-LX MODULE pin number that needs
- * translating to a SoC port.pin.
+ * WHY THIS IS BETTER THAN THE PWM IT REPLACES. From
+ * zephyr/drivers/timer/nrf_grtc_timer.c:
  *
- * AND THIS WOULD NOT HAVE FAILED LOUDLY. NRF_PSEL() just encodes port and pin
- * into an integer — nothing validates that the pin exists. The build would
- * have succeeded and the PSEL register would have selected nothing, giving a
- * silent dead clock and a sensor that never acknowledges its address. That is
- * the single most expensive failure mode this project has, so the node is
- * disabled rather than left hopeful.
+ *     grtc_div = base_frequency / (requested_frequency * 2)
+ *     #error if requested > base / 2
  *
- * A second constraint, from Nordic's own boards: PWM_OUT never appears on port
- * 0 anywhere in the tree, and P0 carries only uart30 and GRTC pin functions.
- * P0 belongs to the 30 power domain; pwm20/21/22 are 20-domain parts and reach
- * P1 and P2. So even a valid P0 pin could not be driven by this PWM.
+ * with base = pclk = 16 MHz. So the maximum fast-clock output is 8 MHz, and at
+ * 8 MHz the divider is exactly 1. Our frequency is the top of the range and
+ * lands on an integer divider — none of the COUNTERTOP-of-2 marginality that
+ * made 8 MHz a stretch on a PWM.
  *
- * TWO WAYS FORWARD, and Victor picks:
+ * It is also the ONLY usable value: the next divider down gives 4 MHz, which
+ * is below the sensor's 6 MHz minimum. The constraint picked the number again,
+ * independently of the PWM reasoning that first arrived at it.
  *
- *   (a) Put AP_CLK on a free P1 or P2 pin and re-enable this node. Free right
- *       now: P2.05 (released when CS moved to P0.00), and whatever P1/P2 pins
- *       the schematic has spare.
- *
- *   (b) Better, if the routing allows: use the GRTC fast clock output rather
- *       than PWM. It is a purpose-built clock output, and the binding's own
- *       example is literally `clkout-fast-frequency-hz = <8000000>` — our
- *       exact frequency, with none of the COUNTERTOP-of-2 risk that makes
- *       8 MHz marginal on a PWM. Nordic's DK routes GRTC_CLKOUT_FAST to P1.08.
+ * ONE CONSEQUENCE FOR STAGE 4, and it is a real trade rather than a detail:
+ * the GRTC clock output is configured once at boot and runs continuously.
+ * Zephyr exposes no runtime gate for it, so AP_CLK can no longer be switched
+ * off with the sensor power domain the way the driver was designed to. Either
+ * accept an always-on 8 MHz output and measure what it costs, or move AP_CLK
+ * to a P1/P2 pin on a PWM, which is gateable but marginal at 8 MHz. Worth
+ * deciding with the Power Profiler rather than in advance.
  * -------------------------------------------------------------------------*/
-&pwm20 {
-	status = "disabled";
-	pinctrl-0 = <&pwm_apclk_default>;
-	pinctrl-1 = <&pwm_apclk_sleep>;
+&grtc {
+	clkout-fast-frequency-hz = <8000000>;
+	pinctrl-0 = <&grtc_default>;
+	pinctrl-1 = <&grtc_sleep>;
 	pinctrl-names = "default", "sleep";
 };
 
@@ -209,7 +203,7 @@
 	/*
 	 * DISABLED PENDING A DECISION, not deleted.
 	 *
-	 * Chip select on P0.00 is driven in software from the port file. This
+	 * Chip select on P2.05 is driven in software from the port file. This
 	 * node is Zephyr's SD-over-SPI stack, and `reg = <0>` means "SPI device
 	 * 0" — it expects the controller's cs-gpios[0] to exist and drives it
 	 * around every transfer. The two cannot both own the pin: manual
@@ -217,7 +211,7 @@
 	 * timeouts.
 	 *
 	 * So, one or the other:
-	 *   - Zephyr's stack: add `cs-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;` to
+	 *   - Zephyr's stack: add `cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;` to
 	 *     this node's parent and set status = "okay" here.
 	 *   - Port file owns CS: delete this node and talk to the card with raw
 	 *     SPI transactions.

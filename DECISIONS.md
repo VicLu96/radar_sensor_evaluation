@@ -643,3 +643,31 @@ already-disabled parent - devicetree validates any node that is enabled, regardl
 whether its parent is, which is why a disabled sdhc0 did not suppress it.
 Why it is worth recording: this was in Victor's original board file unchanged and would
 have failed identically on any SDK version. It is not a migration artifact.
+
+## 2026-09-04 - Pin map settled: CS P2.05, AP_CLK P0.00, and AP_CLK moves to GRTC
+What: the two corrections resolved. **CS is P2.05**, as originally given. **AP_CLK is
+P0.00**, not P0.13. The 2026-09-04 entry recording "CS is P0.00" was a mis-attributed
+correction - it was about AP_CLK - and stands unedited per the append-only rule,
+superseded here.
+Final map, every pin now checked against the SoC's real port sizes (gpio0 ngpios 7,
+gpio1 16, gpio2 11): SCL P1.08, SDA P1.13, SCK P2.01, SDI P2.04, SDO P2.02, CS P2.05,
+AP_CLK P0.00. All valid.
+The consequence that matters: **AP_CLK moves from PWM to the GRTC fast clock output.**
+PWM cannot drive port 0 - PWM_OUT appears only on P1 across Nordic's boards, and P0 is
+the 30 power domain while pwm20/21/22 are 20-domain. GRTC can: the DK routes
+GRTC_CLKOUT_32K to P0.04.
+This is an improvement, not a workaround. From nrf_grtc_timer.c the divider is
+`base / (requested * 2)` with base = pclk = 16 MHz, and the driver #errors above
+base / 2. So 8 MHz is exactly the maximum and lands on divider 1 - no marginality, unlike
+the COUNTERTOP-of-2 the PWM route needed. It is also the only usable value: the next step
+down is 4 MHz, below the sensor's 6 MHz minimum. The frequency chosen for PWM reasons
+turns out to be the only frequency GRTC can give us, arrived at independently.
+Cost, and it is a real one for stage 4: the GRTC clock output is configured at boot and
+runs continuously, with no runtime gate exposed by Zephyr. AP_CLK can no longer be
+switched off with the sensor power domain the way the driver was designed to. Either
+accept an always-on 8 MHz output and measure what it costs, or move AP_CLK to a P1/P2
+pin on a PWM - gateable, but marginal at 8 MHz. Decide with the Power Profiler, not in
+advance.
+Driver consequence: the sensor node will have no `pwms` property, so the driver takes its
+existing `clock_from_pwm = false` path and treats AP_CLK as a board-supplied oscillator.
+That path already exists and is now accurate.

@@ -4,8 +4,9 @@ Reviewed 2026-09-04. **Claude has not edited and will not edit any board file** 
 CLAUDE.md. Everything below is a proposal for Victor to apply or reject.
 
 Confirmed inputs: module **ISP2454-LX**, SDK **NCS v3.3**, pins SCL P1.08, SDA P1.13,
-SDI P2.04, **CS P0.00**, SDO P2.02, SCK P2.01, AP_CLK P0.13.
-(CS corrected from P2.05 by Victor on 2026-09-04.)
+SDI P2.04, **CS P2.05**, SDO P2.02, SCK P2.01, **AP_CLK P0.00**.
+(The 2026-09-04 P0.00 correction turned out to be about AP_CLK, not CS; CS is P2.05 as
+originally given, and AP_CLK's first value P0.13 is not a pin on this SoC.)
 
 ---
 
@@ -41,7 +42,7 @@ These are wrong regardless of which SDK you build with.
 
 ### 1. SPI chip select — Victor drives it from the port file
 
-**Decided 2026-09-04: CS on P0.00 is handled in software in the port file, not by
+**Decided 2026-09-04: CS on P2.05 is handled in software in the port file, not by
 Zephyr.** Withdrawn as a defect; the pinctrl file is correct to omit it, since CS is not
 a pinctrl signal on nRF in any case.
 
@@ -62,7 +63,7 @@ So one of the two has to go, and it is Victor's choice which:
 
 | | Keep `sdhc0` | Port file owns CS |
 |---|---|---|
-| Board file | add `cs-gpios = <&gpio0 0 GPIO_ACTIVE_LOW>;` to the SPI node | drop the `sdhc0` and `mmc` nodes |
+| Board file | add `cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;` to the SPI node | drop the `sdhc0` and `mmc` nodes |
 | Card access | Zephyr's disk/FAT stack, `CONFIG_SDMMC_SUBSYS` | raw SPI transactions from your own code |
 | Cost | none, it is the stock path | you write the SD command layer |
 
@@ -81,8 +82,7 @@ are not enabled.
 I²C and SPI data lines survive this — nRF pinctrl programs the peripheral's PSEL
 registers and does not need the GPIO driver. **A GPIO does need it**, so this one bites
 whichever way the CS question above is answered: `cs-gpios` needs `gpio2`, and so does a
-port file toggling P0.00 itself. **`&gpio0` matters now**: with CS moved off P2 it is no
-longer an unused port.
+port file toggling P2.05 itself.
 
 ### 3. No console
 

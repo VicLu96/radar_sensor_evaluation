@@ -4,16 +4,15 @@
  *
  *   SCL      P1.08      SDA      P1.13
  *   SCK      P2.01      SDI      P2.04      SDO      P2.02
- *   CS       P0.00      — driven in software from the port file, so it is
+ *   CS       P2.05      — driven in software from the port file, so it is
  *                         deliberately NOT a pinctrl signal. On nRF, chip
  *                         select never is: SPIM does not drive it. That is also
  *                         why CS can sit on P0 while the SPI signals are on P2:
  *                         a plain GPIO has no power-domain tie to the
  *                         peripheral, whereas a pinctrl signal does.
- *   AP_CLK   P0.13      — INVALID. P0 has 7 pins on this SoC (P0.00..P0.06),
- *                         so P0.13 does not exist. The consuming pwm20 node is
- *                         disabled until Victor supplies a real pin; see the
- *                         long note there.
+ *   AP_CLK   P0.00      — 8 MHz to the VL53L9CX, from the GRTC fast clock
+ *                         output rather than a PWM. Corrected from P0.13,
+ *                         which is not a pin on this SoC.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -53,32 +52,29 @@
 	};
 
 	/*
-	 * AP_CLK — 8 MHz to the VL53L9CX.
+	 * AP_CLK — 8 MHz to the VL53L9CX on P0.00, from GRTC.
 	 *
-	 * P0.13 BELOW IS NOT A REAL PIN and this group is not in use: gpio0 has
-	 * ngpios = <7> on this SoC. It is left here, referenced only by a
-	 * disabled node, so the intent is visible and one edit revives it.
+	 * NOT a PWM. Two reasons, both checked against the SDK rather than
+	 * assumed:
 	 *
-	 * Two constraints on the replacement pin:
-	 *   - it must exist: P0.00-P0.06, P1.00-P1.15, P2.00-P2.10
-	 *   - it must be on P1 or P2 if PWM drives it. PWM_OUT never appears on
-	 *     port 0 in Nordic's own boards, and pwm20/21/22 are 20-domain parts
-	 *     while P0 is 30-domain.
+	 *   - PWM cannot reach port 0. PWM_OUT appears only on P1 across every
+	 *     Nordic board in the tree; P0 carries uart30 and GRTC functions.
+	 *     P0 is the 30 power domain, pwm20/21/22 are 20-domain.
+	 *   - GRTC can. Nordic's own DK routes GRTC_CLKOUT_32K to P0.04, so the
+	 *     clock outputs are not confined to P1.
 	 *
-	 * NOTE this would NOT have failed at build time. NRF_PSEL() only encodes
-	 * port and pin into an integer; nothing checks the pin exists. It would
-	 * have built, run, and produced no clock — and a VL53L9CX with no clock
-	 * does not acknowledge its I2C address, which reads as a dead sensor.
+	 * And GRTC is the better source anyway — see the &grtc node for the
+	 * arithmetic. 8 MHz is exactly its maximum, with an integer divider.
 	 */
-	pwm_apclk_default: pwm_apclk_default {
+	grtc_default: grtc_default {
 		group1 {
-			psels = <NRF_PSEL(PWM_OUT0, 0, 13)>;
+			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
 		};
 	};
 
-	pwm_apclk_sleep: pwm_apclk_sleep {
+	grtc_sleep: grtc_sleep {
 		group1 {
-			psels = <NRF_PSEL(PWM_OUT0, 0, 13)>;
+			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
 			low-power-enable;
 		};
 	};

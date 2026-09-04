@@ -35,14 +35,13 @@ schematic and the pin assignments.
   target `water_sense_board/nrf54l15/cpuapp`. **Victor owns it: hands off unless he asks
   in that message** — see CLAUDE.md. `firmware/boards/pbl/vl53l9_node/` was Claude's
   placeholder and is superseded
-- **AP_CLK: pin unresolved.** P0.13 was given but **does not exist** — this SoC has
-  P0.00-P0.06, P1.00-P1.15, P2.00-P2.10 (verified in the SDK). PWM also cannot drive
-  port 0 at all. `pwm20` is disabled until a real pin arrives; GRTC's
-  `clkout-fast-frequency-hz` may be a better source than PWM — its binding example is
-  8 MHz exactly
-- **SPI chip select is P0.00**, driven by the port file, not `cs-gpios` (Victor,
-  2026-09-04; corrected from P2.05 the same day). `sdhc0` is disabled because the two
-  cannot both own the pin. P2.05 is therefore free
+- **AP_CLK is P0.00**, 8 MHz from **GRTC `clkout-fast`**, not PWM (Victor, 2026-09-04).
+  PWM cannot reach port 0. 8 MHz is exactly GRTC's maximum (`pclk` 16 MHz / 2) and lands
+  on divider 1; 4 MHz, the next step down, is below the sensor's minimum. Caveat for
+  stage 4: the GRTC output has no runtime gate, so AP_CLK cannot be switched off with
+  the sensor domain
+- **SPI chip select is P2.05**, driven by the port file, not `cs-gpios` (Victor,
+  2026-09-04). `sdhc0` is disabled because the two cannot both own the pin
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —
   people who STAY. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"
