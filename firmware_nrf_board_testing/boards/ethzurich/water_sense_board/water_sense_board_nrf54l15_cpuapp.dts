@@ -1,0 +1,248 @@
+/*
+ * Water sense board — ISP2454-LX (Nordic nRF54L15) + VL53L9CX + SD card.
+ *
+ * Migrated 2026-09-04 from Victor's hardware-model-v1 board file, for nRF
+ * Connect SDK v3.3. The original is recoverable at commit ec65298.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT SURVIVED UNCHANGED: every pin Victor assigned, the ADC configuration,
+ * the BT_CTLR default, and the intent of the SPI/SD arrangement.
+ *
+ * WHAT CHANGED, and why:
+ *   - hardware model v1 -> v2 (the reason nothing built under NCS 3.3)
+ *   - nrf54L15_M33.dtsi -> nrf54l15_cpuapp.dtsi, and the SoC symbol with it
+ *   - flash0/sram0 -> cpuapp_rram/cpuapp_sram; the nRF54L15 has RRAM
+ *   - partitions resized from 512 KB to the full 1428 KB, MCUboot dropped
+ *   - gpio1 and gpio2 enabled (where the pins actually are), gpio0 too
+ *   - AP_CLK added: 8 MHz PWM on P0.13
+ *   - RTT console added, so the board can say something
+ *   - sdhc0 disabled pending the chip-select decision — see the note on it
+ *
+ * PERIPHERAL INSTANCE NAMES ARE THE REMAINING GUESS. The nRF54L15 numbers by
+ * power domain. i2c21 and spi20 below are chosen to match the pin domains
+ * (P1 -> 20-series, P2 -> the fast domain), but if the build says a node does
+ * not exist, diff against zephyr/boards/nordic/nrf54l15dk/ in the installed
+ * SDK — that is the authority, and it settles every name here at once.
+ * ---------------------------------------------------------------------------
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/dts-v1/;
+
+#include <nordic/nrf54l15_cpuapp.dtsi>
+#include <zephyr/dt-bindings/adc/adc.h>
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include "water_sense_board_nrf54l15_cpuapp-pinctrl.dtsi"
+
+/ {
+	model = "water_tracker";
+	compatible = "ethzurich,water_tracker";
+
+	chosen {
+		zephyr,sram = &cpuapp_sram;
+		zephyr,flash = &cpuapp_rram;
+
+		/*
+		 * Console over SEGGER RTT, not a UART.
+		 *
+		 * No UART pins are assigned on this board and the pin budget is
+		 * already committed, so RTT costs nothing and works over the
+		 * J-Link that is attached anyway. Swap for a UART later if the
+		 * pins appear.
+		 *
+		 * NO zephyr,code-partition: without MCUboot in the build it
+		 * would link the image at a bootloader offset the chip never
+		 * jumps to, which looks exactly like a dead board. Add it back
+		 * together with sysbuild and MCUboot, not before.
+		 */
+	};
+
+	aliases {
+		/*
+		 * watchdog0 = &wdt0 was in the original and is dropped: wdt0
+		 * does not exist on this SoC (the instances are numbered by
+		 * domain, wdt30/wdt31). Nothing referenced it. Re-add pointing
+		 * at the real instance if a watchdog is wanted.
+		 */
+	};
+
+	zephyr,user {
+		io-channels = <&adc 0>;
+	};
+};
+
+/* ---------------------------------------------------------------------------
+ * Memory. 1428 KB is what the application core actually has — the remainder of
+ * the nRF54L15's RRAM is reserved for the FLPR core. The previous table mapped
+ * 512 KB of it and left the other two thirds stranded.
+ *
+ * No bootloader here, so the application gets everything up to the storage
+ * area. Adding MCUboot later is a partition change and a rebuild, not a
+ * redesign — the four-partition layout is in
+ * docs/hardware/water-sense-board-review.md.
+ * -------------------------------------------------------------------------*/
+&cpuapp_rram {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		slot0_partition: partition@0 {
+			label = "image-0";
+			reg = <0x00000000 DT_SIZE_K(1400)>;
+		};
+
+		storage_partition: partition@15e000 {
+			label = "storage";
+			reg = <0x0015e000 DT_SIZE_K(28)>;
+		};
+	};
+};
+
+/* All three ports enabled. The original enabled gpio0 (unused) and left gpio1
+ * and gpio2 off, which is where every assigned pin actually is. Pinctrl does
+ * not need the GPIO driver, but a software-driven pin does — and chip select on
+ * P2.05 is software-driven on this board.
+ */
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+&gpio2 {
+	status = "okay";
+};
+
+&gpiote20 {
+	status = "okay";
+};
+
+&gpiote30 {
+	status = "okay";
+};
+
+/* ---------------------------------------------------------------------------
+ * AP_CLK for the VL53L9CX — 8 MHz on P0.13.
+ *
+ * 8 MHz is chosen, not inherited: the sensor accepts 6-27 MHz, and a 16 MHz PWM
+ * base divides to 16, 8 and 5.33 MHz. ST's reference 12 MHz is unreachable
+ * (COUNTERTOP would be 1.33) and 5.33 MHz is below the sensor's minimum, so
+ * 8 MHz is the only exact frequency in the legal window.
+ *
+ * VERIFY ON A SCOPE. 8 MHz needs COUNTERTOP = 2 and a one-tick duty, which is
+ * the edge of what a PWM peripheral will do. If this instance will not produce
+ * it, the answer is a different mechanism — a TIMER toggling the pin through
+ * GPIOTE/DPPI, or an oscillator on the board — not a different frequency.
+ *
+ * The sensor does not acknowledge its I2C address until this clock runs, so a
+ * silent sensor means "check here first", not "check the address".
+ * -------------------------------------------------------------------------*/
+&pwm20 {
+	status = "okay";
+	pinctrl-0 = <&pwm_apclk_default>;
+	pinctrl-1 = <&pwm_apclk_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/* I2C: SCL P1.08, SDA P1.13. Instance renamed from i2c1, which does not exist
+ * on this SoC.
+ *
+ * 400 kHz rather than the default 100 kHz: a full 54x42 VL53L9CX frame is
+ * 14,842 bytes, which is ~404 ms at 400 kHz and ~1.6 s at 100 kHz.
+ *
+ * If the board has no external pull-ups on SDA/SCL, add bias-pull-up to the
+ * pinctrl group — it is silent either way until the bus does not work.
+ */
+&i2c21 {
+	status = "okay";
+	compatible = "nordic,nrf-twim";
+	clock-frequency = <I2C_BITRATE_FAST>;
+
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-1 = <&i2c1_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	/* The VL53L9CX node is NOT here on purpose. It belongs in an
+	 * application-level overlay, so this board file stays about the board
+	 * and the sensor's configuration travels with the application that
+	 * uses it.
+	 */
+};
+
+/* SPI to the SD card: SCK P2.01, MOSI/SDI P2.04, MISO/SDO P2.02.
+ * Instance renamed from spi2, which does not exist on this SoC.
+ */
+&spi20 {
+	status = "okay";
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-1 = <&spi2_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	/*
+	 * DISABLED PENDING A DECISION, not deleted.
+	 *
+	 * Chip select on P2.05 is driven in software from the port file. This
+	 * node is Zephyr's SD-over-SPI stack, and `reg = <0>` means "SPI device
+	 * 0" — it expects the controller's cs-gpios[0] to exist and drives it
+	 * around every transfer. The two cannot both own the pin: manual
+	 * toggling underneath Zephyr's produces glitches that read as card
+	 * timeouts.
+	 *
+	 * So, one or the other:
+	 *   - Zephyr's stack: add `cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;` to
+	 *     this node's parent and set status = "okay" here.
+	 *   - Port file owns CS: delete this node and talk to the card with raw
+	 *     SPI transactions.
+	 *
+	 * Left disabled so the board builds and boots either way, and so the SD
+	 * path cannot fail confusingly at runtime before the decision is made.
+	 */
+	sdhc0: sdhc@0 {
+		status = "disabled";
+		compatible = "zephyr,sdhc-spi-slot";
+		reg = <0>;
+		power-delay-ms = <500>;
+		spi-max-frequency = <24000000>;
+		mmc {
+			status = "okay";
+			compatible = "zephyr,sdmmc-disk";
+		};
+	};
+};
+
+/* ADC — carried over from the original unchanged.
+ * VERIFY that NRF_SAADC_AIN2 / AIN4 still name the intended pins: the nRF54L
+ * family has its own SAADC input bindings and the numbering is not always the
+ * same as earlier nRF parts.
+ */
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 5)>;
+		zephyr,input-positive = <NRF_SAADC_AIN2>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <4>;
+	};
+
+	channel@1 {
+		reg = <1>;
+		zephyr,gain = "ADC_GAIN_1_6";
+		zephyr,reference = "ADC_REF_INTERNAL";
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 5)>;
+		zephyr,input-positive = <NRF_SAADC_AIN4>;
+		zephyr,resolution = <12>;
+		zephyr,oversampling = <4>;
+	};
+};

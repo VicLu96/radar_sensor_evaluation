@@ -1,6 +1,0 @@
-# Copyright (c) 2024 Nordic Semiconductor ASA
-# SPDX-License-Identifier: Apache-2.0
-
-config BOARD_WATER_SENSE_BOARD
-	bool "water_sense_board-pinctrl"
-	depends on SOC_NRF54L15_M33

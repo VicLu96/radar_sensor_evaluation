@@ -1,0 +1,77 @@
+/*
+ * Pin assignments — all from Victor, unchanged from the original board file
+ * except for the AP_CLK group, which is new.
+ *
+ *   SCL      P1.08      SDA      P1.13
+ *   SCK      P2.01      SDI      P2.04      SDO      P2.02
+ *   CS       P2.05      — driven in software from the port file, so it is
+ *                         deliberately NOT a pinctrl signal. On nRF, chip
+ *                         select never is: SPIM does not drive it.
+ *   AP_CLK   P0.13      — new, 8 MHz to the VL53L9CX
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&pinctrl {
+
+	i2c1_default: i2c1_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 1, 8)>,
+				<NRF_PSEL(TWIM_SDA, 1, 13)>;
+		};
+	};
+
+	i2c1_sleep: i2c1_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 1, 8)>,
+				<NRF_PSEL(TWIM_SDA, 1, 13)>;
+		};
+		low-power-enable;
+	};
+
+	spi2_default: spi2_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
+				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+		};
+	};
+
+	spi2_sleep: spi2_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 2, 1)>,
+				<NRF_PSEL(SPIM_MOSI, 2, 4)>,
+				<NRF_PSEL(SPIM_MISO, 2, 2)>;
+		};
+		low-power-enable;
+	};
+
+	/*
+	 * AP_CLK — 8 MHz square wave to the VL53L9CX on P0.13.
+	 *
+	 * TWO THINGS TO CHECK HERE, both self-revealing at build time:
+	 *
+	 * 1. That P0.13 exists. On the nRF54L15 the P0 port is short — the bulk of
+	 *    the GPIO sits on P1 and P2, which is where every other pin on this
+	 *    board is. If P0.13 is a MODULE pin number from the ISP2454-LX pinout
+	 *    rather than an SoC port.pin, it needs translating. A devicetree error
+	 *    naming the pin means exactly this.
+	 *
+	 * 2. That the PWM instance below can reach P0. The nRF54L15 groups
+	 *    peripherals and pins into power domains, and a peripheral cannot drive
+	 *    a pin outside its own. If pwm20 cannot reach P0.13, the fix is a
+	 *    different PWM instance, not a different pin.
+	 */
+	pwm_apclk_default: pwm_apclk_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 13)>;
+		};
+	};
+
+	pwm_apclk_sleep: pwm_apclk_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 0, 13)>;
+			low-power-enable;
+		};
+	};
+};

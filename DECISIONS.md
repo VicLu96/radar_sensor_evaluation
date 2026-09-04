@@ -534,3 +534,49 @@ owns CS and the `sdhc0`/`mmc` nodes come out. Victor's call, on his file.
 Unchanged either way: `&gpio2` must be enabled. Pinctrl does not need the GPIO driver but
 a software-driven pin does, so that finding stands whichever route is taken.
 No bearing on the VL53L9CX, which is on I2C and has no chip select.
+
+## 2026-09-04 - Board-file rule amended, and the board migrated at Victor's request
+What: the "absolutely forbidden" rule on board files is amended to "hands off by
+default, edit only when Victor asks in that message". He asked, so `water_sense_board`
+was migrated to hardware model v2 and NCS 3.3 naming, AP_CLK was added on P0.13, and the
+partitions were resized.
+Why the amendment is recorded rather than just acted on: the prohibition was written
+into CLAUDE.md two messages earlier at Victor's instruction. Quietly working around it
+would leave the file lying about how this repo operates. The default has not changed -
+only an explicit instruction in the current message authorises an edit, and it
+authorises that edit only.
+The pre-migration board files are recoverable at commit ec65298, unchanged.
+
+## 2026-09-04 - AP_CLK on P0.13, 8 MHz, from PWM
+What: `pwm20` drives P0.13 at 8 MHz for the VL53L9CX, added to the board file.
+Why 8 MHz was already decided (16 MHz / 2 is the only exact frequency inside the
+sensor's 6-27 MHz window). What is new is the pin.
+Two things to verify at build time, both self-revealing:
+1. That P0.13 exists on this SoC. On the nRF54L15 the P0 port is short - the bulk of the
+   GPIO is on P1 and P2, which is where every other pin on this board sits. If P0.13 is
+   a MODULE pin from the ISP2454-LX pinout rather than an SoC port.pin, the devicetree
+   will say so by name.
+2. That `pwm20` can reach P0. The nRF54L15 groups peripherals and pins into power
+   domains and a peripheral cannot drive a pin outside its own. If it cannot, the fix is
+   a different PWM instance, not a different pin.
+Still VERIFY on a scope regardless: 8 MHz needs COUNTERTOP = 2 and a one-tick duty.
+
+## 2026-09-04 - Board migrated: what changed and what was deliberately not decided
+Migrated `water_sense_board` to hardware model v2 for NCS 3.3. Preserved unchanged:
+every pin Victor assigned, the ADC configuration, the BT_CTLR default.
+Changed: hwmv1 -> hwmv2 layout; `nrf54L15_M33.dtsi` -> `nrf54l15_cpuapp.dtsi` and the
+SoC symbol with it; `flash0`/`sram0` -> `cpuapp_rram`/`cpuapp_sram`; partitions from
+512 KB to the full 1428 KB with MCUboot dropped and no `zephyr,code-partition`, so a
+plain build links at 0 and runs; `gpio1` and `gpio2` enabled; `i2c1` -> `i2c21` at
+400 kHz; `spi2` -> `spi20`; RTT console added.
+Deliberately NOT decided, and left visible instead: `sdhc0` is **disabled rather than
+deleted**. With chip select owned by the port file it cannot work as written, but
+deleting it would be choosing Victor's SD architecture for him. Disabled means the board
+builds and boots either way, and the node carries a comment saying exactly which two
+options exist.
+Also not added: the VL53L9CX node. It belongs in an application overlay, so the board
+file stays about the board.
+Expected to be wrong if: the peripheral instance names. `i2c21`, `spi20`, `pwm20`,
+`gpiote20/30` are chosen to match the pin domains but are the remaining guess in this
+file. A "node does not exist" error means diffing against
+zephyr/boards/nordic/nrf54l15dk/ in the installed SDK, which settles all of them at once.

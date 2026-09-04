@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Board defaults only. Application choices belong in the application's prj.conf.
+# Note the SOC_ symbols that used to be here are gone: hardware model v2 derives
+# them from board.yml.
+
+CONFIG_GPIO=y
+CONFIG_PINCTRL=y
+
+# Enable MPU
+CONFIG_ARM_MPU=y
+
+# Enable hardware stack protection
+CONFIG_HW_STACK_PROTECTION=y

@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if BOARD_WATER_SENSE_BOARD
+
+# Kept from the original board file. Under hardware model v2 `config BOARD` is
+# generated, so it is no longer set here.
+config BT_CTLR
+	default BT
+
+endif # BOARD_WATER_SENSE_BOARD

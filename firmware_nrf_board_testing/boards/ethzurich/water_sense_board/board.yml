@@ -1,0 +1,11 @@
+# Water sense board — custom PCB, Insight SiP ISP2454-LX (Nordic nRF54L15).
+#
+# Migrated from hardware model v1 to v2 on 2026-09-04 for nRF Connect SDK v3.3,
+# at Victor's request. The pre-migration files are recoverable at commit
+# ec65298 if anything here needs comparing against the original.
+board:
+  name: water_sense_board
+  full_name: Water sense board (ISP2454-LX)
+  vendor: ethzurich
+  socs:
+    - name: nrf54l15

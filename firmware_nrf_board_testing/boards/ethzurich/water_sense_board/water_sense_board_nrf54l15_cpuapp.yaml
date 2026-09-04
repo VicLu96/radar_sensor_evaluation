@@ -1,0 +1,15 @@
+identifier: water_sense_board/nrf54l15/cpuapp
+name: water_sense_board
+type: mcu
+arch: arm
+ram: 188
+flash: 1428
+toolchain:
+  - zephyr
+  - gnuarmemb
+supported:
+  - i2c
+  - spi
+  - gpio
+  - pwm
+  - adc

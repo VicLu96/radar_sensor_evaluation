@@ -30,10 +30,14 @@ schematic and the pin assignments.
   reference port runs the STM32 I3C peripheral in legacy I²C mode, and
   `PLATFORM_BUS_I2C` is a first-class option in their interface header
 - **Hardware: a single custom PCB** carrying both parts. **No DK, no ST eval board.**
-- **The board is `water_sense_board`**, in `firmware_nrf_board_testing/boards/arm/`.
-  **Victor owns those files and Claude must never edit them** — see CLAUDE.md. Hardware
-  the driver needs goes in an application `.overlay`, never in the board file.
-  `firmware/boards/pbl/vl53l9_node/` was Claude's placeholder and is superseded
+- **The board is `water_sense_board`**, now at
+  `firmware_nrf_board_testing/boards/ethzurich/water_sense_board/`, hardware model v2,
+  target `water_sense_board/nrf54l15/cpuapp`. **Victor owns it: hands off unless he asks
+  in that message** — see CLAUDE.md. `firmware/boards/pbl/vl53l9_node/` was Claude's
+  placeholder and is superseded
+- **AP_CLK is P0.13**, 8 MHz from `pwm20` (Victor, 2026-09-04)
+- **SPI chip select (P2.05) is driven by the port file**, not `cs-gpios` (Victor,
+  2026-09-04). `sdhc0` is disabled because the two cannot both own the pin
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —
   people who STAY. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"
@@ -49,22 +53,21 @@ schematic and the pin assignments.
    where the paper is
 
 ## Next session — TODO, in order
-1. **Victor migrates `water_sense_board` to hardware-model v2 and NCS 3.3 naming.**
-   Blocking, and not something an overlay can work around — the failures are in the
-   board's own includes and `chosen` nodes. Findings and snippets are in
-   `docs/hardware/water-sense-board-review.md`; the fastest route is diffing against
-   `zephyr/boards/nordic/nrf54l15dk/` in the installed tree.
-2. **Victor enables `&gpio1` and `&gpio2`** instead of the unused `&gpio0` — needed
-   whether CS comes from `cs-gpios` or from the port file. **CS on P2.05 is the port
-   file's job** (Victor, 2026-09-04), which means the `sdhc0`/`mmc` nodes and a
-   software-driven CS cannot both stand — one of them has to go.
-3. **Decide AP_CLK.** The pin list has no clock for the sensor, and the VL53L9CX does not
-   acknowledge its I²C address without one. Board oscillator, or a PWM-capable pin
-   committed to it? This is a hardware answer, not a software one.
-4. **Then Claude writes the application `.overlay`** — VL53L9CX node, AP_CLK PWM,
-   `clock-frequency = <I2C_BITRATE_FAST>` on the I²C bus. Deliberately not written yet:
-   it references labels the migration will change.
-5. Then build, then the gates in `firmware/app/README.md`.
+1. **Build and flash the board test.** `west build -b water_sense_board/nrf54l15/cpuapp
+   firmware_nrf_board_testing`, then `west flash`, then open RTT. It touches no
+   peripheral: if it prints a heartbeat, the toolchain, the SoC target, the flash offset
+   and the debug path are all proven, and nothing else on the board is implicated.
+2. **Fix whatever the first build says.** The likely candidates are the peripheral
+   instance names (`i2c21`, `spi20`, `pwm20`, `gpiote20/30`) and whether **P0.13 exists**
+   — the nRF54L15's P0 port is short, and P0.13 may be an ISP2454-LX module pin rather
+   than an SoC port.pin.
+3. **Build `firmware/app` against the same board** to compile the VL53L9CX driver for
+   the first time — it has still never met a compiler.
+4. **Write the application `.overlay`** adding the VL53L9CX node under the I²C bus.
+   Everything it needs is now known except the final instance labels.
+5. **Decide the SD path**: `cs-gpios` plus Zephyr's stack, or the port file owns CS and
+   `sdhc0` goes. It is disabled until then.
+6. Then the gates in `firmware/app/README.md`.
 
 ## The two questions that gate everything
 1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
