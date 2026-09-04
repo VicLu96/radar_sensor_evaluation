@@ -484,3 +484,35 @@ saying which nRF Connect SDK version he actually has installed - that single ans
 decides the pin, and probably decides several of the review findings too.
 Expected to be wrong if: his SDK is new enough that hardware-model v1 is gone entirely,
 in which case the board files need migrating and that is his call, not a pin change.
+
+## 2026-09-04 - SDK pinned to NCS v3.3.0, which makes the board migration mandatory
+What: `west.yml` now pins nRF Connect SDK v3.3.0, the version Victor has installed.
+Why: the pin had to move because the board file cannot. But 3.3 is a bigger jump than
+the earlier v2.9.0 guess, and it converts "the board file is from an older generation"
+from an inconvenience into a hard block: hardware-model v1 board layouts are not
+discovered at all by the Zephyr 4.x line NCS 3.x is built on, and neither
+`nordic/nrf54L15_M33.dtsi` nor `SOC_NRF54L15_M33` exists in that tree.
+Consequence: `water_sense_board` must be migrated to hardware-model v2 and current
+nRF54L15 naming before anything builds. **No application overlay can work around it** -
+the failures are in the board's own includes and chosen nodes, which are resolved before
+overlays are merged. Since board files are Victor's, the migration is his.
+Full findings and ready-to-paste snippets in docs/hardware/water-sense-board-review.md.
+Expected to be wrong if: NCS 3.3 retains a hardware-model v1 compatibility path. Worth
+one check against zephyr/boards/nordic/nrf54l15dk/ in the installed tree, which is the
+authoritative template and settles every naming question in this entry at once.
+
+## 2026-09-04 - Partition table proposed at 1428 KB, not 512 KB
+What: a partition layout spanning the application core's full 1428 KB of RRAM -
+mcuboot 64K, image-0 668K, image-1 668K, storage 28K, ending exactly at 0x165000.
+Proposed only: it lives in a board file and Claude does not edit those.
+Why: the current table covers 512 KB of 1428 KB, leaving about two thirds of the memory
+unmapped, and its 220 KB image slots are tight for a build that already carries ST's
+driver and a 9,865-byte firmware blob and will later carry BLE. Victor's own
+`water_sense_board.yaml` already states `flash: 1428`, so the numbers were right and only
+the partitions had not caught up.
+A no-MCUboot variant is offered alongside it - one 1400 KB image partition and no
+`zephyr,code-partition` - because it also removes the "image links at 0xc000 and the
+chip never jumps to it" failure, which is the worst thing to be debugging on a board
+where nothing else is proven yet.
+Expected to be wrong if: the FLPR core is to be used and needs its own RRAM region, in
+which case the top of the map shrinks and every figure above moves.

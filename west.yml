@@ -4,16 +4,15 @@
 # nRF Connect SDK, which in turn pulls Zephyr and the rest.
 #
 # ---------------------------------------------------------------------------
-# VERIFY THE REVISION BELOW BEFORE THE FIRST BUILD.
+# Pinned to nRF Connect SDK v3.3.0 — the version Victor has installed
+# (confirmed 2026-09-04). Do not float it: a silent SDK bump changes timing and
+# power behaviour that the paper reports. Record any change in DECISIONS.md.
 #
-# This was written 2026-09-01 on a machine with no SDK installed, so the pin is
-# a starting point rather than a tested one. Set it to the nRF Connect SDK
-# version you actually have, and record the change in DECISIONS.md — the repo
-# convention is that the SDK version is pinned, not floating, because a silent
-# SDK bump changes timing and power behaviour that the paper reports.
-#
-# The nRF54L15 needs a reasonably recent SDK. If the build cannot find
-# nrf54l15_cpuapp.dtsi, the pin is too old.
+# NOTE: this pin and `water_sense_board` are currently INCOMPATIBLE. The board
+# files are written against the nRF54L15 preview generation (hardware-model v1,
+# `nordic/nrf54L15_M33.dtsi`, `SOC_NRF54L15_M33`), none of which exists in an
+# NCS 3.x tree. The board files are Victor's and are not Claude's to change —
+# see docs/hardware/water-sense-board-review.md for exactly what has to move.
 # ---------------------------------------------------------------------------
 
 manifest:
@@ -27,7 +26,7 @@ manifest:
     - name: nrf
       remote: nrfconnect
       repo-path: sdk-nrf
-      revision: v2.9.0
+      revision: v3.3.0
       import: true
 
   self:

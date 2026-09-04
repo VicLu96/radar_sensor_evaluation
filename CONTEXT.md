@@ -9,7 +9,8 @@ schematic and the pin assignments.
 
 | Document | What it holds |
 |---|---|
-| `firmware/app/README.md` | **How to build it, and what each bring-up gate tells you** |
+| `docs/hardware/water-sense-board-review.md` | **Review of Victor's board file against NCS 3.3, with ready-to-paste snippets** |
+| `firmware/app/README.md` | How to build it, and what each bring-up gate tells you |
 | `docs/plan/st-package-audit.md` | What X-CUBE-53L9A1 provides, and the three things it corrected |
 | `docs/plan/driver-port.md` | Port strategy and ST's real platform contract |
 | `docs/plan/room-occupancy.md` | The dwell reframe: what it fixes, what it breaks |
@@ -48,20 +49,20 @@ schematic and the pin assignments.
    where the paper is
 
 ## Next session — TODO, in order
-1. **Settle which nRF Connect SDK version is installed**, then pin `west.yml` to it.
-   This is now blocking and is not cosmetic: `water_sense_board` is written against the
-   **nRF54L15 preview generation** (`nordic/nrf54L15_M33.dtsi`, `SOC_NRF54L15_M33`,
-   hardware-model **v1** board layout). The pin currently in `west.yml` is v2.9.0, which
-   is a later generation and uses different names. One of the two has to move, and the
-   board file is not allowed to.
-2. **Report the `water_sense_board` findings to Victor** and wait — do not edit. The
-   substantive ones: SPI **CS (P2.05) is missing entirely**, `&gpio1`/`&gpio2` are not
-   enabled while `&gpio0` is, there is **no console**, and `zephyr,code-partition`
-   requires an MCUboot build.
-3. **Write an application `.overlay`** adding the VL53L9CX node, the AP_CLK PWM and
-   `clock-frequency = <I2C_BITRATE_FAST>` on `&i2c1`. The board file has none of these
-   and must not gain them.
-4. Then build, then the gates in `firmware/app/README.md`.
+1. **Victor migrates `water_sense_board` to hardware-model v2 and NCS 3.3 naming.**
+   Blocking, and not something an overlay can work around — the failures are in the
+   board's own includes and `chosen` nodes. Findings and snippets are in
+   `docs/hardware/water-sense-board-review.md`; the fastest route is diffing against
+   `zephyr/boards/nordic/nrf54l15dk/` in the installed tree.
+2. **Victor applies the two hardware defects**: SPI `cs-gpios` on P2.05 (missing
+   entirely), and enabling `&gpio1`/`&gpio2` instead of the unused `&gpio0`.
+3. **Decide AP_CLK.** The pin list has no clock for the sensor, and the VL53L9CX does not
+   acknowledge its I²C address without one. Board oscillator, or a PWM-capable pin
+   committed to it? This is a hardware answer, not a software one.
+4. **Then Claude writes the application `.overlay`** — VL53L9CX node, AP_CLK PWM,
+   `clock-frequency = <I2C_BITRATE_FAST>` on the I²C bus. Deliberately not written yet:
+   it references labels the migration will change.
+5. Then build, then the gates in `firmware/app/README.md`.
 
 ## The two questions that gate everything
 1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
