@@ -70,8 +70,14 @@ static int clock_start(const struct device *dev)
 	int ret;
 
 	if (!cfg->clock_from_pwm) {
-		LOG_INF("AP_CLK: assuming a board oscillator at %u Hz — the "
-			"sensor will not answer on I2C without it",
+		/* Board-supplied clock: an oscillator, or a SoC clock output
+		 * configured elsewhere in devicetree (GRTC clkout-fast on
+		 * water_sense_board). Nothing for the driver to start — and,
+		 * importantly, nothing for it to stop either.
+		 */
+		LOG_INF("AP_CLK: board-supplied at %u Hz, always on — the sensor "
+			"will not answer on I2C without it, and it is NOT gated "
+			"with the sensor domain",
 			cfg->ext_clock_hz);
 		return 0;
 	}

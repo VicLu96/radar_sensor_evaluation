@@ -9,7 +9,8 @@ schematic and the pin assignments.
 
 | Document | What it holds |
 |---|---|
-| `docs/hardware/water-sense-board-review.md` | **Review of Victor's board file against NCS 3.3, with ready-to-paste snippets** |
+| `docs/plan/ap-clk-always-on.md` | **The always-on AP_CLK decision, and the A/B measurement it obliges** |
+| `docs/hardware/water-sense-board-review.md` | Review of the board file against NCS 3.3 |
 | `firmware/app/README.md` | How to build it, and what each bring-up gate tells you |
 | `docs/plan/st-package-audit.md` | What X-CUBE-53L9A1 provides, and the three things it corrected |
 | `docs/plan/driver-port.md` | Port strategy and ST's real platform contract |
@@ -37,9 +38,11 @@ schematic and the pin assignments.
   placeholder and is superseded
 - **AP_CLK is P0.00**, 8 MHz from **GRTC `clkout-fast`**, not PWM (Victor, 2026-09-04).
   PWM cannot reach port 0. 8 MHz is exactly GRTC's maximum (`pclk` 16 MHz / 2) and lands
-  on divider 1; 4 MHz, the next step down, is below the sensor's minimum. Caveat for
-  stage 4: the GRTC output has no runtime gate, so AP_CLK cannot be switched off with
-  the sensor domain
+  on divider 1; 4 MHz, the next step down, is below the sensor's minimum
+- **AP_CLK runs continuously and that is accepted** (Victor, 2026-09-04) — measure its
+  cost rather than design around a guess. It is reversible in firmware if the
+  measurement says otherwise: `nrfy_grtc_clkout_set()` is in the linked HAL. See
+  `docs/plan/ap-clk-always-on.md`
 - **SPI chip select is P2.05**, driven by the port file, not `cs-gpios` (Victor,
   2026-09-04). `sdhc0` is disabled because the two cannot both own the pin
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —

@@ -702,3 +702,40 @@ DTS partitioning.
 Expected to be wrong if: nothing here. It compiled and linked. What it does NOT prove is
 that any of it is correct on the actual hardware - the pins, the rails and the clock are
 still only as right as the schematic they came from.
+
+## 2026-09-04 - AP_CLK stays always on; measure it rather than design around a guess
+What: accept the continuously running 8 MHz GRTC clock output on P0.00 and measure its
+cost. Victor's decision. No board change - always-on is what the board already does.
+Why it is the right default: the alternative was to contort the design around a number
+nobody has, and this repo's rule is that estimates size decisions and never enter the
+paper.
+Two things recorded so the measurement actually happens, in
+docs/plan/ap-clk-always-on.md:
+1. **The clock term does not scale with duty cycle.** Everything else gets cheaper as
+   the sensor is gated harder, which is the whole of stage 4. This does not move. So it
+   grows as a fraction exactly as the work succeeds, and at the low-duty limit it sets a
+   floor on the battery claim. A term that is 3% of the budget today and 30% after
+   stage 4 is not noise, it is the result.
+2. **The pin is probably not the expensive part.** Switching 10 pF at 1.8 V and 8 MHz is
+   about 260 uW (estimate, capacitance assumed, sizing only). The term that decides it is
+   holding the 16 MHz pclk domain up continuously, which is what stops the SoC reaching
+   its deepest idle. That has to come off the Power Profiler.
+The measurement is a clean A/B on the MCU rail with the sensor held off: idle current
+as-built, then with `clkout-fast-frequency-hz` deleted and rebuilt. One rebuild, no extra
+instrumentation. Do it BEFORE the stage-4 sweep, because if the term is large it changes
+what that sweep means.
+The escape hatch, and it is why accepting this now costs nothing: **reversible in
+firmware, no respin.** `nrfy_grtc_clkout_set(NRF_GRTC, NRF_GRTC_CLKOUT_FAST, false)` is a
+static inline in the nrfx HAL already linked into this build, so the driver's
+clock_start/clock_stop - today no-ops on this board - can gate the output directly in a
+few lines, in the place the design already has for it. That matters because the AP_CLK
+trace is fixed to P0.00 and PWM cannot reach port 0, so "move it to a gateable pin" would
+otherwise have meant a board respin.
+Two things to confirm if we ever take that path: the sensor needs the clock before it
+answers at all, so gating must sequence with TURN_ON (the driver's existing ordering
+already does this); and GRTC is also the system timer, so confirm on the bench that
+disabling only the output leaves the kernel timebase undisturbed - a subtly broken
+timebase would poison every timing number the paper reports.
+Also corrected today: the driver's TURN_OFF no longer claims to gate AP_CLK, in both the
+README and the PM comment, and the driver now says at init that AP_CLK is board-supplied
+and not gated - visible in the first lines of console output rather than buried in a doc.

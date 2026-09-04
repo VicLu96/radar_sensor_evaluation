@@ -116,9 +116,14 @@ more likely to be a missing clock than a wrong address.
 
 - **SUSPEND** — stop ranging, `VL53L9_POWER_ULTRA_LOW`, rail and clock stay up,
   firmware retained. Cheap to resume.
-- **TURN_OFF** — drop XSHUT, gate AP_CLK, drop the sensor power domain. Zero standby
-  current, but the next resume pays a full firmware blob reload: 9,865 bytes, about
-  250 ms at 400 kHz.
+- **TURN_OFF** — drop XSHUT, drop the sensor power domain, and gate AP_CLK *only if the
+  MCU drives it from a PWM*. Zero sensor standby current, but the next resume pays a full
+  firmware blob reload: 9,865 bytes, about 250 ms at 400 kHz.
+
+**On `water_sense_board`, AP_CLK is not gated.** It comes from the GRTC fast clock
+output, which is configured at boot and has no runtime gate. So `TURN_OFF` removes the
+sensor's draw and leaves a fixed clock term running underneath it — read
+`docs/plan/ap-clk-always-on.md` before trusting any stage-4 energy number.
 
 ST gives three power modes (`REGULAR`, `LOW`, `ULTRA_LOW`), which was not in the plan
 and adds a third axis to the stage-4 sweep at the cost of a register write.
