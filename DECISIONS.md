@@ -516,3 +516,21 @@ chip never jumps to it" failure, which is the worst thing to be debugging on a b
 where nothing else is proven yet.
 Expected to be wrong if: the FLPR core is to be used and needs its own RRAM region, in
 which case the top of the map shrinks and every figure above moves.
+
+## 2026-09-04 - SPI chip select is driven by the port file, not by Zephyr
+What: CS on P2.05 is handled in software in the port file. Victor's decision. The
+earlier review finding ("cs-gpios is missing") is withdrawn - the omission is deliberate.
+Why it is fine: SPIM does not drive chip select itself; Zephyr's driver just toggles a
+GPIO from `cs-gpios`. A port layer toggling the same pin does what the driver would have
+done, and holding CS across several transactions is the normal arrangement for
+SD-over-SPI.
+The consequence that does need settling: the board file already contains an `sdhc0` node
+(`zephyr,sdhc-spi-slot`, `reg = <0>`, with a `zephyr,sdmmc-disk` child). That is Zephyr's
+SD-over-SPI stack and it expects `cs-gpios[0]` on the controller. The two approaches
+cannot coexist - once a SPI device has a cs-gpios entry Zephyr asserts and de-asserts
+around every transfer, and manual toggling on top of that produces glitches that read as
+card timeouts. So either `sdhc0` stays and the board gains `cs-gpios`, or the port file
+owns CS and the `sdhc0`/`mmc` nodes come out. Victor's call, on his file.
+Unchanged either way: `&gpio2` must be enabled. Pinctrl does not need the GPIO driver but
+a software-driven pin does, so that finding stands whichever route is taken.
+No bearing on the VL53L9CX, which is on I2C and has no chip select.

@@ -54,8 +54,10 @@ schematic and the pin assignments.
    board's own includes and `chosen` nodes. Findings and snippets are in
    `docs/hardware/water-sense-board-review.md`; the fastest route is diffing against
    `zephyr/boards/nordic/nrf54l15dk/` in the installed tree.
-2. **Victor applies the two hardware defects**: SPI `cs-gpios` on P2.05 (missing
-   entirely), and enabling `&gpio1`/`&gpio2` instead of the unused `&gpio0`.
+2. **Victor enables `&gpio1` and `&gpio2`** instead of the unused `&gpio0` — needed
+   whether CS comes from `cs-gpios` or from the port file. **CS on P2.05 is the port
+   file's job** (Victor, 2026-09-04), which means the `sdhc0`/`mmc` nodes and a
+   software-driven CS cannot both stand — one of them has to go.
 3. **Decide AP_CLK.** The pin list has no clock for the sensor, and the VL53L9CX does not
    acknowledge its I²C address without one. Board oscillator, or a PWM-capable pin
    committed to it? This is a hardware answer, not a software one.

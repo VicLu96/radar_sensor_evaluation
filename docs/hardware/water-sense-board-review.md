@@ -38,24 +38,39 @@ the authoritative template, and diffing against it will be faster than reading t
 
 These are wrong regardless of which SDK you build with.
 
-### 1. SPI chip select is missing — P2.05 appears nowhere
+### 1. SPI chip select — Victor drives it from the port file
 
-You listed CS on P2.05. It is not in the pinctrl file and not on the `&spi2` node.
+**Decided 2026-09-04: CS on P2.05 is handled in software in the port file, not by
+Zephyr.** Withdrawn as a defect; the pinctrl file is correct to omit it, since CS is not
+a pinctrl signal on nRF in any case.
 
-This is not an oversight in the pinctrl file, because **CS is not a pinctrl signal on
-nRF**. Zephyr's SPIM driver drives chip select as an ordinary GPIO, so it belongs on the
-controller node:
+Nothing about the SPIM peripheral objects to this. SPIM does not drive chip select
+itself — Zephyr's driver toggles a plain GPIO from `cs-gpios` — so a port layer toggling
+the same GPIO around a transaction is doing exactly what the driver would have done, and
+is the normal arrangement for SD-over-SPI where CS must stay asserted across several
+transactions.
 
-```dts
-&spi2 {
-	cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;
-	/* ... */
-};
-```
+**But it conflicts with the `sdhc0` node already in the board file.** `sdhc0` is
+`compatible = "zephyr,sdhc-spi-slot"` with `reg = <0>`, and a `mmc` child that is
+`zephyr,sdmmc-disk`. That is Zephyr's SD-over-SPI stack, and it identifies the card as
+SPI device 0 on the bus — meaning it expects the controller's `cs-gpios[0]` to exist and
+be driven for it. With CS owned by the port file instead, that stack has no chip select
+and the two approaches fight over the same pin.
 
-Without it, `sdhc0` has no way to select the card and the SD interface cannot work. The
-`reg = <0>` on `sdhc0` indexes into `cs-gpios`, so the node is already written expecting
-this line to exist.
+So one of the two has to go, and it is Victor's choice which:
+
+| | Keep `sdhc0` | Port file owns CS |
+|---|---|---|
+| Board file | add `cs-gpios = <&gpio2 5 GPIO_ACTIVE_LOW>;` to `&spi2` | drop the `sdhc0` and `mmc` nodes |
+| Card access | Zephyr's disk/FAT stack, `CONFIG_SDMMC_SUBSYS` | raw SPI transactions from your own code |
+| Cost | none, it is the stock path | you write the SD command layer |
+
+The two are not combinable: Zephyr will assert and de-assert CS around each transfer as
+soon as the SPI device has a `cs-gpios` entry, and manual toggling on top of that
+produces glitches that look like card timeouts.
+
+**This is only about the SD card.** It has no bearing on the VL53L9CX, which is on I²C
+and uses no chip select at all.
 
 ### 2. The wrong GPIO ports are enabled
 
@@ -63,8 +78,9 @@ this line to exist.
 are not enabled.
 
 I²C and SPI data lines survive this — nRF pinctrl programs the peripheral's PSEL
-registers and does not need the GPIO driver. `cs-gpios` does need it, so this defect and
-the one above will present together as "the SD card does not work".
+registers and does not need the GPIO driver. **A GPIO does need it**, so this one bites
+whichever way the CS question above is answered: `cs-gpios` needs `gpio2`, and so does a
+port file toggling P2.05 itself.
 
 ### 3. No console
 
