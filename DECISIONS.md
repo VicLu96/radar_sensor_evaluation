@@ -757,3 +757,38 @@ Note for the next build: the stale `firmware_test/build/` directory still carrie
 project name in its CMakeCache and generated devicetree. It is gitignored, but a
 non-pristine rebuild against it would be confusing. Use `-p always` or delete it.
 Historical entries above keep the old folder name, per the append-only rule.
+
+## 2026-09-04 - LSM6DSV..BX IMU: planned, and there is no Zephyr driver for it
+What: Victor has an LSM6DSV15BXTR (marking to be confirmed) on the board, on I2C, and
+wants accelerometer XYZ printed over the RTT log. Planned only - no code written, at his
+instruction. Plan in docs/plan/imu-lsm6dsv-bx.md.
+What the SDK check turned up, and it changes the shape of the work:
+1. **No in-tree Zephyr driver for any ..BX variant.** NCS 3.3 ships lsm6ds0, lsm6dsl,
+   lsm6dso, lsm6dso16is, lsm6dsv16x and a family driver covering lsm6dsv320x, lsm6dsv80x
+   and ism6hg256x. None of them is this part.
+2. **The closest driver would reject it**: LSM6DSV16X_ID is 0x70, LSM6DSV16BX_ID is 0x71,
+   and lsm6dsv16x checks WHO_AM_I.
+3. **Loosening that check would be worse than useless.** OUTX_L_A is 0x28 on the 16X and
+   0x2C on the 16BX - the accelerometer output block moved. A driver told to ignore the
+   ID would read four bytes off and return plausible nonsense, which is the failure mode
+   this project has already been bitten by twice.
+What does exist: ST's HAL at modules/hal/st/sensor/stmemsc/lsm6dsv16bx_STdC/, present but
+with no USE_STDC_LSM6DSV16BX Kconfig symbol, so not wired into the build. A small gap,
+not a missing dependency.
+Open and blocking the branch: **the exact part marking.** stmemsc ships lsm6dsv16b and
+lsm6dsv16bx, not lsm6dsv15bx. If it really is a 15BX, ST's HAL for it is not in this SDK
+and has to come from st.com the way X-CUBE-53L9A1 did.
+Approach, staged so the cheap thing proves the expensive thing is worth doing:
+- **Stage A**: about sixty lines in the existing test app, no driver at all. Read
+  WHO_AM_I, set an ODR, burst-read six bytes, log XYZ. This proves the bus wiring, the
+  pull-ups, the address strap and the part identity in one step - all four currently
+  unverified, and a driver that fails to bind would not say which one was wrong. WHO_AM_I
+  also settles the part question: 0x70 means the in-tree driver works as-is and stage B
+  collapses to enabling it.
+- **Stage B**: an out-of-tree driver wrapping ST's HAL, same pattern as the VL53L9CX
+  port. Unlike that one, Zephyr's sensor API fits here - a handful of scalar channels,
+  not a 2268-zone frame - so no custom API is warranted.
+The IMU node goes in an application overlay, not the board file.
+Hazard recorded for whoever debugs this bus: the VL53L9CX shares it, wedges on the empty
+START+STOP transactions a general i2cdetect scan uses, and does not acknowledge at all
+without AP_CLK running. Probe 0x6A and 0x6B specifically. No address collision with 0x29.

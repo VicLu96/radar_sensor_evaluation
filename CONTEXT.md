@@ -9,7 +9,8 @@ schematic and the pin assignments.
 
 | Document | What it holds |
 |---|---|
-| `docs/plan/ap-clk-always-on.md` | **The always-on AP_CLK decision, and the A/B measurement it obliges** |
+| `docs/plan/imu-lsm6dsv-bx.md` | **Plan for the LSM6DSV..BX IMU: no Zephyr driver exists, and why** |
+| `docs/plan/ap-clk-always-on.md` | The always-on AP_CLK decision, and the A/B measurement it obliges |
 | `docs/hardware/water-sense-board-review.md` | Review of the board file against NCS 3.3 |
 | `firmware/app/README.md` | How to build it, and what each bring-up gate tells you |
 | `docs/plan/st-package-audit.md` | What X-CUBE-53L9A1 provides, and the three things it corrected |
@@ -39,6 +40,9 @@ schematic and the pin assignments.
 - **AP_CLK is P0.00**, 8 MHz from **GRTC `clkout-fast`**, not PWM (Victor, 2026-09-04).
   PWM cannot reach port 0. 8 MHz is exactly GRTC's maximum (`pclk` 16 MHz / 2) and lands
   on divider 1; 4 MHz, the next step down, is below the sensor's minimum
+- **A second I²C device is on the board**: an ST **LSM6DSV..BX** IMU (Victor,
+  2026-09-04). No Zephyr driver exists for it — planned, not started, see
+  `docs/plan/imu-lsm6dsv-bx.md`
 - **AP_CLK runs continuously and that is accepted** (Victor, 2026-09-04) — measure its
   cost rather than design around a guess. It is reversible in firmware if the
   measurement says otherwise: `nrfy_grtc_clkout_set()` is in the linked HAL. See
