@@ -912,3 +912,36 @@ the full field of view rather than a cropped one.
 Expected to be wrong if: it compiles, which is all this proves. Whether the sensor answers
 depends on AP_CLK being real on P0.00, on XSHUT being tied high somewhere on the board,
 and on those two rail values.
+
+## 2026-09-04 - Every VL53L9CX board value now confirmed; no placeholders left
+What: Victor supplied the last of it. VDDA 3.3 V, VDDIO 1.8 V (per the datasheet),
+interrupt P0.01, XSHUT P1.07, power enable P0.02, AP_CLK 8 MHz on P0.00. All six are in
+the application overlay and verified in the generated devicetree - vdda 0x325AA0,
+vddio 0x1B7740, ext-clock 0x7A1200, power-gpios gpio0 pin 2, xshut-gpios gpio1 pin 7,
+int-gpios gpio0 pin 1 with flag 0x1 (active low). Builds: FLASH 56,784 B, RAM 41,008 B.
+**VDDA changed from the placeholder.** It was 2.8 V, ST's reference value; the board is
+3.3 V. That is exactly the class of error the placeholder warnings existed for - it would
+not have failed loudly, it would have misconfigured the analogue front end and returned
+plausible rubbish.
+Interrupt polarity is settled rather than assumed: ST's hw_config exposes only CMOS
+versus open-drain (VL53L9_REGADDR_INTR_OUTPUT_MODE) with no polarity field, so it is
+fixed by the part, and the hardware-validated community driver states plainly that INTR
+is active-low. The driver arms GPIO_INT_EDGE_TO_ACTIVE, so it waits on a falling edge.
+What the three GPIOs buy, now that they exist:
+- **power-gpios** gives PM_DEVICE_ACTION_TURN_OFF something to do. The multi-month
+  battery claim now has a mechanism behind it rather than an intention.
+- **xshut-gpios** gives deterministic reset, so a sensor left in a bad state can be
+  recovered in firmware instead of by power-cycling the board.
+- **int-gpios** replaces polling, which stops the CPU spinning through the sensor's
+  integration time - the exact energy this design exists to avoid spending.
+New failure mode worth naming before it is met: with the interrupt wired, a missed edge
+and a dead sensor look identical from the application - both are a capture that times out
+at exactly 2 s. If everything else looks healthy and captures time out on the dot,
+suspect the interrupt line before the sensor. The driver still has its polling path;
+removing int-gpios from the overlay falls back to it and distinguishes the two in one
+rebuild.
+One hardware check, raised once because it is the kind that destroys parts rather than
+wasting time: VDDIO is 1.8 V and every digital pin on the sensor - SDA, SCL, XSHUT, INTR,
+AP_CLK - sits in that domain with an absolute maximum of 1.98 V. The nRF54L15 drives its
+GPIOs at its own VDD. If the module runs above 1.8 V, those five lines need level
+shifting. Presumably handled in the design, but it is worth one look at the schematic.

@@ -290,25 +290,26 @@ static void imu_read_and_log(void)
 /*
  * Say what the devicetree claims before touching the sensor.
  *
- * Two of these are placeholders until the schematic is checked, and a wrong
- * rail value does not fail loudly — it misconfigures the analogue front end and
- * the sensor returns plausible rubbish. Printing them first means a wrong one
- * is visible before anything else can confuse the picture.
+ * All of it is confirmed against the schematic now, so this is no longer a
+ * warning — it is a record. A wrong rail value would not fail loudly, it would
+ * misconfigure the analogue front end and return plausible rubbish, so having
+ * the values in the log means any future reading can be checked against the
+ * configuration that produced it.
  */
 static void tof_report_config(void)
 {
 	LOG_INF("---- VL53L9CX configuration (from devicetree) ----");
 	LOG_INF("  address   0x%02x (7-bit)", DT_REG_ADDR(TOF_NODE));
-	LOG_INF("  VDDA      %d uV   <-- PLACEHOLDER, confirm against schematic",
-		DT_PROP(TOF_NODE, vdda_microvolt));
-	LOG_INF("  VDDIO     %d uV   <-- PLACEHOLDER, confirm against schematic",
-		DT_PROP(TOF_NODE, vddio_microvolt));
-	LOG_INF("  AP_CLK    %d Hz (board-supplied, GRTC, always on)",
+	LOG_INF("  VDDA      %d uV", DT_PROP(TOF_NODE, vdda_microvolt));
+	LOG_INF("  VDDIO     %d uV", DT_PROP(TOF_NODE, vddio_microvolt));
+	LOG_INF("  AP_CLK    %d Hz on P0.00 (GRTC clkout-fast, always on)",
 		DT_PROP(TOF_NODE, ext_clock_frequency));
 	LOG_INF("  XSHUT     %s",
-		DT_NODE_HAS_PROP(TOF_NODE, xshut_gpios) ? "wired" : "NOT WIRED — no reset control");
+		DT_NODE_HAS_PROP(TOF_NODE, xshut_gpios) ? "P1.07" : "NOT WIRED — no reset control");
 	LOG_INF("  INT       %s",
-		DT_NODE_HAS_PROP(TOF_NODE, int_gpios) ? "wired" : "NOT WIRED — polling frame-ready");
+		DT_NODE_HAS_PROP(TOF_NODE, int_gpios) ? "P0.01, active low" : "NOT WIRED — polling");
+	LOG_INF("  PWR_EN    %s",
+		DT_NODE_HAS_PROP(TOF_NODE, power_gpios) ? "P0.02" : "NOT WIRED — cannot power down");
 	LOG_INF("--------------------------------------------------");
 }
 
@@ -441,8 +442,8 @@ int main(void)
 			"firmware blob upload did not complete.");
 		LOG_ERR("  In order: (1) AP_CLK actually present on P0.00 — no "
 			"clock, no ACK, and it looks exactly like a dead sensor; "
-			"(2) the sensor rail; (3) XSHUT held high, which nothing "
-			"drives on this board today; (4) the address.");
+			"(2) the sensor rail coming up on P0.02; (3) XSHUT "
+			"rising on P1.07; (4) the address.");
 		LOG_ERR("  Note the IMU result above: if that worked, the I2C "
 			"bus is proven and the fault is on the ToF side.");
 	} else {

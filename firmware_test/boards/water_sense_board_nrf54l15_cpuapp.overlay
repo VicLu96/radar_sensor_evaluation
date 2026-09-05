@@ -5,8 +5,13 @@
  * board; the sensor's configuration travels with the application that uses it,
  * and water_sense_board stays Victor's.
  *
+ * All values below are Victor's, confirmed 2026-09-04. Nothing here is a
+ * placeholder any more.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
 
 / {
 	aliases {
@@ -15,9 +20,9 @@
 };
 
 &i2c21 {
-	/* Bus speed and pins come from the board file. 400 kHz there, which is
-	 * ~404 ms for a full 54x42 frame and ~24 ms for the 12x10 this test
-	 * uses.
+	/* Bus speed and pins come from the board file: 400 kHz, SCL P1.08,
+	 * SDA P1.13. That is ~404 ms for a full 54x42 frame and ~24 ms for the
+	 * 12x10 this test ranges at.
 	 */
 
 	tof: vl53l9cx@29 {
@@ -29,52 +34,66 @@
 		 */
 		reg = <0x29>;
 
-		/*
-		 * ====================================================
-		 * THESE TWO ARE PLACEHOLDERS AND MUST BE CONFIRMED
-		 * ====================================================
-		 * They are ST's reference values, not measurements of this
-		 * board. vl53l9_init() writes both into the device, and a wrong
-		 * value misconfigures the analogue front end rather than failing
-		 * loudly — the sensor will answer and return plausible rubbish.
-		 *
-		 * The application prints both at startup so a wrong one is
-		 * visible in the first lines of RTT output rather than being
-		 * diagnosed later as a sensor fault.
+		/* Supply rails, per the datasheet (Victor, 2026-09-04).
+		 * vl53l9_init() writes both into the device, and a wrong value
+		 * misconfigures the analogue front end rather than failing
+		 * loudly — so these being confirmed rather than assumed is what
+		 * makes the readings below trustworthy at all.
 		 */
-		vdda-microvolt = <2800000>;   /* CONFIRM: 2800000 or 3300000 */
-		vddio-microvolt = <1800000>;  /* CONFIRM: 1200000 or 1800000 */
+		vdda-microvolt = <3300000>;
+		vddio-microvolt = <1800000>;
 
-		/* Not a placeholder. AP_CLK is 8 MHz from the GRTC fast clock
-		 * output on P0.00, configured in the board file and running
-		 * continuously. No `pwms` property here on purpose: the driver
-		 * then treats the clock as board-supplied and does not try to
-		 * gate it, which is correct — see docs/plan/ap-clk-always-on.md.
+		/* AP_CLK: 8 MHz from the GRTC fast clock output on P0.00,
+		 * configured in the board file and running continuously.
+		 *
+		 * No `pwms` property on purpose. The driver then treats the
+		 * clock as board-supplied and does not try to gate it, which is
+		 * correct here — see docs/plan/ap-clk-always-on.md.
 		 */
 		ext-clock-frequency = <8000000>;
 
 		/*
-		 * xshut-gpios, int-gpios and power-gpios are all OMITTED,
-		 * because their pins have not been given. The driver treats all
-		 * three as optional, so this builds and runs — but know what is
-		 * lost:
+		 * Sensor power domain, P0.02. Active high.
 		 *
-		 *   no xshut-gpios  -> no deterministic reset. The driver cannot
-		 *                      power-cycle the sensor, so a device left
-		 *                      in a bad state stays there until the
-		 *                      board is power-cycled by hand.
-		 *   no int-gpios    -> frame-ready is polled, which keeps the
-		 *                      CPU awake across the integration time.
-		 *                      Fine for a bench test, wrong for the
-		 *                      energy work.
-		 *   no power-gpios  -> the sensor domain is never dropped, so
-		 *                      PM_DEVICE_ACTION_TURN_OFF does nothing
-		 *                      and the multi-month battery claim has no
-		 *                      mechanism behind it.
-		 *
-		 * Add them here — not in the board file — once the pins are
-		 * known.
+		 * This is what gives PM_DEVICE_ACTION_TURN_OFF something to do,
+		 * and therefore what the multi-month battery claim rests on. The
+		 * driver drops it on TURN_OFF and pays a full 9,865-byte
+		 * firmware reload on the next TURN_ON — about 250 ms at 400 kHz,
+		 * which is the number the stage-4 crossover is computed from.
 		 */
+		power-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * XSHUT, P1.07. Active high: driven high releases reset.
+		 *
+		 * Must be ACTIVELY driven — the pin has no internal pull-up. The
+		 * device then NAKs for some milliseconds after the rising edge
+		 * while its ROM boots, which ST's driver polls through, so the
+		 * first NAK is not a failure.
+		 */
+		xshut-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Data-ready interrupt, P0.01. ACTIVE LOW.
+		 *
+		 * The polarity is not a guess and is not configurable: ST's
+		 * hw_config exposes only CMOS versus open-drain
+		 * (VL53L9_REGADDR_INTR_OUTPUT_MODE), with no polarity field, and
+		 * the hardware-validated community driver states plainly that
+		 * INTR is active-low. The driver arms GPIO_INT_EDGE_TO_ACTIVE,
+		 * so this is a falling edge.
+		 *
+		 * With this wired the driver waits on the interrupt instead of
+		 * polling frame-ready, which stops the CPU spinning through the
+		 * sensor's integration time — the exact energy this design
+		 * exists to avoid spending.
+		 *
+		 * If captures start timing out at exactly the 2 s timeout while
+		 * everything else looks healthy, suspect this line before
+		 * suspecting the sensor: a missed interrupt and a dead sensor
+		 * look identical from the application.
+		 */
+		int-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
 
 		/* Bytes per I2C write during the 9,865-byte blob upload. */
 		blob-chunk-size = <1024>;

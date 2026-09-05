@@ -85,12 +85,10 @@ schematic and the pin assignments.
 6. Then the gates in `firmware/app/README.md`.
 
 ## The two questions that gate everything
-1. **VDDA, VDDIO and AP_CLK.** The rails are two-way enums off the schematic (2.8 or
-   3.3 V; 1.2 or 1.8 V) and the driver will not build without them. **The clock is the
-   serious one: the sensor does not acknowledge its I²C address until a 6-27 MHz
-   external clock is running on AP_CLK** — 12 MHz on every reference design. Does the
-   board have an oscillator, or must the nRF54L15 generate it? Either way it must be
-   gated with the sensor domain in stage 4.
+1. ~~VDDA, VDDIO and AP_CLK.~~ **ALL ANSWERED 2026-09-04.** VDDA 3.3 V, VDDIO 1.8 V,
+   AP_CLK 8 MHz on P0.00 from GRTC. Interrupt P0.01 (active low), XSHUT P1.07, power
+   enable P0.02. All in the application overlay, all verified in the generated
+   devicetree. Nothing about the VL53L9CX is a placeholder any more.
 2. **What room, and how big?** One unit covers roughly 3 × 2 m at ceiling height — a
    desk cluster or a small meeting table, not a whole room. Coverage is the binding
    constraint on the test setup and on what the paper can claim.
