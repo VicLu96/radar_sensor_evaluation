@@ -301,6 +301,68 @@ static bool addr_acks(const struct device *dev, uint16_t addr)
 	return i2c_write(cfg->i2c.bus, idx, sizeof(idx), addr) == 0;
 }
 
+/*
+ * Try the whole power-up with power-gpios and XSHUT driven at INVERTED raw
+ * levels, and probe again.
+ *
+ * This tests the one remaining cause that is fixable in software rather than
+ * on a bench: an active-low enable declared as active-high. A PMOS load switch
+ * or a reset line with inverted sense would mean we have been holding the rail
+ * OFF, or the part IN reset, throughout — and every symptom would look exactly
+ * like this: a healthy bus and a part that never answers at any address.
+ *
+ * gpio_pin_set_raw() bypasses the devicetree ACTIVE_HIGH/ACTIVE_LOW mapping, so
+ * this needs no rebuild and no devicetree change to test.
+ *
+ * If this works, the fix is one flag in the overlay. If it does not, the
+ * polarity is off the list too and what remains is genuinely physical.
+ */
+static bool try_inverted_polarity(const struct device *dev)
+{
+	const struct vl53l9cx_config *cfg = dev->config;
+	uint32_t id = 0;
+
+	if (cfg->power.port == NULL && cfg->xshut.port == NULL) {
+		return false;
+	}
+
+	LOG_WRN("trying INVERTED enable polarity, in case an active-low line is "
+		"declared active-high");
+
+	if (cfg->power.port != NULL) {
+		(void)gpio_pin_set_raw(cfg->power.port, cfg->power.pin, 0);
+		k_sleep(K_MSEC(POWER_SETTLE_MS));
+	}
+
+	if (cfg->xshut.port != NULL) {
+		(void)gpio_pin_set_raw(cfg->xshut.port, cfg->xshut.pin, 1);
+		k_sleep(K_MSEC(XSHUT_LOW_MS));
+		(void)gpio_pin_set_raw(cfg->xshut.port, cfg->xshut.pin, 0);
+		k_sleep(K_MSEC(XSHUT_SETTLE_MS));
+	}
+
+	if (vl53l9_get_device_id((void *)dev, &id) == VL53L9_ERROR_NONE) {
+		LOG_ERR("  *** INVERTED POLARITY WORKS *** model id 0x%08x", id);
+		LOG_ERR("  One or both of power-gpios / xshut-gpios is ACTIVE_LOW "
+			"on this board and declared ACTIVE_HIGH in the overlay. "
+			"Fix the flag there — this diagnostic does not persist.");
+		return true;
+	}
+
+	LOG_ERR("  inverted polarity does not help either. Enable sense is off "
+		"the list; what remains is physical: AP_CLK on the pad, the rail "
+		"on P0.02, XSHUT on P1.07.");
+
+	/* Put the pins back the way the devicetree says. */
+	if (cfg->power.port != NULL) {
+		(void)gpio_pin_set_dt(&cfg->power, 1);
+	}
+	if (cfg->xshut.port != NULL) {
+		(void)gpio_pin_set_dt(&cfg->xshut, 1);
+	}
+	return false;
+}
+
 static int device_boot(const struct device *dev)
 {
 	struct vl53l9cx_data *data = dev->data;
@@ -386,10 +448,19 @@ static int device_boot(const struct device *dev)
 						pret = VL53L9_ERROR_NONE;
 						goto probed;
 					}
-					LOG_ERR("  recovery changed nothing. The "
-						"lines cannot reach a high level: "
-						"pull-ups or a short, not "
-						"firmware.");
+					/* What "recovery changed nothing" means
+					 * depends entirely on the errno above,
+					 * and saying only one of them is worse
+					 * than saying neither.
+					 */
+					LOG_ERR("  recovery changed nothing. If the "
+						"errno above is TIMEOUT that means "
+						"the lines cannot reach a high "
+						"level — pull-ups or a short. If it "
+						"is a plain no-acknowledge, the bus "
+						"is healthy and nothing was holding "
+						"it: the part simply is not "
+						"responding.");
 				} else {
 					LOG_ERR("  bus recovery unsupported or "
 						"failed (%d)", rec);
@@ -423,10 +494,11 @@ static int device_boot(const struct device *dev)
 							      : "no ACK");
 				LOG_ERR("  If neither acknowledges, the address is "
 					"not the problem: the part is not "
-					"responding at all. In that case the list "
-					"is AP_CLK on P0.00 (no clock, no ACK — "
-					"scope it), then the rail on P0.02, then "
-					"XSHUT on P1.07.");
+					"responding at all.");
+			}
+
+			if (try_inverted_polarity(dev)) {
+				return -EIO; /* report it, do not run on a hack */
 			}
 			return -EIO;
 		}
