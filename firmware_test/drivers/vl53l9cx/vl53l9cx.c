@@ -613,7 +613,27 @@ static int configure_signalling(const struct device *dev)
 	 *
 	 * MANUAL is the safe resting state: it triggers only on an explicit
 	 * I2C command, so nothing electrical can start a frame.
+	 *
+	 * The mode is READ FIRST rather than simply overwritten. That the reset
+	 * default is SLAVE is currently an inference — the enum value is 0 and
+	 * registers usually reset to 0 — and the datasheet confirms SLAVE is
+	 * "external sync mode, the device uses the SYNC_IN pin to trigger new
+	 * frames", which makes the inference matter. One register read turns it
+	 * into a fact, and this is a repo where that distinction is the rule.
 	 */
+	{
+		vl53l9_sync_mode_t was = VL53L9_SYNC_SLAVE;
+
+		if (vl53l9_get_sync_mode((void *)dev, &was) == VL53L9_ERROR_NONE) {
+			LOG_INF("sync mode as found after boot: %u (%s)", was,
+				was == VL53L9_SYNC_SLAVE      ? "SLAVE — external, "
+								"triggered by the SYNC_IN pin"
+				: was == VL53L9_SYNC_MANUAL   ? "MANUAL — triggered over I2C"
+				: was == VL53L9_SYNC_AUTONOMOUS ? "AUTONOMOUS — free running"
+								: "unknown");
+		}
+	}
+
 	ret = vl53l9_set_sync_mode((void *)dev, VL53L9_SYNC_MANUAL);
 	if (ret != VL53L9_ERROR_NONE) {
 		LOG_WRN("could not leave SYNC_SLAVE (%s) — the device may still "
