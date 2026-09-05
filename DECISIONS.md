@@ -945,3 +945,30 @@ wasting time: VDDIO is 1.8 V and every digital pin on the sensor - SDA, SCL, XSH
 AP_CLK - sits in that domain with an absolute maximum of 1.98 V. The nRF54L15 drives its
 GPIOs at its own VDD. If the module runs above 1.8 V, those five lines need level
 shifting. Presumably handled in the design, but it is worth one look at the schematic.
+
+## 2026-09-05 - CSI-2 (DATA_P/N, CLK_P/N) is never used by this firmware
+What: Victor asked whether the MIPI CSI-2 differential pairs must be connected or may
+float. Firmware answer: they are never used, and no firmware change depends on them.
+Evidence, from ST's driver rather than inference:
+- `_init_default_config()`, run at the end of `vl53l9_init()`, writes
+  `VL53L9_REGADDR_OUTPUT_IF = VL53L9_OUTPUT_I3C` (vl53l9.c:953). The register/I3C output
+  path is ST's own default, not something we opt into.
+- Our driver then sets `hw.output_interface = true` explicitly in configure_signalling(),
+  so it is selected twice over.
+- `vl53l9_start()` validates CSI settings only when `OUTPUT_IF == VL53L9_OUTPUT_CSI2`
+  (vl53l9.c:584). On our path that check is skipped entirely, so a CSI configuration that
+  would be invalid never matters.
+- Frames come back through `vl53l9_get_frame()` over the register bus. Nothing in the
+  data path touches the CSI transmitter.
+So the CSI-2 transmitter is never enabled and never carries data. If the pairs are
+floating today, nothing this firmware does will change that.
+**Where the answer stops.** Whether unused D-PHY pads may be left floating is an
+electrical question answered by the VL53L9CX datasheet's pin table, which is not in this
+repository - X-CUBE-53L9A1 ships driver source, not the device datasheet. The general
+case for unused differential OUTPUTS is that floating is acceptable, since they are
+driven pins rather than high-impedance inputs, but ST occasionally specifies otherwise
+and the failure mode there is EMI or leakage rather than anything that shows up in a log.
+Worth one look at the datasheet pin description; not worth blocking on.
+Also worth stating because it could otherwise waste time: this has no bearing on the
+current bring-up failure. The sensor not booting cannot be caused by the CSI pins, since
+the transmitter is not enabled at any point before or during boot.
