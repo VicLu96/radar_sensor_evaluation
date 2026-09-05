@@ -55,6 +55,24 @@ static const struct res_geom geom[VL53L9CX_RES_COUNT] = {
 	[VL53L9CX_RES_54X42] = {  2, 54, 42, 42, 0, true  },
 };
 
+/* ST returns small negative integers and nothing maps them to words. A log
+ * line naming the failure beats one carrying a number the reader has to go
+ * and look up.
+ */
+static const char *vl53l9_errstr(int err)
+{
+	switch (err) {
+	case VL53L9_ERROR_NONE:              return "none";
+	case VL53L9_ERROR_PLATFORM:          return "PLATFORM (our I2C layer said no)";
+	case VL53L9_ERROR_INVALID_PARAM:     return "INVALID_PARAM";
+	case VL53L9_ERROR_INVALID_STATE:     return "INVALID_STATE (device not in the expected FSM state)";
+	case VL53L9_ERROR_INVALID_OPERATION: return "INVALID_OPERATION";
+	case VL53L9_ERROR_TIMEOUT:           return "TIMEOUT (device never reached the expected state)";
+	case VL53L9_ERROR_INTERNAL:          return "INTERNAL (ST driver, often a patch-version mismatch)";
+	default:                             return "unknown";
+	}
+}
+
 /* ---------------------------------------------------------------------------
  * AP_CLK
  *
@@ -137,8 +155,10 @@ static int power_up(const struct device *dev)
 	if (cfg->power.port != NULL) {
 		ret = gpio_pin_set_dt(&cfg->power, 1);
 		if (ret < 0) {
+			LOG_ERR("power-gpios set failed (%d)", ret);
 			return ret;
 		}
+		LOG_DBG("sensor rail enabled");
 		k_sleep(K_MSEC(10)); /* rail settle. VERIFY against the schematic. */
 	}
 
@@ -147,16 +167,35 @@ static int power_up(const struct device *dev)
 		return ret;
 	}
 
+	/*
+	 * XSHUT, with ST's reference timing: 50 ms low, 50 ms after release.
+	 *
+	 * The low period is explicit rather than inherited. The pin is already
+	 * configured GPIO_OUTPUT_INACTIVE at init, so it is low by then — but
+	 * only for the microseconds between init and here, not for a reset
+	 * pulse the part would recognise. Driving it low and holding is the
+	 * difference between a reset and a coincidence.
+	 *
+	 * The 50 ms figures come from the hardware-validated community driver,
+	 * which cites them as ST's reference timing. Generous for bring-up;
+	 * worth trimming later with a scope, and worth leaving alone until
+	 * something is actually measured.
+	 */
 	if (cfg->xshut.port != NULL) {
-		/* XSHUT must be actively driven high — there is no internal
-		 * pull-up. The device then NAKs for some milliseconds while
-		 * its ROM boots, which ST's _wait_for_state() polls through.
-		 */
-		ret = gpio_pin_set_dt(&cfg->xshut, 1);
+		ret = gpio_pin_set_dt(&cfg->xshut, 0);
 		if (ret < 0) {
+			LOG_ERR("xshut-gpios set failed (%d)", ret);
 			return ret;
 		}
-		k_sleep(K_MSEC(10));
+		k_sleep(K_MSEC(50));
+
+		ret = gpio_pin_set_dt(&cfg->xshut, 1);
+		if (ret < 0) {
+			LOG_ERR("xshut-gpios release failed (%d)", ret);
+			return ret;
+		}
+		k_sleep(K_MSEC(50));
+		LOG_DBG("XSHUT released");
 	}
 
 	return 0;
@@ -216,14 +255,38 @@ static int device_boot(const struct device *dev)
 	 * uploads the 9,865-byte firmware patch, boots, verifies the patch
 	 * version and applies ST's default configuration.
 	 */
-	ret = vl53l9_init((void *)dev);
-	if (ret != VL53L9_ERROR_NONE) {
-		LOG_ERR("vl53l9_init failed (%d). Check AP_CLK on a scope "
-			"BEFORE suspecting the address or the wiring — no "
-			"clock, no ACK.", ret);
-		return -EIO;
+	/*
+	 * Probe before booting, so a failure says WHICH failure it is.
+	 *
+	 * vl53l9_get_device_id() is a bare register read and needs nothing but
+	 * a powered, clocked part. It splits the two failure classes that
+	 * otherwise look identical from up here:
+	 *
+	 *   read fails    -> nothing is answering. Power, AP_CLK, XSHUT or
+	 *                    address. Note that if the IMU on the same bus
+	 *                    works, the bus itself is exonerated.
+	 *   read succeeds -> the device is alive and talking, so the fault is
+	 *                    in boot: the blob upload, or its timing.
+	 */
+	{
+		uint32_t probe = 0;
+		int pret = vl53l9_get_device_id((void *)dev, &probe);
+
+		if (pret != VL53L9_ERROR_NONE) {
+			LOG_ERR("no answer from the sensor (%s). It is not "
+				"talking at all.", vl53l9_errstr(pret));
+			LOG_ERR("  Check in this order: AP_CLK on P0.00 with a "
+				"scope (no clock, no ACK — and it looks exactly "
+				"like a dead part), the sensor rail, XSHUT, then "
+				"the address. If the IMU on this bus works, the "
+				"bus is fine and the fault is one of those four.");
+			return -EIO;
+		}
+		LOG_INF("sensor answered, model id 0x%08x — bus, power, clock "
+			"and address are all good", probe);
 	}
 
+	ret = vl53l9_init((void *)dev);
 	data->boot_ms = (uint32_t)(k_uptime_get() - t0);
 
 	if (IS_ENABLED(CONFIG_VL53L9CX_LOG_BOOT_TIME)) {
