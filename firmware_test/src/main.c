@@ -38,20 +38,43 @@ LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
  * Register map, taken from ST's own headers in the SDK rather than from
  * memory: modules/hal/st/sensor/stmemsc/lsm6dsv16bx_STdC/driver/.
  *
- * The addresses below are common to both variants we might have. The ONE that
- * differs is the accelerometer output block, and it differs silently — see
- * pick_variant().
+ * The control and status addresses below are identical on both variants we
+ * might have. The accelerometer output block differs, and it differs silently —
+ * see the note above OUT_A_BASE.
  */
 #define REG_WHO_AM_I   0x0F
 #define REG_CTRL1      0x10 /* [3:0] ODR_XL, [6:4] OP_MODE_XL */
 #define REG_CTRL8      0x17 /* [1:0] FS_XL                    */
 #define REG_STATUS     0x1E /* bit 0 = XLDA, accel data ready */
 
-#define OUTX_L_A_16X   0x28 /* LSM6DSV16X / LSM6DSV */
-#define OUTX_L_A_16BX  0x2C /* LSM6DSV16BX          */
+/*
+ * The accelerometer output block starts at 0x28 on BOTH parts. What differs is
+ * the AXIS ORDER inside it, and that is the whole trap:
+ *
+ *          0x28   0x2A   0x2C
+ *   16X     X      Y      Z
+ *   16BX    Z      Y      X     <- reversed
+ *
+ * So LSM6DSV16BX_OUTX_L_A is 0x2C not because the block moved, but because X is
+ * last. Reading six bytes from 0x2C on a 16BX therefore returns the real X in
+ * the first word and then 0x2E-0x31, which are undefined and read back as zero.
+ * That is exactly what the first version of this code did, and the log said so
+ * plainly: X drifting around zero, Y and Z exactly 0.000 every sample.
+ */
+#define OUT_A_BASE     0x28 /* both variants */
 
 #define ID_16X         0x70
 #define ID_16BX        0x71
+
+/* Byte offsets of each axis within the six-byte block at OUT_A_BASE. */
+struct axis_layout {
+	uint8_t x;
+	uint8_t y;
+	uint8_t z;
+};
+
+static const struct axis_layout layout_16x  = { .x = 0, .y = 2, .z = 4 };
+static const struct axis_layout layout_16bx = { .x = 4, .y = 2, .z = 0 };
 
 /* CTRL1: high-performance mode (op_mode_xl = 0), 60 Hz (odr_xl = 0x5).
  * 60 Hz is deliberately slow: fast enough that a 1 Hz read loop never sees
@@ -68,8 +91,8 @@ LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
 static const struct device *const imu_bus = DEVICE_DT_GET(IMU_BUS_NODE);
 
-/* Output register base, chosen from WHO_AM_I. Zero until identified. */
-static uint8_t out_base;
+/* Axis order within the output block, chosen from WHO_AM_I. */
+static const struct axis_layout *layout;
 
 /* Integer square root, so the magnitude check below needs no float printf
  * support. Newton's method; the inputs here are around 1e6 so it converges in
@@ -93,10 +116,10 @@ static uint32_t isqrt(uint64_t n)
 /*
  * Identify the part before reading anything from it.
  *
- * This is not ceremony. The accelerometer output block sits at 0x28 on the
- * LSM6DSV16X and 0x2C on the LSM6DSV16BX, so reading the wrong one returns
- * four bytes of neighbouring registers and two bytes of real data — numbers
- * that look like data and are not. Establishing which part is present is the
+ * This is not ceremony. The two parts store their accelerometer axes in
+ * opposite order within the same six-byte block, so getting it wrong swaps X
+ * and Z silently — a board lying flat would report gravity on the wrong axis
+ * and nothing would look broken. Establishing which part is present is the
  * difference between a reading and a plausible-looking lie.
  */
 static int pick_variant(void)
@@ -118,16 +141,17 @@ static int pick_variant(void)
 
 	switch (id) {
 	case ID_16BX:
-		out_base = OUTX_L_A_16BX;
-		LOG_INF("  -> LSM6DSV16BX. Accel output block at 0x%02x.", out_base);
+		layout = &layout_16bx;
+		LOG_INF("  -> LSM6DSV16BX. Accel block at 0x%02x, axes REVERSED "
+			"(Z,Y,X).", OUT_A_BASE);
 		LOG_INF("  -> No in-tree Zephyr driver for this variant; see "
 			"docs/plan/imu-lsm6dsv-bx.md for what a real driver takes.");
 		return 0;
 
 	case ID_16X:
-		out_base = OUTX_L_A_16X;
-		LOG_INF("  -> LSM6DSV16X / LSM6DSV. Accel output block at 0x%02x.",
-			out_base);
+		layout = &layout_16x;
+		LOG_INF("  -> LSM6DSV16X / LSM6DSV. Accel block at 0x%02x, axes "
+			"in order (X,Y,Z).", OUT_A_BASE);
 		LOG_INF("  -> GOOD NEWS: Zephyr ships an in-tree driver for this "
 			"one. A proper integration is a devicetree node, not a "
 			"new driver.");
@@ -203,16 +227,16 @@ static void imu_read_and_log(void)
 		return;
 	}
 
-	ret = i2c_burst_read(imu_bus, IMU_ADDR, out_base, raw, sizeof(raw));
+	ret = i2c_burst_read(imu_bus, IMU_ADDR, OUT_A_BASE, raw, sizeof(raw));
 	if (ret < 0) {
 		LOG_ERR("accel burst read failed (%d)", ret);
 		return;
 	}
 
-	/* Little-endian int16 per axis. */
-	x = (int16_t)((raw[1] << 8) | raw[0]);
-	y = (int16_t)((raw[3] << 8) | raw[2]);
-	z = (int16_t)((raw[5] << 8) | raw[4]);
+	/* Little-endian int16 per axis, at the offsets this variant uses. */
+	x = (int16_t)((raw[layout->x + 1] << 8) | raw[layout->x]);
+	y = (int16_t)((raw[layout->y + 1] << 8) | raw[layout->y]);
+	z = (int16_t)((raw[layout->z + 1] << 8) | raw[layout->z]);
 
 	x_mg = ((int32_t)x * MG_PER_LSB_NUM) / MG_PER_LSB_DEN;
 	y_mg = ((int32_t)y * MG_PER_LSB_NUM) / MG_PER_LSB_DEN;
@@ -232,8 +256,10 @@ static void imu_read_and_log(void)
 	 */
 	if (mag_mg < 800 || mag_mg > 1200) {
 		LOG_WRN("  |a| is %u mg, expected ~1000 at rest. Suspect the "
-			"full-scale setting or the output register base before "
-			"suspecting the sensor.", mag_mg);
+			"full-scale setting or the axis layout before suspecting "
+			"the sensor.", mag_mg);
+		LOG_WRN("  Two axes reading exactly 0 means the block base is "
+			"wrong; all three plausible but small means the scale is.");
 	}
 }
 

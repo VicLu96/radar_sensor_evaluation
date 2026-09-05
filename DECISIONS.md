@@ -842,3 +842,33 @@ docs/plan/imu-lsm6dsv-bx.md still stands for a real driver.
 Expected to be wrong if: the part is neither 0x70 nor 0x71, in which case the app says so
 and stops rather than guessing - and the bus is proven working by the fact that something
 answered at all.
+
+## 2026-09-04 - CORRECTION: the 16BX accel block did not move, its axes are reversed
+What: the first hardware run of IMU stage A returned X drifting around zero with Y and Z
+exactly 0 on every sample. Diagnosis: the code read six bytes from 0x2C. It should read
+from 0x28.
+The earlier entry on this page - "OUTX_L_A is 0x28 on the 16X and 0x2C on the 16BX, the
+accelerometer output block moved" - is **wrong**, and stands unedited per the append-only
+rule. What is actually true, from ST's headers side by side:
+  addr   LSM6DSV16X    LSM6DSV16BX
+  0x28   OUTX_L_A      OUTZ_L_A
+  0x2A   OUTY_L_A      OUTY_L_A
+  0x2C   OUTZ_L_A      OUTX_L_A
+**The block base is 0x28 on both. The BX stores its axes in reverse order: Z, Y, X.**
+LSM6DSV16BX_OUTX_L_A is 0x2C because X is last, not because anything moved.
+How the mistake was made, since it is worth not repeating: I grepped for OUTX_L_A in both
+headers, saw two different addresses, and concluded the block had moved - without listing
+the neighbouring registers to see what the addresses actually meant. One symbol compared
+across two parts, treated as if it characterised the whole block. The log said so
+immediately and unambiguously: two axes reading exactly zero is a base-address error,
+never a scaling error, because scaling cannot produce an exact zero twice a second.
+Fixed by reading the block at 0x28 always and selecting an axis-offset table from
+WHO_AM_I: {0,2,4} for the 16X, {4,2,0} for the 16BX.
+What this changes about stage B, and it sharpens the argument rather than weakening it:
+an in-tree lsm6dsv16x driver pointed at a 16BX would not fail loudly. It would read the
+right six bytes and silently swap X and Z - a plausible gravity vector pointing the wrong
+way, on a device where nothing looks broken. That is a stronger reason to write a proper
+driver than the one originally given.
+Also corrected: the magnitude warning now distinguishes the two failures it can see. Two
+axes at exactly zero means the base address is wrong; three plausible-but-small values
+mean the full scale is.

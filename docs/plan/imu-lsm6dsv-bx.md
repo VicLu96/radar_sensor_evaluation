@@ -25,17 +25,29 @@ IDs differ:
 | `LSM6DSV16BX_ID` | **0x71** |
 
 **3. And loosening that check would not be enough** — this is the finding that settles
-the approach. The register maps are close but not identical:
+the approach.
 
-| Register | 16X | 16BX |
+> **CORRECTED 2026-09-04, after the first hardware run.** The original version of this
+> section said the accelerometer output block *moved* from 0x28 to 0x2C. That was wrong,
+> and the code written from it read the wrong registers. What actually happens is worse
+> and more interesting: **the block is at 0x28 on both parts, and the BX stores its axes
+> in reverse order.**
+
+| Address | LSM6DSV16X | LSM6DSV16BX |
 |---|---|---|
-| `WHO_AM_I` | 0x0F | 0x0F |
-| `CTRL1` | 0x10 | 0x10 |
-| **`OUTX_L_A`** | **0x28** | **0x2C** |
+| 0x28 | `OUTX_L_A` | **`OUTZ_L_A`** |
+| 0x2A | `OUTY_L_A` | `OUTY_L_A` |
+| 0x2C | `OUTZ_L_A` | **`OUTX_L_A`** |
 
-The accelerometer output block moved. A driver told to ignore the ID would read four
-bytes off and return plausible-looking nonsense — the worst failure mode available, and
-exactly the class of bug this project has already been bitten by twice.
+`LSM6DSV16BX_OUTX_L_A` is 0x2C not because anything moved, but because X is *last*.
+Grepping for that symbol and treating it as the block base — which is exactly what
+happened here — reads six bytes from 0x2C and gets the real X followed by 0x2E-0x31,
+which are undefined and read back as zero.
+
+So a driver told to ignore the WHO_AM_I check would not crash or return obvious
+rubbish. It would silently **swap X and Z** and read a perfectly plausible gravity
+vector pointing the wrong way. That is the worst failure mode available, and precisely
+the class of bug this project has already been bitten by twice.
 
 **What does exist:** ST's own HAL for the part, in-tree at
 `modules/hal/st/sensor/stmemsc/lsm6dsv16bx_STdC/`. It has no `USE_STDC_LSM6DSV16BX`
