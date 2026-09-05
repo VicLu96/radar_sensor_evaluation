@@ -115,6 +115,28 @@ properties:
       The driver configures the device for interrupt-pad signalling rather than
       an in-band interrupt, because there is no IBI on plain I2C.
 
+  sync-gpios:
+    type: phandle-array
+    description: |
+      SYNC_IN, if it is routed to an MCU pin. OPTIONAL, and only worth wiring
+      if hardware-synchronised capture is wanted later.
+
+      SYNC_IN is an INPUT to the sensor and it is ACTIVE LOW: driving it to
+      logic 0 triggers a new frame. So declare it GPIO_ACTIVE_LOW, and the
+      driver will hold it INACTIVE — physically high — which is the resting
+      state that cannot start an exposure.
+
+      If the pin is not routed to the MCU, omit this and TIE IT HIGH ON THE
+      BOARD. Do not tie it low, which is the trigger level, and do not leave it
+      floating: a CMOS input sitting near its threshold draws current and picks
+      up noise, and on this device a noise-induced low edge starts a frame. For
+      this project that is worse than it sounds — spurious exposures are
+      spurious energy, in the measurement the paper is built on.
+
+      ST's own reference does not drive this pin at all: their device model
+      (vl53l9_device_t) defines only xshut and intr. So the resting level is a
+      board decision, and theirs is evidently made in hardware.
+
   power-gpios:
     type: phandle-array
     description: |

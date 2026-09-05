@@ -597,6 +597,29 @@ static int configure_signalling(const struct device *dev)
 		return -EIO;
 	}
 
+	/*
+	 * Take the device out of SYNC_SLAVE explicitly.
+	 *
+	 * ST's _init_default_config() never writes VL53L9_REGADDR_SYNCHRO, so
+	 * after vl53l9_init() the register holds its reset value — and
+	 * VL53L9_SYNC_SLAVE is 0, which is what registers reset to. In that
+	 * mode frames are triggered by SYNC_IN being driven to logic 0.
+	 *
+	 * This board does not drive SYNC_IN at all. Leaving the device in a
+	 * mode whose trigger is a pin nobody owns is the kind of thing that
+	 * works on the bench and fails in a field unit when the pin picks up
+	 * noise, so the mode is set here rather than relying on start() or
+	 * capture() to correct it later.
+	 *
+	 * MANUAL is the safe resting state: it triggers only on an explicit
+	 * I2C command, so nothing electrical can start a frame.
+	 */
+	ret = vl53l9_set_sync_mode((void *)dev, VL53L9_SYNC_MANUAL);
+	if (ret != VL53L9_ERROR_NONE) {
+		LOG_WRN("could not leave SYNC_SLAVE (%s) — the device may still "
+			"respond to the SYNC_IN pin", vl53l9_errstr(ret));
+	}
+
 	if (!data->use_interrupt) {
 		LOG_WRN("no int-gpios: falling back to polling frame-ready. "
 			"This keeps the CPU awake across integration, which is "
@@ -1030,6 +1053,33 @@ static int vl53l9cx_init(const struct device *dev)
 			cfg->xshut.port->name, cfg->xshut.pin);
 	}
 
+	/*
+	 * SYNC_IN, if the board routes it here. Driven to its INACTIVE level and
+	 * left there: the pin is active-low, so inactive is physically high, and
+	 * high is the only level that cannot start an exposure.
+	 *
+	 * If it is not routed to the MCU it must be tied high on the board —
+	 * floating is the one option that is actually wrong. See the binding.
+	 */
+	if (cfg->sync.port != NULL) {
+		if (!gpio_is_ready_dt(&cfg->sync)) {
+			LOG_ERR("init: sync-gpios port %s not ready",
+				cfg->sync.port->name);
+			return -ENODEV;
+		}
+		ret = gpio_pin_configure_dt(&cfg->sync, GPIO_OUTPUT_INACTIVE);
+		if (ret < 0) {
+			LOG_ERR("init: sync-gpios configure failed (%d)", ret);
+			return ret;
+		}
+		LOG_INF("init: sync-gpios held inactive (%s pin %u)",
+			cfg->sync.port->name, cfg->sync.pin);
+	} else {
+		LOG_INF("init: SYNC_IN not driven from the MCU — it must be tied "
+			"HIGH on the board (low triggers a frame; floating "
+			"invites spurious ones)");
+	}
+
 	data->use_interrupt = (cfg->intr.port != NULL);
 	if (data->use_interrupt) {
 		if (!gpio_is_ready_dt(&cfg->intr)) {
@@ -1094,7 +1144,7 @@ static int vl53l9cx_init(const struct device *dev)
 		.i2c = I2C_DT_SPEC_INST_GET(inst),                             \
 		.xshut = GPIO_DT_SPEC_INST_GET_OR(inst, xshut_gpios, {0}),     \
 		.intr = GPIO_DT_SPEC_INST_GET_OR(inst, int_gpios, {0}),        \
-		.power = GPIO_DT_SPEC_INST_GET_OR(inst, power_gpios, {0}),     \
+		.power = GPIO_DT_SPEC_INST_GET_OR(inst, power_gpios, {0}),     		.sync = GPIO_DT_SPEC_INST_GET_OR(inst, sync_gpios, {0}),       \
 		.clk = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, pwms),    \
 				   (PWM_DT_SPEC_INST_GET(inst)), ({0})),       \
 		.clock_from_pwm = DT_INST_NODE_HAS_PROP(inst, pwms),     \

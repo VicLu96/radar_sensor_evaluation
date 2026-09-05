@@ -48,6 +48,9 @@ struct vl53l9cx_config {
 	struct gpio_dt_spec intr;
 	struct gpio_dt_spec power;
 
+	/* SYNC_IN, optional. Held inactive; see the binding. */
+	struct gpio_dt_spec sync;
+
 	/* AP_CLK. Either the board has its own oscillator (clock_from_pwm
 	 * false, and we only need to know the frequency), or the MCU generates
 	 * it (clock_from_pwm true, and we must start it before first contact).
