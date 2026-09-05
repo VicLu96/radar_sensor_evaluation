@@ -51,6 +51,7 @@
  * doing, rather than trusting devicetree to have been applied.
  */
 #include <haly/nrfy_grtc.h>
+#include <hal/nrf_gpio.h>
 
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
@@ -356,6 +357,32 @@ static void tof_report_config(void)
 	LOG_INF("  AP_CLK enable bit in the GRTC peripheral: %s",
 		nrfy_grtc_clkout_enable_check(NRF_GRTC, NRF_GRTC_CLKOUT_FAST)
 			? "ENABLED" : "DISABLED  <-- the clock is definitely not running");
+
+	/*
+	 * And separately: is P0.00 actually handed to the GRTC?
+	 *
+	 * The enable bit above does NOT prove this. In nrf_grtc_timer.c the
+	 * output is enabled at line 616 and pinctrl is applied at line 623, so
+	 * a pinctrl failure leaves the bit set and the pin unrouted — the clock
+	 * generating happily into nothing.
+	 *
+	 * CTRLSEL is the register field that says which peripheral owns a pin.
+	 * GPIO means pinctrl never took it; GRTC means the routing is real and
+	 * anything still wrong is on the board rather than in the firmware.
+	 */
+	{
+		uint32_t cnf = NRF_P0->PIN_CNF[0];
+		uint32_t sel = (cnf & GPIO_PIN_CNF_CTRLSEL_Msk)
+			       >> GPIO_PIN_CNF_CTRLSEL_Pos;
+
+		LOG_INF("  P0.00 CTRLSEL = %u (%s)", sel,
+			sel == GPIO_PIN_CNF_CTRLSEL_GRTC
+				? "GRTC — pin routing is real, so if there is no "
+				  "8 MHz on the pad the fault is on the board"
+				: "NOT GRTC — pinctrl did not take the pin, so "
+				  "nothing is driving it. This is a firmware "
+				  "fault, not a wiring one");
+	}
 	LOG_INF("--------------------------------------------------");
 }
 
