@@ -151,8 +151,10 @@ static void clock_stop(const struct device *dev)
  * it can be reasoned about rather than reconstructed from sleeps:
  *
  *   power-gpios high
- *     +10 ms   POWER_SETTLE_MS   rail rise. Generous for a load switch; the
- *              real figure depends on the enable circuit and is worth a scope.
+ *     +100 ms  POWER_SETTLE_MS   rail rise. Deliberately generous: a rail that
+ *              has not settled when XSHUT is released gives a silent part for
+ *              reasons nothing in software can see. Kconfig-tunable, and paid
+ *              on every wake, so trim it with a scope before the energy work.
  *   AP_CLK confirmed running (board-supplied here, so no delay)
  *   XSHUT low
  *     +50 ms   XSHUT_LOW_MS      reset pulse width
@@ -160,16 +162,16 @@ static void clock_stop(const struct device *dev)
  *     +50 ms   XSHUT_SETTLE_MS   ROM boot before the part will answer
  *   first I2C transaction
  *
- * = 110 ms from power enable to first transaction.
+ * = 200 ms from power enable to first transaction, at the defaults.
  *
  * The 50 ms figures are ST's reference timing via the hardware-validated
  * community driver. That driver then polls for READY_TO_BOOT for up to 500 ms
  * *tolerating NAKs*, because the part NAKs while its ROM comes up — which is
  * why the probe below retries rather than taking one shot.
  * -------------------------------------------------------------------------*/
-#define POWER_SETTLE_MS   10
-#define XSHUT_LOW_MS      50
-#define XSHUT_SETTLE_MS   50
+#define POWER_SETTLE_MS   CONFIG_VL53L9CX_POWER_SETTLE_MS
+#define XSHUT_LOW_MS      CONFIG_VL53L9CX_XSHUT_LOW_MS
+#define XSHUT_SETTLE_MS   CONFIG_VL53L9CX_XSHUT_SETTLE_MS
 
 /* How long to keep retrying the first read before declaring the part absent.
  * Deadline rather than attempt count on purpose: a NAKing device fails in
@@ -839,7 +841,9 @@ static int vl53l9cx_init(const struct device *dev)
 		LOG_WRN("init: no int-gpios — frame-ready will be polled");
 	}
 
-	LOG_INF("init: bringing the sensor up (power, AP_CLK, XSHUT, blob)");
+	LOG_INF("init: bringing the sensor up — power +%d ms, XSHUT low %d ms, "
+		"settle %d ms, then first I2C transaction",
+		POWER_SETTLE_MS, XSHUT_LOW_MS, XSHUT_SETTLE_MS);
 
 	/* Deliberately NOT booting the device here. pm_device_driver_init()
 	 * drives the device to its initial state through pm_action(), whose

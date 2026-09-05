@@ -26,6 +26,39 @@ config VL53L9CX_INIT_PRIORITY
 	  CONFIG_SENSOR_INIT_PRIORITY because this driver deliberately does not
 	  use Zephyr's sensor subsystem — see include/vl53l9cx/vl53l9cx.h.
 
+config VL53L9CX_POWER_SETTLE_MS
+	int "Milliseconds to wait after enabling the sensor rail"
+	default 100
+	help
+	  Time between driving power-gpios high and doing anything else.
+
+	  Generous on purpose. The first bring-up used 10 ms, which is fine for
+	  a fast load switch and not obviously fine for anything else, and a
+	  rail that has not settled when XSHUT is released produces a part that
+	  is silent for reasons nothing in software can see.
+
+	  This is paid on EVERY PM_DEVICE_ACTION_TURN_ON, so it lands directly
+	  in the wake cost that stage 4 measures. Trim it with a scope on the
+	  rail before the energy work, not by guessing — and record the measured
+	  rise time when you do.
+
+config VL53L9CX_XSHUT_LOW_MS
+	int "XSHUT reset pulse width, milliseconds"
+	default 50
+	help
+	  How long XSHUT is held low. ST's reference timing, via the
+	  hardware-validated community driver.
+
+config VL53L9CX_XSHUT_SETTLE_MS
+	int "Milliseconds to wait after releasing XSHUT"
+	default 50
+	help
+	  ROM boot time before the part will answer. ST's reference timing.
+
+	  The device NAKs while its ROM comes up, which is expected rather than
+	  a fault — the driver's probe retries against a deadline for exactly
+	  this reason, so this value being slightly short is recoverable.
+
 config VL53L9CX_LOG_BOOT_TIME
 	bool "Log firmware blob upload duration at init"
 	default y
