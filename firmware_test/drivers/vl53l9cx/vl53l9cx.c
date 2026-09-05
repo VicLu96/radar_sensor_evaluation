@@ -278,6 +278,29 @@ static void int_handler(const struct device *port, struct gpio_callback *cb,
  * sensor domain down during idle beats keeping it in standby. That crossover
  * is a stage-4 result, and capturing it costs nothing here.
  * -------------------------------------------------------------------------*/
+static uint16_t dev_i2c_addr(const struct device *dev)
+{
+	const struct vl53l9cx_config *cfg = dev->config;
+
+	return cfg->i2c.addr;
+}
+
+/*
+ * Does anything acknowledge at this 7-bit address?
+ *
+ * Writes the two-byte register index and looks only at whether it was ACKed.
+ * Deliberately NOT a general bus scan: this part does not tolerate the empty
+ * START+STOP transactions a scan uses to probe address ranges, and such a scan
+ * can wedge it. Two targeted writes are safe.
+ */
+static bool addr_acks(const struct device *dev, uint16_t addr)
+{
+	const struct vl53l9cx_config *cfg = dev->config;
+	uint8_t idx[2] = { 0x00, 0x00 };
+
+	return i2c_write(cfg->i2c.bus, idx, sizeof(idx), addr) == 0;
+}
+
 static int device_boot(const struct device *dev)
 {
 	struct vl53l9cx_data *data = dev->data;
@@ -374,10 +397,37 @@ static int device_boot(const struct device *dev)
 			}
 			LOG_ERR("  Read the errno on the line above this one. "
 				"TIMEOUT means the bus is stuck — suspect SDA/SCL "
-				"pull-ups, which this board's pinctrl does not "
-				"set. A plain no-acknowledge instead means the "
-				"bus is fine and nothing is at this address, "
-				"which points at AP_CLK, the rail, or XSHUT.");
+				"pull-ups. A plain no-acknowledge instead means "
+				"the bus is FINE and nothing is at this address.");
+
+			/*
+			 * Settle the address question, since it is the one
+			 * suspect on the list that software can eliminate.
+			 *
+			 * 0x29 is the 7-bit address; ST's 0x52 is the 8-bit
+			 * form, and their own code shifts it down in two
+			 * places. That reasoning is sound, but it is reasoning,
+			 * and one register write costs nothing next to a day of
+             * looking in the wrong place.
+			 */
+			{
+				const uint16_t configured = dev_i2c_addr(dev);
+				const uint16_t other =
+					(configured == 0x29) ? 0x52 : 0x29;
+
+				LOG_ERR("  probing both address candidates:");
+				LOG_ERR("    0x%02x (configured): %s", configured,
+					addr_acks(dev, configured) ? "ACK" : "no ACK");
+				LOG_ERR("    0x%02x (the other):  %s", other,
+					addr_acks(dev, other) ? "ACK — USE THIS ONE"
+							      : "no ACK");
+				LOG_ERR("  If neither acknowledges, the address is "
+					"not the problem: the part is not "
+					"responding at all. In that case the list "
+					"is AP_CLK on P0.00 (no clock, no ACK — "
+					"scope it), then the rail on P0.02, then "
+					"XSHUT on P1.07.");
+			}
 			return -EIO;
 		}
 

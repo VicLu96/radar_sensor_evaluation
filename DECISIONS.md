@@ -1006,3 +1006,27 @@ level at all, which is pull-ups or a short. The failure is as informative as the
 which is the point.
 Next action is a multimeter, not a rebuild: SDA and SCL to VDDIO with the board powered
 and idle should read 1.8 V. Near 0 V settles it.
+
+## 2026-09-05 - Pull-ups were the bus fault. -ETIMEDOUT is gone; now a clean NAK
+What: adding `bias-pull-up` to the I2C pinctrl changed the failure from `errno -116`
+(-ETIMEDOUT) to `errno -5` (no acknowledge). That is a different fault, and the change
+proves the previous diagnosis.
+Why it is conclusive rather than suggestive: the timing changed too. Failed attempts now
+return in about 10 ms - the probe's own retry gap - instead of consuming a full 500 ms
+CONFIG_I2C_NRFX_TRANSFER_TIMEOUT each. The controller is completing transfers. The bus is
+electrically healthy.
+So the SDA/SCL pull-ups were missing or inadequate, exactly as the -ETIMEDOUT signature
+said and as the history suggested (the IMU worked on this bus until it was removed).
+**This should not be left resting on the SoC's internal pull-ups.** They are roughly
+13 kOhm against the 2.2-4.7 kOhm usual for 400 kHz. It works on a short trace and it is
+marginal - fit external pull-ups properly rather than leaving pinctrl to do it.
+What remains: the sensor does not acknowledge at 0x29. The suspect list is now exactly
+four items, one of which software can eliminate, so it does:
+on failure the driver now probes BOTH address candidates (0x29 and 0x52) with targeted
+two-byte writes - not a general scan, which this part does not tolerate - and reports
+which if either acknowledges. If neither does, the address is off the list and what is
+left is AP_CLK on P0.00, the rail on P0.02, and XSHUT on P1.07, in that order.
+AP_CLK is the leading candidate on the evidence available: the community driver is
+explicit that the part will not acknowledge its address at all without it, and the clock
+has never been confirmed on a scope. The app already prints the GRTC clkout enable bit at
+startup, which is the software half of that question.
