@@ -1,0 +1,24 @@
+# Application options for the water_sense_board bring-up test.
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "water_sense_board bring-up test"
+
+config APP_ENABLE_IMU
+	bool "Probe and read the LSM6DSV..BX IMU"
+	default y
+	depends on I2C
+	help
+	  Reads WHO_AM_I at 0x6B, configures the accelerometer and logs XYZ once
+	  a second.
+
+	  Turn this off when the IMU is not fitted. It is not merely noise: with
+	  the part absent the probe fails every boot, and a log full of expected
+	  failures is how a real one gets missed.
+
+	  Turning it off also costs something worth knowing about. The IMU is
+	  the second device on this I2C bus, and while it answers it proves the
+	  bus, the pins and the pull-ups independently of the VL53L9CX. Without
+	  it, a silent ToF sensor could be a bus fault as easily as a sensor
+	  fault, and there is nothing on board to tell the two apart.
+
+source "Kconfig.zephyr"

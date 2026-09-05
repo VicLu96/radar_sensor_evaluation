@@ -278,8 +278,10 @@ static int device_boot(const struct device *dev)
 			LOG_ERR("  Check in this order: AP_CLK on P0.00 with a "
 				"scope (no clock, no ACK — and it looks exactly "
 				"like a dead part), the sensor rail, XSHUT, then "
-				"the address. If the IMU on this bus works, the "
-				"bus is fine and the fault is one of those four.");
+				"the address. If another device on this bus "
+				"answers, the bus is exonerated and the fault "
+				"is one of those four; if nothing does, add the "
+				"bus itself to the list.");
 			return -EIO;
 		}
 		LOG_INF("sensor answered, model id 0x%08x — bus, power, clock "

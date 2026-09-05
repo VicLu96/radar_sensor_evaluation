@@ -54,6 +54,7 @@
 
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
+#if defined(CONFIG_APP_ENABLE_IMU)
 /* The I2C controller the board file enables. Follows the board, so if the
  * instance is ever renumbered this is the one line that moves.
  */
@@ -124,6 +125,8 @@ static const struct device *const imu_bus = DEVICE_DT_GET(IMU_BUS_NODE);
 /* Axis order within the output block, chosen from WHO_AM_I. */
 static const struct axis_layout *layout;
 
+#endif /* CONFIG_APP_ENABLE_IMU */
+
 /* ------------------------------------------------------------------ ToF -- */
 
 #define TOF_NODE DT_ALIAS(tof0)
@@ -140,6 +143,8 @@ static const struct device *const tof = DEVICE_DT_GET(TOF_NODE);
 
 /* ~18 KB. Static: one of these is more than the whole main stack. */
 static struct vl53l9cx_frame frame;
+
+#if defined(CONFIG_APP_ENABLE_IMU)
 
 /* Integer square root, so the magnitude check below needs no float printf
  * support. Newton's method; the inputs here are around 1e6 so it converges in
@@ -310,6 +315,8 @@ static void imu_read_and_log(void)
 	}
 }
 
+#endif /* CONFIG_APP_ENABLE_IMU */
+
 /*
  * Say what the devicetree claims before touching the sensor.
  *
@@ -440,8 +447,10 @@ static void tof_capture_and_log(void)
 int main(void)
 {
 	uint32_t beat = 0;
-	bool imu_ok;
 	bool tof_ok;
+#if defined(CONFIG_APP_ENABLE_IMU)
+	bool imu_ok;
+#endif
 
 	LOG_INF("========================================");
 	LOG_INF(" water_sense_board is alive");
@@ -450,6 +459,7 @@ int main(void)
 	LOG_INF(" built  : " __DATE__ " " __TIME__);
 	LOG_INF("========================================");
 
+#if defined(CONFIG_APP_ENABLE_IMU)
 	/* Stage 2 — the IMU. Failures here are reported and then ignored: the
 	 * heartbeat carries on either way, because "the MCU runs but the IMU
 	 * does not" is a useful state to be able to observe rather than a
@@ -471,6 +481,12 @@ int main(void)
 	if (!imu_ok) {
 		LOG_WRN("IMU not usable — continuing without it.");
 	}
+#else
+	LOG_INF("IMU stage disabled (CONFIG_APP_ENABLE_IMU=n) — part not fitted.");
+	LOG_WRN("So nothing else on this I2C bus is answering, and the bus is "
+		"therefore UNPROVEN. A silent VL53L9CX below could be a bus "
+		"fault as easily as a sensor fault.");
+#endif
 
 	/* Stage 3 — the VL53L9CX. Same policy: report and carry on. */
 	tof_report_config();
@@ -483,8 +499,14 @@ int main(void)
 			"clock, no ACK, and it looks exactly like a dead sensor; "
 			"(2) the sensor rail coming up on P0.02; (3) XSHUT "
 			"rising on P1.07; (4) the address.");
+#if defined(CONFIG_APP_ENABLE_IMU)
 		LOG_ERR("  Note the IMU result above: if that worked, the I2C "
 			"bus is proven and the fault is on the ToF side.");
+#else
+		LOG_ERR("  With the IMU unfitted there is no second device to "
+			"exonerate the bus, so SDA/SCL and the pull-ups are "
+			"suspects here too — not just the sensor.");
+#endif
 	} else {
 		LOG_INF("VL53L9CX ready. Firmware blob upload took %u ms.",
 			vl53l9cx_last_boot_ms(tof));
@@ -493,9 +515,11 @@ int main(void)
 	while (true) {
 		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
 
+#if defined(CONFIG_APP_ENABLE_IMU)
 		if (imu_ok) {
 			imu_read_and_log();
 		}
+#endif
 
 		/* Ranging every fifth beat. A 12x10 capture is cheap, but a
 		 * ten-row grid once a second buries everything else.
