@@ -60,8 +60,8 @@ schematic and the pin assignments.
   the full 39 MB package stays gitignored at `vendor/x-cube-53l9a1/`
 
 ## Project shape — Victor's four stages
-1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(written, with board
-   file and bring-up app; needs a build)*
+1. **Driver** — ST's VL53L9 driver ported to Zephyr over I²C  *(written, integrated
+   into `firmware_test`, and COMPILES as of 2026-09-04. Never run on hardware)*
 2. **Telemetry** — frames/counts over BLE to a web interface
 3. **Algorithm** — on-device occupancy and dwell detection
 4. **Power** — per-domain gating and duty-cycle optimisation. **Last on purpose**, and

@@ -6,10 +6,12 @@
  *
  *   1. The MCU is alive and can talk to a host  — banner + heartbeat over RTT.
  *   2. The I2C bus works and the IMU is real    — WHO_AM_I, then accel XYZ.
+ *   3. The VL53L9CX ranges                      — a frame, printed as a grid.
  *
- * Nothing here touches the VL53L9CX. If the IMU talks and the ToF sensor does
- * not, the bus is proven and the fault is on the ToF side — which is worth a
- * great deal on a board where nothing else is known good.
+ * The order matters. The IMU is the simpler device on the same bus, so if it
+ * answers and the ToF sensor does not, the bus itself is proven and the fault
+ * is on the ToF side — which is worth a great deal on a board where nothing
+ * else is known good.
  *
  * Output goes over SEGGER RTT (no UART pins on this board). Open it with
  * JLinkRTTViewer on channel 0.
@@ -21,6 +23,11 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/version.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <stdio.h>
+
+#include <vl53l9cx/vl53l9cx.h>
 
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
@@ -93,6 +100,23 @@ static const struct device *const imu_bus = DEVICE_DT_GET(IMU_BUS_NODE);
 
 /* Axis order within the output block, chosen from WHO_AM_I. */
 static const struct axis_layout *layout;
+
+/* ------------------------------------------------------------------ ToF -- */
+
+#define TOF_NODE DT_ALIAS(tof0)
+
+/* The resolution this test ranges at. 12x10 is 880 bytes on the wire — about
+ * 24 ms at 400 kHz — and it is in the WIDE family, so it shares the full
+ * 54x42 field of view rather than a cropped one. That makes it a like-for-like
+ * preview of what full resolution sees, at a twentieth of the bus time, and it
+ * prints as a grid a human can actually read.
+ */
+#define TOF_RES  VL53L9CX_RES_12X10
+
+static const struct device *const tof = DEVICE_DT_GET(TOF_NODE);
+
+/* ~18 KB. Static: one of these is more than the whole main stack. */
+static struct vl53l9cx_frame frame;
 
 /* Integer square root, so the magnitude check below needs no float printf
  * support. Newton's method; the inputs here are around 1e6 so it converges in
@@ -263,10 +287,121 @@ static void imu_read_and_log(void)
 	}
 }
 
+/*
+ * Say what the devicetree claims before touching the sensor.
+ *
+ * Two of these are placeholders until the schematic is checked, and a wrong
+ * rail value does not fail loudly — it misconfigures the analogue front end and
+ * the sensor returns plausible rubbish. Printing them first means a wrong one
+ * is visible before anything else can confuse the picture.
+ */
+static void tof_report_config(void)
+{
+	LOG_INF("---- VL53L9CX configuration (from devicetree) ----");
+	LOG_INF("  address   0x%02x (7-bit)", DT_REG_ADDR(TOF_NODE));
+	LOG_INF("  VDDA      %d uV   <-- PLACEHOLDER, confirm against schematic",
+		DT_PROP(TOF_NODE, vdda_microvolt));
+	LOG_INF("  VDDIO     %d uV   <-- PLACEHOLDER, confirm against schematic",
+		DT_PROP(TOF_NODE, vddio_microvolt));
+	LOG_INF("  AP_CLK    %d Hz (board-supplied, GRTC, always on)",
+		DT_PROP(TOF_NODE, ext_clock_frequency));
+	LOG_INF("  XSHUT     %s",
+		DT_NODE_HAS_PROP(TOF_NODE, xshut_gpios) ? "wired" : "NOT WIRED — no reset control");
+	LOG_INF("  INT       %s",
+		DT_NODE_HAS_PROP(TOF_NODE, int_gpios) ? "wired" : "NOT WIRED — polling frame-ready");
+	LOG_INF("--------------------------------------------------");
+}
+
+/*
+ * One frame, printed two ways: a one-line summary for scanning past, and a
+ * grid for actually seeing whether the sensor is looking at the room.
+ *
+ * The grid is the point. Summary statistics can look healthy while the frame
+ * is garbage — a plausible mean over nonsense zones — whereas a grid of
+ * distances either has the shape of the scene in it or it does not, and a
+ * human spots that instantly.
+ */
+static void tof_capture_and_log(void)
+{
+	uint32_t valid = 0, sum = 0, min = UINT32_MAX, max = 0;
+	int64_t t0 = k_uptime_get();
+	int64_t took;
+	int ret;
+
+	ret = vl53l9cx_capture(tof, TOF_RES, &frame, K_SECONDS(2));
+	took = k_uptime_get() - t0;
+
+	if (ret < 0) {
+		LOG_ERR("ToF capture failed (%d)", ret);
+		if (ret == -EAGAIN) {
+			LOG_ERR("  timed out waiting for frame-ready. With no "
+				"int-gpios this is polled, so it means the sensor "
+				"never finished a measurement.");
+		}
+		return;
+	}
+
+	for (uint16_t i = 0; i < (uint16_t)frame.cols * frame.rows; i++) {
+		if (!frame.zone[i].valid) {
+			continue;
+		}
+		valid++;
+		sum += frame.zone[i].distance_mm;
+		min = MIN(min, frame.zone[i].distance_mm);
+		max = MAX(max, frame.zone[i].distance_mm);
+	}
+
+	LOG_INF("ToF %ux%u in %lld ms — %u/%u zones valid",
+		frame.cols, frame.rows, took, valid,
+		(unsigned)frame.cols * frame.rows);
+
+	if (valid == 0) {
+		LOG_WRN("  no valid zones at all. Either nothing is within "
+			"range, or the depth word is being read wrong — check "
+			"byte order before blaming the scene.");
+		return;
+	}
+
+	LOG_INF("  distance  min %u mm   mean %u mm   max %u mm",
+		min, sum / valid, max);
+
+	/* The device's own frame counter, from the status line. If this stops
+	 * advancing while our sequence does, we are re-reading a stale buffer.
+	 * Nothing else makes that visible.
+	 */
+	LOG_INF("  device frame %u (seq %u), temperature raw %u",
+		frame.frame_counter, frame.seq, frame.temperature);
+
+	/* The grid: centimetres per zone, '.' where there is no target.
+	 * Centimetres rather than millimetres purely so the columns line up in
+	 * three characters at everything up to 9.99 m.
+	 */
+	LOG_INF("  distances in cm ('   .' = no target):");
+
+	for (uint8_t r = 0; r < frame.rows; r++) {
+		char line[VL53L9CX_COLS_FULL * 4 + 1];
+		int n = 0;
+
+		for (uint8_t c = 0; c < frame.cols; c++) {
+			const struct vl53l9cx_zone *z =
+				&frame.zone[vl53l9cx_idx(&frame, c, r)];
+
+			if (z->valid) {
+				n += snprintf(&line[n], sizeof(line) - n, "%4u",
+					      z->distance_mm / 10U);
+			} else {
+				n += snprintf(&line[n], sizeof(line) - n, "   .");
+			}
+		}
+		LOG_INF("   %s", line);
+	}
+}
+
 int main(void)
 {
 	uint32_t beat = 0;
 	bool imu_ok;
+	bool tof_ok;
 
 	LOG_INF("========================================");
 	LOG_INF(" water_sense_board is alive");
@@ -294,16 +429,42 @@ int main(void)
 	}
 
 	if (!imu_ok) {
-		LOG_WRN("IMU not usable — continuing with heartbeat only.");
+		LOG_WRN("IMU not usable — continuing without it.");
+	}
+
+	/* Stage 3 — the VL53L9CX. Same policy: report and carry on. */
+	tof_report_config();
+
+	tof_ok = device_is_ready(tof);
+	if (!tof_ok) {
+		LOG_ERR("VL53L9CX not ready — its init failed, which means the "
+			"firmware blob upload did not complete.");
+		LOG_ERR("  In order: (1) AP_CLK actually present on P0.00 — no "
+			"clock, no ACK, and it looks exactly like a dead sensor; "
+			"(2) the sensor rail; (3) XSHUT held high, which nothing "
+			"drives on this board today; (4) the address.");
+		LOG_ERR("  Note the IMU result above: if that worked, the I2C "
+			"bus is proven and the fault is on the ToF side.");
+	} else {
+		LOG_INF("VL53L9CX ready. Firmware blob upload took %u ms.",
+			vl53l9cx_last_boot_ms(tof));
 	}
 
 	while (true) {
-		LOG_INF("heartbeat %u  (uptime %lld ms)", beat++, k_uptime_get());
+		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
 
 		if (imu_ok) {
 			imu_read_and_log();
 		}
 
+		/* Ranging every fifth beat. A 12x10 capture is cheap, but a
+		 * ten-row grid once a second buries everything else.
+		 */
+		if (tof_ok && (beat % 5 == 0)) {
+			tof_capture_and_log();
+		}
+
+		beat++;
 		k_sleep(K_SECONDS(1));
 	}
 

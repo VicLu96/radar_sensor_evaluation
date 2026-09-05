@@ -872,3 +872,43 @@ driver than the one originally given.
 Also corrected: the magnitude warning now distinguishes the two failures it can see. Two
 axes at exactly zero means the base address is wrong; three plausible-but-small values
 mean the full scale is.
+
+## 2026-09-04 - VL53L9CX driver integrated into firmware_test, and it COMPILES
+What: the ToF driver is wired into the bring-up application. It captures a 12x10 frame
+every five seconds and prints it as a grid of distances alongside a summary line.
+FLASH 56,876 B, RAM 41,008 B - 21% of 188 KB, mostly the driver's 14,842-byte raw buffer
+and the application's ~18 KB frame struct, both static.
+**This is the first time that driver has ever been compiled.** It was written 2026-09-01
+against ST's headers with no toolchain available, and every commit since has said so. It
+built with no errors and no warnings from our code. The thirteen platform functions, the
+frame unpacking, the PM actions and the devicetree binding all hold up.
+How it is wired, and the shape is deliberate:
+- The sensor node is an **application overlay**, not the board file. The board describes
+  the board; the sensor's configuration travels with the application that uses it, and
+  water_sense_board stays Victor's.
+- The driver comes in as an out-of-tree module via EXTRA_ZEPHYR_MODULES in the app's
+  CMakeLists, so nothing outside this repository needs configuring.
+- No `pwms` property on the node, on purpose: AP_CLK is board-supplied from GRTC, so the
+  driver takes its clock_from_pwm = false path and does not try to gate a clock it does
+  not own. That path already existed and is now exercised.
+Three properties are deliberately absent because their pins have not been given, and each
+costs something worth naming rather than discovering:
+- **xshut-gpios** - no deterministic reset, so a sensor left in a bad state stays there
+  until the board is power-cycled by hand.
+- **int-gpios** - frame-ready is polled, which keeps the CPU awake across integration.
+  Fine for a bench test, wrong for the energy work.
+- **power-gpios** - the sensor domain is never dropped, so TURN_OFF does nothing and the
+  multi-month battery claim has no mechanism behind it.
+All three belong in the overlay rather than the board file when the pins are known.
+Still placeholders, and the one thing to confirm before trusting a reading:
+**vdda-microvolt and vddio-microvolt** are ST's reference values, not measurements of
+this board. A wrong rail misconfigures the analogue front end rather than failing loudly,
+which is why the application prints both at startup.
+On the log format: the grid is the point, not the statistics. A mean and a min/max can
+look perfectly healthy over a frame of nonsense; a grid of distances either has the shape
+of the scene in it or it does not, and a human sees that instantly. 12x10 rather than
+54x42 because it is 880 bytes against 14,842 and sits in the WIDE family, so it shares
+the full field of view rather than a cropped one.
+Expected to be wrong if: it compiles, which is all this proves. Whether the sensor answers
+depends on AP_CLK being real on P0.00, on XSHUT being tied high somewhere on the board,
+and on those two rail values.

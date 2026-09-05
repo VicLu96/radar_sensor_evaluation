@@ -1,16 +1,19 @@
 # water_sense_board bring-up test
 
-Proves the chain: built for the right SoC, flashed to the right offset, booted,
-and talking to a host. It touches no peripheral on purpose — if this does not
-print, the fault is the toolchain, the partition offset or the debugger, never
-the sensor or the SD card.
+Walks the board up one layer at a time, so that a failure names its own cause. The first
+stage touches no peripheral at all: if the banner does not print, the fault is the
+toolchain, the partition offset or the debugger, and never a sensor.
 
 ## What it does
 
-Two stages, in order, because each only means something if the previous one passed:
+Three stages, in order, because each only means something if the previous one passed:
 
 1. **The MCU is alive and can talk to a host** — banner plus a one-per-second heartbeat.
 2. **The I²C bus works and the IMU is real** — WHO_AM_I at 0x6B, then accelerometer XYZ.
+3. **The VL53L9CX ranges** — a 12×10 frame every five seconds, printed as a grid.
+
+The order matters: the IMU is the simpler device on the same bus, so if it answers and
+the ToF sensor does not, **the bus itself is proven** and the fault is on the ToF side.
 
 IMU failures are reported and then ignored: the heartbeat carries on regardless, because
 "the MCU runs but the IMU does not" is a state worth being able to observe rather than a
@@ -38,14 +41,40 @@ sensor. Odd-looking axes with a correct magnitude are just orientation, and can 
 `0x71` is the LSM6DSV16BX (no in-tree Zephyr driver), `0x70` is the LSM6DSV16X (Zephyr
 ships one, so a real integration becomes a devicetree node rather than a new driver).
 
+### Reading the ToF output
+
+```
+<inf> board_test: ToF 12x10 in 41 ms - 118/120 zones valid
+<inf> board_test:   distance  min 412 mm   mean 1832 mm   max 3210 mm
+<inf> board_test:   device frame 37 (seq 7), temperature raw 8412
+<inf> board_test:   distances in cm ('   .' = no target):
+<inf> board_test:      183 181 180 179 178 178 179 180 181 183 185 188
+...
+```
+
+**The grid is the point, not the statistics.** A mean and a min/max can look perfectly
+healthy over a frame of nonsense. A grid of distances either has the shape of the scene
+in it — a wall at constant distance, a hand closer in the middle, a doorway as a column
+of larger numbers — or it does not, and that is obvious at a glance.
+
+12×10 is used rather than full 54×42 for two reasons: it is 880 bytes on the wire
+against 14,842, and it is in the **wide** family, so it shares the full field of view
+rather than a cropped one. A like-for-like preview at a twentieth of the bus time.
+
+`device frame` versus `seq` is the drop detector: if the device's own counter stops
+advancing while ours climbs, the driver is re-reading a stale buffer.
+
 ## Status: builds clean
 
 Verified 2026-09-04 against NCS v3.3.0 at `C:/ncs/v3.3.0`:
 
 ```
-FLASH:  37388 B    1428 KB   2.56%
-RAM:     7744 B     188 KB   4.02%
+FLASH:  56876 B    1428 KB   3.89%
+RAM:    41008 B     188 KB  21.30%
 ```
+
+RAM is mostly two buffers: the driver's 14,842-byte worst-case raw frame and the
+application's ~18 KB unpacked `struct vl53l9cx_frame`. Both static.
 
 `zephyr.elf` links and `merged.hex` is generated. What that proves is the toolchain, the
 board definition, the devicetree and the memory map. What it does not prove is anything
