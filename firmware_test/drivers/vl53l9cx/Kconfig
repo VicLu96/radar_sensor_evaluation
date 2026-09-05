@@ -28,14 +28,18 @@ config VL53L9CX_INIT_PRIORITY
 
 config VL53L9CX_POWER_SETTLE_MS
 	int "Milliseconds to wait after enabling the sensor rail"
-	default 100
+	default 500
 	help
 	  Time between driving power-gpios high and doing anything else.
 
-	  Generous on purpose. The first bring-up used 10 ms, which is fine for
-	  a fast load switch and not obviously fine for anything else, and a
-	  rail that has not settled when XSHUT is released produces a part that
-	  is silent for reasons nothing in software can see.
+	  Deliberately far longer than any plausible rail rise (Victor,
+	  2026-09-05). The point during bring-up is to remove the delay from the
+	  list of suspects entirely, not to be efficient: if the sensor still
+	  does not answer after half a second of settled rail, the cause is
+	  somewhere else and this can stop being a question.
+
+	  The first bring-up used 10 ms, which is fine for a fast load switch
+	  and not obviously fine for anything else.
 
 	  This is paid on EVERY PM_DEVICE_ACTION_TURN_ON, so it lands directly
 	  in the wake cost that stage 4 measures. Trim it with a scope on the

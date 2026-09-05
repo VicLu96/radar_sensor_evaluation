@@ -151,10 +151,12 @@ static void clock_stop(const struct device *dev)
  * it can be reasoned about rather than reconstructed from sleeps:
  *
  *   power-gpios high
- *     +100 ms  POWER_SETTLE_MS   rail rise. Deliberately generous: a rail that
- *              has not settled when XSHUT is released gives a silent part for
- *              reasons nothing in software can see. Kconfig-tunable, and paid
- *              on every wake, so trim it with a scope before the energy work.
+ *     +500 ms  POWER_SETTLE_MS   rail rise. Far longer than any plausible
+ *              settle: during bring-up the point is to remove this from the
+ *              list of suspects, not to be efficient. Kconfig-tunable, and paid
+ *              on every wake, so it MUST be trimmed with a scope before the
+ *              energy work — half a second per wake would dominate the duty
+ *              cycle the paper is about.
  *   AP_CLK confirmed running (board-supplied here, so no delay)
  *   XSHUT low
  *     +50 ms   XSHUT_LOW_MS      reset pulse width
@@ -162,7 +164,7 @@ static void clock_stop(const struct device *dev)
  *     +50 ms   XSHUT_SETTLE_MS   ROM boot before the part will answer
  *   first I2C transaction
  *
- * = 200 ms from power enable to first transaction, at the defaults.
+ * = 600 ms from power enable to first transaction, at the defaults.
  *
  * The 50 ms figures are ST's reference timing via the hardware-validated
  * community driver. That driver then polls for READY_TO_BOOT for up to 500 ms
