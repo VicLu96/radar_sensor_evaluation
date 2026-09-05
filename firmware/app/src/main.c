@@ -2,7 +2,7 @@
  * VL53L9CX bring-up application.
  *
  * This is not a demo. It walks the staged gates from
- * firmware/drivers/vl53l9cx/README.md in order, and each stage prints enough
+ * firmware_test/drivers/vl53l9cx/README.md in order, and each stage prints enough
  * to tell success from the specific way it failed — because this board has no
  * known-good reference, and "nothing happened" is the expensive outcome.
  *

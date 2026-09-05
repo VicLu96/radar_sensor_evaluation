@@ -80,6 +80,20 @@ application's ~18 KB unpacked `struct vl53l9cx_frame`. Both static.
 board definition, the devicetree and the memory map. What it does not prove is anything
 about the hardware — the pins and rails are still only as right as the schematic.
 
+## Layout
+
+Self-contained: one directory to build, flash, and hand to someone else.
+
+```
+CMakeLists.txt              adds the driver below as an out-of-tree module
+prj.conf
+src/main.c                  the three staged tests
+boards/ethzurich/...        water_sense_board definition (Victor's)
+boards/water_sense_board_nrf54l15_cpuapp.overlay
+                            VL53L9CX node — application hardware, not board hardware
+drivers/vl53l9cx/           the ToF driver, ST's sources under st/
+```
+
 ## Build and flash
 
 ```bash

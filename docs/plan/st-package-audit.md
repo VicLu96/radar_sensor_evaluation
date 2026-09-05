@@ -29,7 +29,7 @@ wrong.
 
 ## 1. The platform contract — the scaffolding is wrong
 
-`firmware/drivers/vl53l9cx/vl53l9cx_platform.h` was written to the L5/L8 convention:
+`firmware_test/drivers/vl53l9cx/vl53l9cx_platform.h` was written to the L5/L8 convention:
 six functions named `VL53L9CX_RdByte` and friends, returning `uint8_t`, taking a named
 `VL53L9CX_Platform *`. **None of that is right.**
 
@@ -275,9 +275,9 @@ Plus a power domain or regulator for the `TURN_OFF` path, which ST models as
 `Package_license.md` carries a per-component SBOM:
 
 - **`Drivers/BSP/Components/vl53l9/` — BSD-3-Clause.** Redistributable with the
-  copyright notice retained. Copied byte-identical to `firmware/drivers/vl53l9cx/st/`.
+  copyright notice retained. Copied byte-identical to `firmware_test/drivers/vl53l9cx/st/`.
 - **`Utilities/vl53l9-common/` — BSD-3-Clause.** Copied to
-  `firmware/drivers/vl53l9cx/st-reference/` as read-only reference for the port.
+  `firmware_test/drivers/vl53l9cx/st-reference/` as read-only reference for the port.
 - **Middlewares and the NUCLEO projects — SLA0111.** Redistribution is permitted under
   conditions, but clause 5 forbids redistributing in a way that subjects the package to
   open-source terms. Not needed, so **not tracked**.

@@ -12,7 +12,7 @@ schematic and the pin assignments.
 | `docs/plan/imu-lsm6dsv-bx.md` | **Plan for the LSM6DSV..BX IMU: no Zephyr driver exists, and why** |
 | `docs/plan/ap-clk-always-on.md` | The always-on AP_CLK decision, and the A/B measurement it obliges |
 | `docs/hardware/water-sense-board-review.md` | Review of the board file against NCS 3.3 |
-| `firmware/app/README.md` | How to build it, and what each bring-up gate tells you |
+| `firmware_test/README.md` | How to build it, and what each bring-up gate tells you |
 | `docs/plan/st-package-audit.md` | What X-CUBE-53L9A1 provides, and the three things it corrected |
 | `docs/plan/driver-port.md` | Port strategy and ST's real platform contract |
 | `docs/plan/room-occupancy.md` | The dwell reframe: what it fixes, what it breaks |
@@ -56,7 +56,7 @@ schematic and the pin assignments.
 - **Lead application: room / desk-cluster occupancy and dwell** (Victor, 2026-08-31) —
   people who STAY. Doorway counting demoted to a secondary demo
 - **Paper angle:** energy-accuracy characterisation, not "we counted people"
-- **ST's driver is tracked in-repo** (BSD-3-Clause) at `firmware/drivers/vl53l9cx/st/`;
+- **ST's driver is tracked in-repo** (BSD-3-Clause) at `firmware_test/drivers/vl53l9cx/st/`;
   the full 39 MB package stays gitignored at `vendor/x-cube-53l9a1/`
 
 ## Project shape — Victor's four stages
@@ -82,7 +82,7 @@ schematic and the pin assignments.
    Everything it needs is now known except the final instance labels.
 5. **Decide the SD path**: `cs-gpios` plus Zephyr's stack, or the port file owns CS and
    `sdhc0` goes. It is disabled until then.
-6. Then the gates in `firmware/app/README.md`.
+6. Then the gates in `firmware_test/README.md`.
 
 ## The two questions that gate everything
 1. ~~VDDA, VDDIO and AP_CLK.~~ **ALL ANSWERED 2026-09-04.** VDDA 3.3 V, VDDIO 1.8 V,

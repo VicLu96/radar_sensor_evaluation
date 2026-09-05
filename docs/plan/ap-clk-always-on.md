@@ -97,7 +97,7 @@ Two caveats to check if we go that way, neither of them blocking:
 ## What this changes in the repo today
 
 - The driver's `TURN_OFF` no longer claims to gate AP_CLK. Corrected in
-  `firmware/drivers/vl53l9cx/README.md` and in the PM comment in `vl53l9cx.c`.
+  `firmware_test/drivers/vl53l9cx/README.md` and in the PM comment in `vl53l9cx.c`.
 - The driver logs, at init, that AP_CLK is board-supplied and **not** gated with the
   sensor domain — so it is visible in the first lines of console output rather than
   buried here.
