@@ -3,7 +3,23 @@
 if(CONFIG_VL53L9CX)
 
   zephyr_include_directories(include)
-  zephyr_library()
+
+  # NAMED, not zephyr_library().
+  #
+  # zephyr_library() derives the library name from this directory's path
+  # relative to the build, and this module lives outside the application tree —
+  # so the name comes out as
+  #   ..__..__..__Users__luder__Documents__Claude_File_System__...__vl53l9cx
+  # and CMake uses it verbatim as an object-file directory. That is 113
+  # characters of directory name, and on Windows it pushed the dependency-file
+  # path to 262 characters against a 260-character limit: over by two.
+  #
+  # The failure does not mention path length. It is
+  #   "fatal error: opening dependency file ...: No such file or directory"
+  # which reads as a missing file or a broken toolchain.
+  #
+  # Naming the library explicitly costs nothing and takes the same path to 161.
+  zephyr_library_named(vl53l9cx)
 
   # Our code: the platform binding and the Zephyr driver wrapper.
   zephyr_library_sources(

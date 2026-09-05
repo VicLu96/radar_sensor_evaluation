@@ -96,6 +96,19 @@ before the overlay existed will never pick it up, no matter how many times it is
 `src/main.c` carries a `#error` that catches exactly this and says so, so the misleading
 message now arrives second, behind an explanation.
 
+### The other Windows path trap, now fixed at source
+
+A second 260-character failure used to hit the driver module itself. `zephyr_library()`
+derives its library name from the module's path relative to the build, and this module
+sits outside the application tree — so the name came out as a 113-character
+`..__..__..__Users__luder__...__vl53l9cx`, used verbatim as an object directory. That put
+the dependency-file path at 262 characters: over by two.
+
+The driver's `CMakeLists.txt` now calls `zephyr_library_named(vl53l9cx)`, which takes the
+same path to 161. Nothing to do on your side, but worth knowing the shape of it: the
+error said `opening dependency file ...: No such file or directory` and mentioned neither
+paths nor lengths.
+
 **Windows path length matters here.** The nRF Connect SDK crypto sources sit very deep,
 and the compiler fails with `opening dependency file ... No such file or directory` —
 which names a missing file rather than the real cause — once a path exceeds 260
