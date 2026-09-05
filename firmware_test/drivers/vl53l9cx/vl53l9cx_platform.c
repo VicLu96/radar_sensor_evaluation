@@ -97,16 +97,38 @@ static int rd(void *const p_dev, uint16_t address, uint8_t *values, uint32_t siz
 	i2c = bus(p_dev);
 	idx_to_buf(address, idx);
 
+	/* The Zephyr return code is worth printing, because it separates two
+	 * failures that mean completely different things:
+	 *
+	 *   -EIO        the device did not acknowledge. The bus works; nothing
+	 *               is answering at this address.
+	 *   -ETIMEDOUT  the transfer never completed. That is a stuck bus, not
+	 *               a silent device — SDA or SCL never reached the level
+	 *               the controller was waiting for. Missing pull-ups and a
+	 *               device holding SCL low both look like this.
+	 *
+	 * Without the code, both arrive as "no answer from the sensor" and the
+	 * search goes to the wrong place.
+	 */
+	int ret;
+
 	/* Transaction 1: write the index, then STOP. */
-	if (i2c_write_dt(i2c, idx, IDX_LEN) < 0) {
-		LOG_ERR("read failed at index write: idx 0x%04x", address);
+	ret = i2c_write_dt(i2c, idx, IDX_LEN);
+	if (ret < 0) {
+		LOG_ERR("read failed at index write: idx 0x%04x, errno %d (%s)",
+			address, ret,
+			ret == -ETIMEDOUT ? "TIMEOUT — bus stuck, suspect pull-ups"
+					  : "no acknowledge");
 		return VL53L9_ERROR_PLATFORM;
 	}
 
 	/* Transaction 2: fresh START, read, STOP. */
-	if (i2c_read_dt(i2c, values, size) < 0) {
-		LOG_ERR("read failed at data phase: idx 0x%04x, %u bytes",
-			address, size);
+	ret = i2c_read_dt(i2c, values, size);
+	if (ret < 0) {
+		LOG_ERR("read failed at data phase: idx 0x%04x, %u bytes, "
+			"errno %d (%s)", address, size, ret,
+			ret == -ETIMEDOUT ? "TIMEOUT — bus stuck, suspect pull-ups"
+					  : "no acknowledge");
 		return VL53L9_ERROR_PLATFORM;
 	}
 

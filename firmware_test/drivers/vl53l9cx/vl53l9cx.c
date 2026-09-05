@@ -146,7 +146,44 @@ static void clock_stop(const struct device *dev)
 
 /* ---------------------------------------------------------------------------
  * Power and reset sequencing
+ *
+ * The whole path from power enable to first I2C transaction, in one place so
+ * it can be reasoned about rather than reconstructed from sleeps:
+ *
+ *   power-gpios high
+ *     +10 ms   POWER_SETTLE_MS   rail rise. Generous for a load switch; the
+ *              real figure depends on the enable circuit and is worth a scope.
+ *   AP_CLK confirmed running (board-supplied here, so no delay)
+ *   XSHUT low
+ *     +50 ms   XSHUT_LOW_MS      reset pulse width
+ *   XSHUT high
+ *     +50 ms   XSHUT_SETTLE_MS   ROM boot before the part will answer
+ *   first I2C transaction
+ *
+ * = 110 ms from power enable to first transaction.
+ *
+ * The 50 ms figures are ST's reference timing via the hardware-validated
+ * community driver. That driver then polls for READY_TO_BOOT for up to 500 ms
+ * *tolerating NAKs*, because the part NAKs while its ROM comes up — which is
+ * why the probe below retries rather than taking one shot.
  * -------------------------------------------------------------------------*/
+#define POWER_SETTLE_MS   10
+#define XSHUT_LOW_MS      50
+#define XSHUT_SETTLE_MS   50
+
+/* How long to keep retrying the first read before declaring the part absent.
+ * Deadline rather than attempt count on purpose: a NAKing device fails in
+ * microseconds and gets many attempts, while a stuck bus costs a full
+ * CONFIG_I2C_NRFX_TRANSFER_TIMEOUT per try and gets one or two. Either way the
+ * boot is bounded.
+ */
+#define PROBE_BUDGET_MS   600
+#define PROBE_GAP_MS      10
+
+/* Off-time in the one retry below. Long enough for the rail to actually fall,
+ * since a power cycle that does not reach 0 V is just a pause.
+ */
+#define POWER_CYCLE_MS    100
 static int power_up(const struct device *dev)
 {
 	const struct vl53l9cx_config *cfg = dev->config;
@@ -159,7 +196,7 @@ static int power_up(const struct device *dev)
 			return ret;
 		}
 		LOG_DBG("sensor rail enabled");
-		k_sleep(K_MSEC(10)); /* rail settle. VERIFY against the schematic. */
+		k_sleep(K_MSEC(POWER_SETTLE_MS));
 	}
 
 	ret = clock_start(dev);
@@ -187,14 +224,14 @@ static int power_up(const struct device *dev)
 			LOG_ERR("xshut-gpios set failed (%d)", ret);
 			return ret;
 		}
-		k_sleep(K_MSEC(50));
+		k_sleep(K_MSEC(XSHUT_LOW_MS));
 
 		ret = gpio_pin_set_dt(&cfg->xshut, 1);
 		if (ret < 0) {
 			LOG_ERR("xshut-gpios release failed (%d)", ret);
 			return ret;
 		}
-		k_sleep(K_MSEC(50));
+		k_sleep(K_MSEC(XSHUT_SETTLE_MS));
 		LOG_DBG("XSHUT released");
 	}
 
@@ -270,22 +307,34 @@ static int device_boot(const struct device *dev)
 	 */
 	{
 		uint32_t probe = 0;
-		int pret = vl53l9_get_device_id((void *)dev, &probe);
+		int64_t deadline = k_uptime_get() + PROBE_BUDGET_MS;
+		int pret;
+		unsigned int tries = 0;
+
+		do {
+			tries++;
+			pret = vl53l9_get_device_id((void *)dev, &probe);
+			if (pret == VL53L9_ERROR_NONE) {
+				break;
+			}
+			k_sleep(K_MSEC(PROBE_GAP_MS));
+		} while (k_uptime_get() < deadline);
 
 		if (pret != VL53L9_ERROR_NONE) {
-			LOG_ERR("no answer from the sensor (%s). It is not "
-				"talking at all.", vl53l9_errstr(pret));
-			LOG_ERR("  Check in this order: AP_CLK on P0.00 with a "
-				"scope (no clock, no ACK — and it looks exactly "
-				"like a dead part), the sensor rail, XSHUT, then "
-				"the address. If another device on this bus "
-				"answers, the bus is exonerated and the fault "
-				"is one of those four; if nothing does, add the "
-				"bus itself to the list.");
+			LOG_ERR("no answer from the sensor after %u attempt(s) "
+				"over %d ms (%s).", tries, PROBE_BUDGET_MS,
+				vl53l9_errstr(pret));
+			LOG_ERR("  Read the errno on the line above this one. "
+				"TIMEOUT means the bus is stuck — suspect SDA/SCL "
+				"pull-ups, which this board's pinctrl does not "
+				"set. A plain no-acknowledge instead means the "
+				"bus is fine and nothing is at this address, "
+				"which points at AP_CLK, the rail, or XSHUT.");
 			return -EIO;
 		}
-		LOG_INF("sensor answered, model id 0x%08x — bus, power, clock "
-			"and address are all good", probe);
+
+		LOG_INF("sensor answered on attempt %u, model id 0x%08x — bus, "
+			"power, clock and address are all good", tries, probe);
 	}
 
 	ret = vl53l9_init((void *)dev);
@@ -658,9 +707,36 @@ static int pm_action(const struct device *dev, enum pm_device_action action)
 	case PM_DEVICE_ACTION_TURN_ON: {
 		int ret = device_boot(dev);
 
+		/*
+		 * One full retry, and deliberately a POWER CYCLE rather than
+		 * another probe.
+		 *
+		 * The probe inside device_boot() already retries the read, so
+		 * repeating it here would add nothing. What this covers is
+		 * different: a part that came up in a bad state, or a rail that
+		 * had not settled when XSHUT was released. Both are fixed only
+		 * by taking the power away and starting the sequence again, and
+		 * neither is fixed by asking a second time.
+		 *
+		 * Exactly one retry. A boot loop that keeps trying hides a
+		 * hardware fault behind an occasional success, which on a board
+		 * with no known-good reference is worse than failing.
+		 */
 		if (ret < 0) {
-			return ret;
+			LOG_WRN("boot failed — power cycling and trying once more");
+			power_down(dev);
+			k_sleep(K_MSEC(POWER_CYCLE_MS));
+
+			ret = device_boot(dev);
+			if (ret < 0) {
+				LOG_ERR("boot failed again after a power cycle. "
+					"This is not a transient.");
+				return ret;
+			}
+			LOG_WRN("second attempt succeeded — the first failure was "
+				"real and worth explaining, not ignoring.");
 		}
+
 		return configure_signalling(dev);
 	}
 
