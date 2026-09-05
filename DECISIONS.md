@@ -972,3 +972,37 @@ Worth one look at the datasheet pin description; not worth blocking on.
 Also worth stating because it could otherwise waste time: this has no bearing on the
 current bring-up failure. The sensor not booting cannot be caused by the CSI pins, since
 the transmitter is not enabled at any point before or during boot.
+
+## 2026-09-05 - The ToF failure is electrical: -ETIMEDOUT, not a NAK
+What: repeated `errno -116` (-ETIMEDOUT) on the very first I2C index write, twice per
+boot attempt and identical after a full power cycle, with a 500 ms rail settle. The bus
+is electrically stuck. This is not a sensor fault and not a firmware fault.
+Why the distinction is the whole diagnosis: an unclocked, unpowered or absent I2C slave
+is PASSIVE. It does not drive SDA or SCL. With working pull-ups the master sees the lines
+idle high, clocks out the address, gets no acknowledge, and returns -EIO in microseconds.
+A timeout means the MASTER could not complete the transfer - SCL or SDA never reached the
+level it was waiting for. Only two things do that: no pull-ups, or something holding a
+line low.
+**The strongest evidence is historical.** The LSM6DSV IMU worked on this same bus, same
+pins, same 400 kHz, and read accelerometer data correctly. The bus was electrically sound
+then. The IMU has since been removed and the bus now hangs. That points hard at the IMU
+assembly having carried the SDA/SCL pull-ups, which the board's pinctrl does not provide
+(no `bias-pull-up`, flagged in the 2026-09-04 board review and three times since).
+Answering Victor's clock question, since it was asked and deserves a real answer:
+**ST specifies no AP_CLK settle time anywhere.** Two independent places say so.
+`vl53l9_init()` opens with `_wait_for_state(FSM_STATE_READY_TO_BOOT, 4)` - a **4 ms**
+budget, so ST expects the part to be answering I2C within 4 ms of init being called. And
+ST's own reference platform (st-reference/platform/platform_utils.c) contains exactly
+four delays, all 50 ms, and every one of them is XSHUT sequencing - there is nothing
+about the clock at all. Their `platform_power_enable()` is literally "XSHUT high, wait
+50 ms".
+So our 500 ms rail settle plus 50/50 XSHUT is already an order of magnitude more generous
+than ST's own reference, which uses 50 ms in total. More delay cannot help, and the clock
+cannot produce a timeout in any case - a missing clock gives a NAK, not a hung bus.
+Added as a measurement rather than a fix: on timeout the driver now calls
+i2c_recover_bus() once and reports what happened. If recovery frees the bus, a device was
+holding it - real and fixable. If recovery changes nothing, the lines cannot reach a high
+level at all, which is pull-ups or a short. The failure is as informative as the success,
+which is the point.
+Next action is a multimeter, not a rebuild: SDA and SCL to VDDIO with the board powered
+and idle should read 1.8 V. Near 0 V settles it.

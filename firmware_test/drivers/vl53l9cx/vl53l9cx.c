@@ -328,6 +328,50 @@ static int device_boot(const struct device *dev)
 			LOG_ERR("no answer from the sensor after %u attempt(s) "
 				"over %d ms (%s).", tries, PROBE_BUDGET_MS,
 				vl53l9_errstr(pret));
+
+			/*
+			 * Try to unstick the bus, and use the result as a
+			 * measurement rather than a fix.
+			 *
+			 * i2c_recover_bus() clocks SCL until a slave that is
+			 * holding SDA low lets go. It separates the only two
+			 * causes of a transfer timeout:
+			 *
+			 *   recovery works, then a read succeeds -> a device was
+			 *     holding the bus. Real, and fixable in firmware.
+			 *   recovery changes nothing -> the lines cannot reach a
+			 *     high level at all, which is missing pull-ups or a
+			 *     short. No amount of firmware helps.
+			 *
+			 * Worth doing once even though it rarely succeeds,
+			 * because the failure is as informative as the success.
+			 */
+			{
+				const struct vl53l9cx_config *c = dev->config;
+				int rec = i2c_recover_bus(c->i2c.bus);
+
+				if (rec == 0) {
+					uint32_t again = 0;
+
+					LOG_WRN("  bus recovery ran; retrying once");
+					if (vl53l9_get_device_id((void *)dev, &again)
+					    == VL53L9_ERROR_NONE) {
+						LOG_WRN("  recovery WORKED — a "
+							"device was holding the "
+							"bus, not a wiring fault");
+						probe = again;
+						pret = VL53L9_ERROR_NONE;
+						goto probed;
+					}
+					LOG_ERR("  recovery changed nothing. The "
+						"lines cannot reach a high level: "
+						"pull-ups or a short, not "
+						"firmware.");
+				} else {
+					LOG_ERR("  bus recovery unsupported or "
+						"failed (%d)", rec);
+				}
+			}
 			LOG_ERR("  Read the errno on the line above this one. "
 				"TIMEOUT means the bus is stuck — suspect SDA/SCL "
 				"pull-ups, which this board's pinctrl does not "
@@ -337,6 +381,7 @@ static int device_boot(const struct device *dev)
 			return -EIO;
 		}
 
+probed:
 		LOG_INF("sensor answered on attempt %u, model id 0x%08x — bus, "
 			"power, clock and address are all good", tries, probe);
 	}
