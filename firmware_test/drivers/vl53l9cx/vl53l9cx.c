@@ -201,6 +201,24 @@ static int power_up(const struct device *dev)
 		}
 		LOG_DBG("sensor rail enabled");
 		k_sleep(K_MSEC(POWER_SETTLE_MS));
+
+		/* Read the pad, not the register we just wrote. A pin driven
+		 * high that reads low is being held down — a short, or a rail
+		 * the switch cannot pull up. That is a hardware fault visible
+		 * from software, and worth catching before anyone reaches for
+		 * a meter.
+		 */
+		{
+			int lvl = gpio_pin_get_dt(&cfg->power);
+
+			LOG_INF("power-gpios driven high, pad reads %d%s", lvl,
+				lvl == 1 ? "" :
+				lvl == 0 ? "  <-- HELD LOW. The pin is not "
+					   "reaching the level we are driving: "
+					   "a short, or a load the switch cannot"
+					   " drive." :
+					   "  <-- read failed");
+		}
 	}
 
 	ret = clock_start(dev);
@@ -236,7 +254,17 @@ static int power_up(const struct device *dev)
 			return ret;
 		}
 		k_sleep(K_MSEC(XSHUT_SETTLE_MS));
-		LOG_DBG("XSHUT released");
+
+		{
+			int lvl = gpio_pin_get_dt(&cfg->xshut);
+
+			LOG_INF("XSHUT released, pad reads %d%s", lvl,
+				lvl == 1 ? "" :
+				lvl == 0 ? "  <-- HELD LOW. The part is being "
+					   "kept in reset by something other "
+					   "than us." :
+					   "  <-- read failed");
+		}
 	}
 
 	return 0;
@@ -332,6 +360,24 @@ static bool try_inverted_polarity(const struct device *dev)
 	if (cfg->power.port != NULL) {
 		(void)gpio_pin_set_raw(cfg->power.port, cfg->power.pin, 0);
 		k_sleep(K_MSEC(POWER_SETTLE_MS));
+
+		/* Read the pad, not the register we just wrote. A pin driven
+		 * high that reads low is being held down — a short, or a rail
+		 * the switch cannot pull up. That is a hardware fault visible
+		 * from software, and worth catching before anyone reaches for
+		 * a meter.
+		 */
+		{
+			int lvl = gpio_pin_get_dt(&cfg->power);
+
+			LOG_INF("power-gpios driven high, pad reads %d%s", lvl,
+				lvl == 1 ? "" :
+				lvl == 0 ? "  <-- HELD LOW. The pin is not "
+					   "reaching the level we are driving: "
+					   "a short, or a load the switch cannot"
+					   " drive." :
+					   "  <-- read failed");
+		}
 	}
 
 	if (cfg->xshut.port != NULL) {
@@ -953,7 +999,13 @@ static int vl53l9cx_init(const struct device *dev)
 				cfg->power.port->name);
 			return -ENODEV;
 		}
-		ret = gpio_pin_configure_dt(&cfg->power, GPIO_OUTPUT_INACTIVE);
+		/* GPIO_INPUT alongside the output connects the input buffer, so
+		 * the pad can be read back. Without it, reading an output pin
+		 * returns what we wrote rather than what the pin is doing, and
+		 * a line held low by a short or an overloaded rail is invisible.
+		 */
+		ret = gpio_pin_configure_dt(&cfg->power,
+					    GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
 		if (ret < 0) {
 			LOG_ERR("init: power-gpios configure failed (%d)", ret);
 			return ret;
@@ -968,7 +1020,8 @@ static int vl53l9cx_init(const struct device *dev)
 				cfg->xshut.port->name);
 			return -ENODEV;
 		}
-		ret = gpio_pin_configure_dt(&cfg->xshut, GPIO_OUTPUT_INACTIVE);
+		ret = gpio_pin_configure_dt(&cfg->xshut,
+					    GPIO_OUTPUT_INACTIVE | GPIO_INPUT);
 		if (ret < 0) {
 			LOG_ERR("init: xshut-gpios configure failed (%d)", ret);
 			return ret;
