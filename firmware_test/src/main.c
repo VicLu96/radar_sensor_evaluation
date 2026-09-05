@@ -47,6 +47,11 @@
 
 #include <vl53l9cx/vl53l9cx.h>
 
+/* For the AP_CLK check below: read back what the GRTC peripheral thinks it is
+ * doing, rather than trusting devicetree to have been applied.
+ */
+#include <haly/nrfy_grtc.h>
+
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
 /* The I2C controller the board file enables. Follows the board, so if the
@@ -328,6 +333,22 @@ static void tof_report_config(void)
 		DT_NODE_HAS_PROP(TOF_NODE, int_gpios) ? "P0.01, active low" : "NOT WIRED — polling");
 	LOG_INF("  PWR_EN    %s",
 		DT_NODE_HAS_PROP(TOF_NODE, power_gpios) ? "P0.02" : "NOT WIRED — cannot power down");
+
+	/*
+	 * Ask the GRTC peripheral whether its fast clock output is actually
+	 * enabled.
+	 *
+	 * This is the one piece of the AP_CLK chain testable in software.
+	 * Devicetree saying 8 MHz proves only that a property was written; this
+	 * proves the timer driver acted on it and set the enable bit. It does
+	 * NOT prove the pin is toggling — pinctrl could have routed it
+	 * elsewhere, or the pad could be loaded — so a scope is still the last
+	 * word. But if this reads DISABLED, the scope will show nothing and
+	 * there is no point looking.
+	 */
+	LOG_INF("  AP_CLK enable bit in the GRTC peripheral: %s",
+		nrfy_grtc_clkout_enable_check(NRF_GRTC, NRF_GRTC_CLKOUT_FAST)
+			? "ENABLED" : "DISABLED  <-- the clock is definitely not running");
 	LOG_INF("--------------------------------------------------");
 }
 

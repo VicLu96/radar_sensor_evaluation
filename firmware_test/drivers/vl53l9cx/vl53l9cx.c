@@ -676,50 +676,92 @@ static int vl53l9cx_init(const struct device *dev)
 	struct vl53l9cx_data *data = dev->data;
 	int ret;
 
+	/*
+	 * Every step below logs before it can fail.
+	 *
+	 * The first version returned bare error codes from five of these with
+	 * no output at all, so a failure produced a device that was simply
+	 * "not ready" and a completely silent driver — which says nothing
+	 * about which of five things went wrong. On a board with no known-good
+	 * reference that is the most expensive kind of failure there is.
+	 */
+	LOG_INF("init: starting");
+
 	data->dev = dev;
 	k_sem_init(&data->frame_ready, 0, 1);
 	k_mutex_init(&data->lock);
 
 	if (!i2c_is_ready_dt(&cfg->i2c)) {
-		LOG_ERR("I2C bus not ready");
+		LOG_ERR("init: I2C bus %s not ready", cfg->i2c.bus->name);
 		return -ENODEV;
 	}
+	LOG_INF("init: I2C bus %s ready, device at 0x%02x",
+		cfg->i2c.bus->name, cfg->i2c.addr);
 
 	if (cfg->power.port != NULL) {
+		if (!gpio_is_ready_dt(&cfg->power)) {
+			LOG_ERR("init: power-gpios port %s not ready",
+				cfg->power.port->name);
+			return -ENODEV;
+		}
 		ret = gpio_pin_configure_dt(&cfg->power, GPIO_OUTPUT_INACTIVE);
 		if (ret < 0) {
+			LOG_ERR("init: power-gpios configure failed (%d)", ret);
 			return ret;
 		}
+		LOG_INF("init: power-gpios ready (%s pin %u)",
+			cfg->power.port->name, cfg->power.pin);
 	}
 
 	if (cfg->xshut.port != NULL) {
+		if (!gpio_is_ready_dt(&cfg->xshut)) {
+			LOG_ERR("init: xshut-gpios port %s not ready",
+				cfg->xshut.port->name);
+			return -ENODEV;
+		}
 		ret = gpio_pin_configure_dt(&cfg->xshut, GPIO_OUTPUT_INACTIVE);
 		if (ret < 0) {
+			LOG_ERR("init: xshut-gpios configure failed (%d)", ret);
 			return ret;
 		}
+		LOG_INF("init: xshut-gpios ready (%s pin %u)",
+			cfg->xshut.port->name, cfg->xshut.pin);
 	}
 
 	data->use_interrupt = (cfg->intr.port != NULL);
 	if (data->use_interrupt) {
 		if (!gpio_is_ready_dt(&cfg->intr)) {
-			LOG_ERR("interrupt GPIO not ready");
+			LOG_ERR("init: int-gpios port %s not ready",
+				cfg->intr.port->name);
 			return -ENODEV;
 		}
 		ret = gpio_pin_configure_dt(&cfg->intr, GPIO_INPUT);
 		if (ret < 0) {
+			LOG_ERR("init: int-gpios configure failed (%d)", ret);
 			return ret;
 		}
 		ret = gpio_pin_interrupt_configure_dt(&cfg->intr,
 						      GPIO_INT_EDGE_TO_ACTIVE);
 		if (ret < 0) {
+			LOG_ERR("init: int-gpios interrupt configure failed (%d). "
+				"On the nRF54L15 each port needs its GPIOTE "
+				"instance enabled — P0 uses gpiote30, P1 uses "
+				"gpiote20.", ret);
 			return ret;
 		}
 		gpio_init_callback(&data->int_cb, int_handler, BIT(cfg->intr.pin));
 		ret = gpio_add_callback(cfg->intr.port, &data->int_cb);
 		if (ret < 0) {
+			LOG_ERR("init: gpio_add_callback failed (%d)", ret);
 			return ret;
 		}
+		LOG_INF("init: int-gpios ready (%s pin %u, edge to active)",
+			cfg->intr.port->name, cfg->intr.pin);
+	} else {
+		LOG_WRN("init: no int-gpios — frame-ready will be polled");
 	}
+
+	LOG_INF("init: bringing the sensor up (power, AP_CLK, XSHUT, blob)");
 
 	/* Deliberately NOT booting the device here. pm_device_driver_init()
 	 * drives the device to its initial state through pm_action(), whose
@@ -727,7 +769,14 @@ static int vl53l9cx_init(const struct device *dev)
 	 * upload it twice and double-count boot_ms, which is a measurement the
 	 * power model depends on.
 	 */
-	return pm_device_driver_init(dev, pm_action);
+	ret = pm_device_driver_init(dev, pm_action);
+	if (ret < 0) {
+		LOG_ERR("init: FAILED (%d)", ret);
+		return ret;
+	}
+
+	LOG_INF("init: complete");
+	return 0;
 }
 
 /* The three board values have no defaults on purpose: a wrong VDDA or VDDIO
