@@ -19,10 +19,37 @@
 
 &pinctrl {
 
+	/*
+	 * bias-pull-up added 2026-09-05 at Victor's instruction, as a test.
+	 *
+	 * The board is believed to have external pull-ups already, so this is
+	 * belt and braces — but the evidence says otherwise and it is worth one
+	 * boot to find out. Every first I2C transaction returns -ETIMEDOUT,
+	 * which means the master could not complete the transfer at all rather
+	 * than getting no answer: SDA or SCL never reached a high level. An
+	 * absent or unclocked slave cannot cause that, because it drives
+	 * nothing. Missing pull-ups can.
+	 *
+	 * The suspicion is sharpened by history: the LSM6DSV IMU worked on this
+	 * bus, at these pins, at 400 kHz — and the bus started hanging after
+	 * that part was removed.
+	 *
+	 * CAVEAT ON WHAT THIS PROVES. The nRF internal pull-ups are weak,
+	 * roughly 13 kOhm against the 2.2-4.7 kOhm usual for 400 kHz. If this
+	 * fixes it, the external pull-ups are missing or wrong and should be
+	 * fitted properly rather than left to the SoC. If it does not fix it,
+	 * that is NOT proof the pull-ups are fine — weak ones can still fail to
+	 * pull a loaded bus high in time at 400 kHz. The next single-variable
+	 * test in that case is 100 kHz, which tolerates far weaker pull-ups.
+	 *
+	 * Only on the default state, not on sleep: pulling a bus up while the
+	 * peripheral is idle costs current for nothing.
+	 */
 	i2c1_default: i2c1_default {
 		group1 {
 			psels = <NRF_PSEL(TWIM_SCL, 1, 8)>,
 				<NRF_PSEL(TWIM_SDA, 1, 13)>;
+			bias-pull-up;
 		};
 	};
 
