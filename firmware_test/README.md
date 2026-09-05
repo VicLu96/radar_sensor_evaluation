@@ -86,6 +86,16 @@ about the hardware — the pins and rails are still only as right as the schemat
 west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always
 ```
 
+**`-p always` is not optional here.** Zephyr discovers `boards/*.overlay` once, at
+configure time, and caches the result in `DTC_OVERLAY_FILE`. A build directory created
+before the overlay existed will never pick it up, no matter how many times it is rebuilt
+— and the symptom is not "missing overlay", it is
+`vl53l9cx/vl53l9cx.h: No such file or directory`, because without the sensor node
+`CONFIG_VL53L9CX` is unset and the driver module skips its include directory.
+
+`src/main.c` carries a `#error` that catches exactly this and says so, so the misleading
+message now arrives second, behind an explanation.
+
 **Windows path length matters here.** The nRF Connect SDK crypto sources sit very deep,
 and the compiler fails with `opening dependency file ... No such file or directory` —
 which names a missing file rather than the real cause — once a path exceeds 260

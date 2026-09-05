@@ -27,6 +27,24 @@
 #include <zephyr/devicetree.h>
 #include <stdio.h>
 
+/*
+ * Catch a stale build directory before the compiler produces a misleading
+ * error.
+ *
+ * If the VL53L9CX node is absent, CONFIG_VL53L9CX is not set, so the driver
+ * module's CMakeLists skips its zephyr_include_directories() — and the next
+ * line fails with "vl53l9cx/vl53l9cx.h: No such file or directory", which
+ * points at the include path and not at the actual cause.
+ *
+ * The usual actual cause: overlay discovery happens once, at configure time,
+ * and is cached in DTC_OVERLAY_FILE. A build directory created before
+ * boards/water_sense_board_nrf54l15_cpuapp.overlay existed will never pick it
+ * up, however many times it is rebuilt.
+ */
+#if !DT_HAS_COMPAT_STATUS_OKAY(st_vl53l9cx)
+#error "No enabled st,vl53l9cx node in the devicetree. Almost certainly a STALE BUILD DIRECTORY: overlay discovery is cached at configure time, so a build dir created before the overlay existed never sees it. Rebuild pristine: west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always . If that does not fix it, check that firmware_test/boards/water_sense_board_nrf54l15_cpuapp.overlay exists and that its filename matches the board target exactly."
+#endif
+
 #include <vl53l9cx/vl53l9cx.h>
 
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
