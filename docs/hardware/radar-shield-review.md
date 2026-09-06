@@ -139,6 +139,10 @@ excessive with every signal disconnected, the fault is on the shield itself.
 - `VBAT_LDD` (B1) and `VBAT_RX` (D1) both sit on `+VBat_switched`, straight from the
   battery through the load switch. That is the laser driver supply, and it is the rail
   whose peak current the paper needs to characterise.
+- **The three power-on supplies are all correctly routed** (checked 2026-09-06 against
+  UM3683 §2.5.1): `DVDD` C12 → `+1V2` (1.2 V, confirmed by Victor), `AVDD` E6/E7 → `+3V3`,
+  `IOVDD` E8 → `+1V8`. AVDD and IOVDD match the overlay's `vdda-microvolt` and
+  `vddio-microvolt`. Nothing on the supply side is miswired.
 - `SYNC_IN` is brought out to `J6` pin 4 rather than tied. It is active low and triggers
   a frame, so it must not float. The driver now holds the device in `SYNC_MANUAL` so the
   pin cannot start an exposure, but the pin itself still wants a defined level.

@@ -28,9 +28,37 @@ It also settles the priority order: **there was never any point testing I²C bef
 clock was continuous.** Condition 3 is not a precondition for good data, it is a
 precondition for the device existing on the bus at all.
 
-**Three supplies, not two.** The driver models `vdda` and `vddio`; DVDD is the third and
-the custom board's `+1V2` rail is it. Nothing in firmware configures it, but it is a
-power-on condition, so it belongs on the bench checklist.
+**Three supplies, not two — and all three are correct on the custom board.**
+
+`DVDD = 1.2 V` — confirmed by Victor, 2026-09-06. Verified against the PCB the same day by
+extracting pad-to-net for the sensor footprint (U1, 42 pads) and comparing it with the
+schematic symbol's pin names:
+
+| Ball | Pin name | Net |
+|---|---|---|
+| C12 | `DVDD` | `+1V2` |
+| E6, E7 | `AVDD` | `+3V3` |
+| E8 | `IOVDD` | `+1V8` |
+| B1, D1 | `VBAT_LDD`, `VBAT_RX` | `+VBat_switched` |
+
+So **condition 1 of §2.5.1 is satisfied by design.** All three supplies exist and reach the
+right balls, and AVDD/IOVDD match the `vdda-microvolt` / `vddio-microvolt` in the overlay.
+That removes the supplies as a candidate for the silence — provided they are actually *up*
+at the time, which the 100 mA fold-back made doubtful and a raised current limit settles.
+
+**DVDD is not, and should not be, in devicetree.** It appears exactly once in UM3683 (as a
+power-on condition) and nowhere in ST's driver: the only configuration registers are
+`VDDA_CFG` (0x000C) and `VDDIO_CFG` (0x000D). There is no DVDD register to write. A
+`dvdd-microvolt` property would therefore be a value nothing reads, implying a
+configurability that does not exist — worse than no property at all. It is a hardware fact
+and a bench check, and that is where it is recorded.
+
+**A related check, since the encoding is an enum index.** `vdda`/`vddio` reach ST's code
+through `DT_INST_ENUM_IDX`, so the binding's enum *order* is the register value. Verified
+2026-09-06: `vdda-microvolt: enum [2800000, 3300000]` against `VDDA_2V8 = 0, VDDA_3V3 = 1`,
+and `vddio-microvolt: enum [1200000, 1800000]` against `VDDIO_1V2 = 0, VDDIO_1V8 = 1`. Both
+orders match. Reordering either enum would silently invert the value written into the
+device — the analogue front end misconfigured with no error anywhere.
 
 ## DEVICE_ID is a mandated check, and we were not doing it (§2.5.2)
 

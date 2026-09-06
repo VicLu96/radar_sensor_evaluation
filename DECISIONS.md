@@ -1232,3 +1232,24 @@ board at 3.3 V needs VDDA_CFG written - which is why the 2.8 V placeholder carri
 a check.
 Builds both configurations: custom board FLASH 64,612 B, X-NUCLEO FLASH 64,316 B, RAM
 44,208 B.
+
+## 2026-09-06 - DVDD confirmed at 1.2 V; all three sensor supplies verified correct
+What: Victor confirmed DVDD = 1.2 V. Checked against the PCB the same day by extracting
+pad-to-net for the sensor footprint (U1, 42 pads) and comparing with the schematic symbol's
+pin names: DVDD C12 -> +1V2, AVDD E6/E7 -> +3V3, IOVDD E8 -> +1V8, VBAT_LDD B1 and
+VBAT_RX D1 -> +VBat_switched.
+So condition 1 of UM3683 section 2.5.1 - "the three power supplies must be activated" - is
+satisfied by design, and AVDD/IOVDD match the overlay's vdda-microvolt and vddio-microvolt.
+Supplies are eliminated as a cause of the I2C silence, PROVIDED they are actually up at the
+time, which the 100 mA fold-back made doubtful and a raised current limit settles.
+Decided NOT to add a dvdd-microvolt devicetree property. DVDD appears once in UM3683 (as a
+power-on condition) and nowhere in ST's driver; the only configuration registers are
+VDDA_CFG (0x000C) and VDDIO_CFG (0x000D). There is no DVDD register to write, so the
+property would be a value nothing reads, implying a configurability that does not exist.
+Recorded as a hardware fact and a bench check instead.
+Checked while in the area, because the failure mode is silent: vdda and vddio reach ST's
+code through DT_INST_ENUM_IDX, so the BINDING'S ENUM ORDER IS THE REGISTER VALUE. Verified
+vdda-microvolt enum [2800000, 3300000] against VDDA_2V8 = 0 / VDDA_3V3 = 1, and
+vddio-microvolt enum [1200000, 1800000] against VDDIO_1V2 = 0 / VDDIO_1V8 = 1. Both match.
+Reordering either enum would invert the value written into the device and misconfigure the
+analogue front end with no error anywhere - worth knowing before anyone tidies the YAML.
