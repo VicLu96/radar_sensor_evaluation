@@ -1124,3 +1124,34 @@ have been pursued.
 Test, and it needs no rework: power the shield through J3 alone with J2 and J6
 disconnected. Normal current means the fault arrives through the signal lines and the IO
 domain is the problem. Still-excessive current means the fault is on the shield itself.
+
+## 2026-09-06 - The always-on AP_CLK was not always on: SYSCOUNTER slept with the CPU
+What: Victor measured 8 MHz on P0.00 as intermittent - on and off, not absent. Root cause
+found in Zephyr's GRTC timer driver: the fast clock output is a divider on the GRTC
+SYSCOUNTER, and this build's CONFIG_NRF_GRTC_TIMER_AUTO_KEEP_ALIVE=y keeps the SYSCOUNTER
+awake only "when any core is in active state" (its own Kconfig help). The application
+heartbeats and sleeps, so the clock tracked CPU activity.
+Fix: clock_start() now calls nrfx_grtc_active_request_set(true), once, never released.
+Zephyr's own symbol for this - CONFIG_NRF_GRTC_ALWAYS_ON - is promptless and nothing in
+this tree selects it, so it cannot be set from prj.conf; the driver issues the request
+directly. Safe because GRTC initialises at PRE_KERNEL_1 and the driver runs at POST_KERNEL.
+Also changed, in the APPLICATION OVERLAY and not the board file:
+- GRTC pinctrl overridden to NRF_DRIVE_H0H1. Standard drive is ~0.5 mA; slewing 1.8 V
+  across ~15 pF in 10 ns needs I = C dV/dt = 2.7 mA. Estimate, for sizing only.
+- The sleep state deliberately keeps driving. The board's grtc_sleep carries
+  low-power-enable, which disconnects the pin - a way to stop a clock with nothing in
+  software appearing to do so.
+- &clock enabled, so CONFIG_VL53L9CX_HOLD_HFCLK (default n) can hold the high-frequency
+  domain up as a fallback. Off by default because it is expected to be redundant, and a
+  redundant clock request inflates idle current - the exact number this project must
+  measure honestly.
+Rejected first attempt, recorded because it was wrong in an instructive way: the initial
+hypothesis was the HF clock domain stopping under the divider, implemented as
+nrf_clock_control_hfxo_request(). That does not link - the API is nRF54H only
+(clock_control_nrf54h_hfxo.c, CONFIG_CLOCK_CONTROL_NRF54H_HFXO). The link error was the
+thing that forced reading the GRTC driver, which is where the real mechanism was.
+Consequence for the paper: the AP_CLK A/B in docs/plan/ap-clk-always-on.md must be
+re-taken with this firmware. The SYSCOUNTER now runs through idle, so the enabled row
+carries that cost. That is the honest figure - it is what the design actually pays - but
+any number measured before 2026-09-06 no longer describes this build.
+Builds: FLASH 63,616 B, RAM 41,136 B.

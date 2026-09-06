@@ -94,6 +94,51 @@ Two caveats to check if we go that way, neither of them blocking:
   the bench that the kernel clock is undisturbed, because a subtly broken timebase would
   poison every timing number the paper reports.
 
+## 2026-09-06 — "always on" was not actually always on
+
+Victor measured the 8 MHz on P0.00 and found it **intermittent**: on and off, not absent.
+Two causes were found in the tree, and only one of them is the real one.
+
+**The cause: the SYSCOUNTER sleeps with the CPU.** The fast clock output is a divider
+hanging off the GRTC SYSCOUNTER, so it produces edges only while the SYSCOUNTER runs.
+This build has `CONFIG_NRF_GRTC_TIMER_AUTO_KEEP_ALIVE=y`, whose own Kconfig help says it
+keeps the SYSCOUNTER awake *"when any core is in active state"* — which is to say it lets
+the SYSCOUNTER sleep as soon as the CPU does. The application heartbeats and then sleeps,
+so the clock ran in bursts that tracked CPU activity. Nothing in software looked wrong.
+
+Zephyr has the right symbol for this, `CONFIG_NRF_GRTC_ALWAYS_ON`, which makes the timer
+driver call `nrfx_grtc_active_request_set(true)`. It is **promptless**, nothing in this
+tree selects it, and it therefore cannot be set from `prj.conf`. So `clock_start()` issues
+the request itself, once, and never releases it.
+
+**The second suspect, kept but disabled.** The first hypothesis was the high-frequency
+clock domain stopping under the divider. That is now behind
+`CONFIG_VL53L9CX_HOLD_HFCLK`, **default n**, with `&clock` enabled in the application
+overlay so it is one line away if needed. It is off by default because it is expected to
+be redundant, and a redundant clock request inflates idle current — which is precisely the
+number the A/B below has to measure honestly.
+
+**Drive strength, separately.** The waveform was also described as not a clean square.
+Independent of the on/off question, the pin was on `NRF_DRIVE_S0S1` (~0.5 mA), and slewing
+1.8 V across ~15 pF in a twelfth of the 125 ns period needs `I = C·dV/dt ≈ 2.7 mA`. The
+application overlay now overrides the GRTC pinctrl to `NRF_DRIVE_H0H1`, with a **sleep
+state that also drives** — the board's `grtc_sleep` carries `low-power-enable`, which
+disconnects the pin, and that is a way to stop a clock without anything in software
+appearing to do so. *(Arithmetic for sizing, not a measurement.)*
+
+**What to check on the bench, in order:**
+
+1. Is the 8 MHz now continuous? The driver logs `AP_CLK: GRTC SYSCOUNTER held ACTIVE`.
+2. Is the edge clean? If not, the trace and the probe are the next suspects, not the SoC.
+3. Only then retest I²C — a clock that stops is enough on its own to explain the silence.
+
+If 1 still fails, set `CONFIG_VL53L9CX_HOLD_HFCLK=y` and repeat.
+
+**This changes what the A/B below measures.** The SYSCOUNTER now runs through idle, so the
+"AP_CLK enabled" row includes that cost. That is the honest number — it is what the design
+actually pays — but it means the measurement must be taken with this firmware, not with
+anything built before today.
+
 ## What this changes in the repo today
 
 - The driver's `TURN_OFF` no longer claims to gate AP_CLK. Corrected in

@@ -21,6 +21,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <nrfx_grtc.h>
 #include <string.h>
 
 #include "vl53l9cx_private.h"
@@ -88,6 +90,56 @@ static int clock_start(const struct device *dev)
 	int ret;
 
 	if (!cfg->clock_from_pwm) {
+		/*
+		 * Request SYSCOUNTER ACTIVE. This is the fix.
+		 *
+		 * The fast clock output is a divider hanging off the GRTC
+		 * SYSCOUNTER, so it produces edges only while the SYSCOUNTER is
+		 * running. Zephyr's default here is
+		 * CONFIG_NRF_GRTC_TIMER_AUTO_KEEP_ALIVE, whose own help text says
+		 * it keeps the SYSCOUNTER awake "when any core is in active
+		 * state" — which is to say it lets the SYSCOUNTER sleep as soon
+		 * as the CPU does.
+		 *
+		 * That is the on-and-off. Nothing in software looks wrong; the
+		 * clock simply follows the CPU's idle, and the sensor sees a
+		 * clock that keeps stopping.
+		 *
+		 * Zephyr has a symbol for this — CONFIG_NRF_GRTC_ALWAYS_ON,
+		 * which makes the timer driver issue the same request — but it
+		 * is promptless, nothing in this tree selects it, and it cannot
+		 * be set from prj.conf. So the driver issues the request itself.
+		 * Safe to call after the timer driver has initialised, which it
+		 * has: GRTC comes up at PRE_KERNEL_1 and this is POST_KERNEL.
+		 *
+		 * Never released, on purpose. The sensor needs a continuous
+		 * clock, so this must outlive every other user of it. What it
+		 * costs is the SYSCOUNTER running through idle, which belongs in
+		 * the same measurement as the always-on AP_CLK itself — see
+		 * docs/plan/ap-clk-always-on.md.
+		 */
+		nrfx_grtc_active_request_set(true);
+		LOG_INF("AP_CLK: GRTC SYSCOUNTER held ACTIVE (was %s) — without "
+			"this the clock output stops every time the CPU sleeps",
+			nrfx_grtc_active_request_check() ? "already set"
+							 : "not set");
+
+		if (IS_ENABLED(CONFIG_VL53L9CX_HOLD_HFCLK)) {
+			const struct device *hf = DEVICE_DT_GET(DT_NODELABEL(clock));
+
+			if (device_is_ready(hf)) {
+				int cret = clock_control_on(hf,
+					CLOCK_CONTROL_NRF_SUBSYS_HF);
+
+				LOG_INF("AP_CLK: high-frequency clock also held "
+					"on (%d)", cret);
+			} else {
+				LOG_ERR("AP_CLK: CONFIG_VL53L9CX_HOLD_HFCLK is "
+					"set but the clock-control device is "
+					"not ready");
+			}
+		}
+
 		/* Board-supplied clock: an oscillator, or a SoC clock output
 		 * configured elsewhere in devicetree (GRTC clkout-fast on
 		 * water_sense_board). Nothing for the driver to start — and,

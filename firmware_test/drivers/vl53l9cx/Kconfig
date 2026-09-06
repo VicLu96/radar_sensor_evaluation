@@ -73,6 +73,22 @@ config VL53L9CX_LOG_BOOT_TIME
 	  a measurement rather than a debug line. Leave this on — it is also
 	  available at runtime via vl53l9cx_last_boot_ms().
 
+config VL53L9CX_HOLD_HFCLK
+	bool "Also hold the high-frequency clock on for AP_CLK"
+	default n
+	help
+	  Fallback, not the primary fix. The thing that actually stops the GRTC
+	  fast clock output is the SYSCOUNTER going to sleep, and the driver
+	  requests SYSCOUNTER ACTIVE unconditionally to prevent that.
+
+	  If the 8 MHz is STILL intermittent with that request in place, turn
+	  this on: it additionally holds the high-frequency clock domain up, so
+	  the divider always has something to divide.
+
+	  Off by default because it is expected to be redundant, and a redundant
+	  clock request inflates idle current — which is a number this project
+	  has to measure honestly. See docs/plan/ap-clk-always-on.md.
+
 module = VL53L9CX
 module-str = VL53L9CX
 source "subsys/logging/Kconfig.template.log_config"

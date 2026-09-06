@@ -12,6 +12,7 @@
  */
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
 
 / {
 	aliases {
@@ -98,4 +99,71 @@
 		/* Bytes per I2C write during the 9,865-byte blob upload. */
 		blob-chunk-size = <1024>;
 	};
+};
+
+/*
+ * AP_CLK drive strength — overriding the board's pinctrl from the application.
+ *
+ * The 8 MHz on P0.00 measures as a poor square wave. The likely reason is drive
+ * strength: nRF pins default to NRF_DRIVE_S0S1 (standard both edges), and
+ * standard drive is roughly 0.5 mA.
+ *
+ * The arithmetic says that is not enough. To slew 1.8 V across even 15 pF of
+ * pad, trace and load in 10 ns — a twelfth of the 125 ns period, so still a
+ * visibly rounded edge — needs
+ *
+ *     I = C dV/dt = 15 pF x 1.8 V / 10 ns = 2.7 mA
+ *
+ * which is several times what standard drive delivers. NRF_DRIVE_H0H1 is the
+ * high-drive setting on both levels and is the right tool for a continuous
+ * clock output.
+ *
+ * This is defined here rather than in the board file so water_sense_board stays
+ * Victor's: the group below simply replaces the board's grtc_default at the
+ * &grtc node. Same pin, same function, more drive.
+ *
+ * If this does not fix the waveform, the next suspects are the trace itself and
+ * the measurement — see the note in docs/hardware/radar-shield-review.md.
+ */
+&pinctrl {
+	grtc_apclk_hidrive: grtc_apclk_hidrive {
+		group1 {
+			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
+			nordic,drive-mode = <NRF_DRIVE_H0H1>;
+		};
+	};
+
+	/*
+	 * The SLEEP state deliberately KEEPS DRIVING.
+	 *
+	 * The board's grtc_sleep group carries `low-power-enable`, which
+	 * disconnects the pin. For an ordinary peripheral that is right; for a
+	 * clock the sensor needs continuously it is a way to stop the clock
+	 * without anything in software appearing to do so. Both states here are
+	 * identical and both drive.
+	 */
+	grtc_apclk_hidrive_sleep: grtc_apclk_hidrive_sleep {
+		group1 {
+			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
+			nordic,drive-mode = <NRF_DRIVE_H0H1>;
+		};
+	};
+};
+
+&grtc {
+	pinctrl-0 = <&grtc_apclk_hidrive>;
+	pinctrl-1 = <&grtc_apclk_hidrive_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/*
+ * The clock-control device, which the SoC dtsi ships disabled.
+ *
+ * Needed so the driver can hold the high-frequency clock on. The GRTC clock
+ * output divides that clock, so when the HF domain stops — which it does every
+ * time the application sleeps — AP_CLK stops with it. That is the most likely
+ * explanation for an 8 MHz that measures as intermittent rather than absent.
+ */
+&clock {
+	status = "okay";
 };
