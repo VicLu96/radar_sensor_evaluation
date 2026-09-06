@@ -1063,3 +1063,38 @@ and retry; measure the rail voltage while enabled; and with power disabled measu
 resistance from the sensor rail to ground, where a few ohms means an assembly fault.
 Also: record the real figures when measured. The energy model needs the actual peak and
 average, not the 150 mW headline, and this is the moment they become measurable.
+
+## 2026-09-06 - Reviewed the radar_shield KiCad files: two findings
+What: Victor supplied the schematic and PCB. Reviewed by extracting pad-to-net from the
+PCB (the authoritative connectivity) and pin names from the schematic symbol, then
+comparing the two. Full write-up in docs/hardware/radar-shield-review.md.
+**Finding 1: SDA and SCL appear crossed at the sensor.** The symbol names ball A11 SCL
+and A12 SDA; the nets attached are /SDA and /SCL respectively. Every other signal
+matches, and the nets are consistent from connector J6 inward, so whatever the host calls
+SDA arrives at the ball the symbol calls SCL.
+This fits every symptom exactly. With clock and data exchanged the device never sees a
+valid I2C clock and cannot acknowledge at any address - which is what the bench shows:
+healthy bus, clean NAKs, correct pin levels, silence at both 0x29 and 0x52. It also
+explains why the LSM6DSV worked on the same bus, since the crossing is at the sensor's
+own balls rather than on the bus itself.
+What it does NOT settle is whether the symbol is right. Either the symbol is correct and
+the schematic wires SDA to the SCL ball, or the symbol's names are swapped and the nets
+were labelled by true function - two errors cancelling, hardware fine. Only the datasheet
+ball map distinguishes them and it is not in this repository. But swapping TWIM_SCL and
+TWIM_SDA in the board pinctrl settles it in one boot with no hardware change.
+**Finding 2: the 100 mA limit is expected, not a fault.** No short exists. Every
+two-terminal part was checked: no component has both pads on one net, every capacitor
+sits supply-to-GND, each inductor runs switch-node to output. What /Power_Enable does is
+start FOUR regulators simultaneously - an SIP4282 load switch into 20.1 uF of
++VBat_switched, plus three MIC23150 bucks into 4.8 uF each. 34.5 uF on one enable.
+The load switch alone accounts for it: charging 20.1 uF at 3.7 V draws about 740 mA over
+a 100 us ramp, or about 74 mA over 1 ms, before the converters charge anything. (Estimate
+from schematic capacitance, for sizing, not measured.) A 100 mA bench limit is below this
+design's normal switch-on transient.
+The two findings interact and must be cleared in order: a supply in fold-back holds the
+rails below the operating minimum, so the part never boots and produces the same silence
+as finding 1. Raise the limit first, then retest I2C. The other order proves nothing.
+Also worth recording for the paper: the energy model currently carries ST's 150 mW
+headline and nothing measured. Inrush, per-rail steady current and the VCSEL peak all
+become measurable on this board once the limit is raised, and all three matter more than
+the headline does.
