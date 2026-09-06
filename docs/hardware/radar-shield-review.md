@@ -86,6 +86,39 @@ raised, and all three matter more than the headline.
 
 ---
 
+---
+
+## 3. There is no level shifting anywhere on this shield
+
+Added 2026-09-06, after the bench showed the rail voltage rising as the current limit is
+raised.
+
+`/SDA`, `/SCL`, `/XSHUT`, `/AP_CLK`, `/Interrupt` and `/SYNC_IN` run **straight from the
+connectors (J2, J6) to the sensor balls**. No level shifters, no series resistors, no
+protection of any kind. And `V_Host` — which J3 pin 2 brings onto the board, and which
+would be the obvious reference for a shifter — **connects to nothing**. It is a dead-end
+net.
+
+That matters because of what the sensor's IO domain is. IOVDD is **1.8 V**, and every
+digital pin sits in it: SDA, SCL, XSHUT, INTR, SYNC_IN, AP_CLK. The absolute maximum on
+those pins is **1.98 V**.
+
+**So if the host drives its GPIOs above 1.8 V, every one of those six lines is
+overdriven.** The pin protection diodes conduct, current flows from the signal into
+IOVDD, and the part can be damaged or held in a latched state. The symptoms of that are
+exactly what the bench shows: excess supply current, a rail that rises as the limit is
+raised, and a device that never answers.
+
+**The question this raises: what voltage does the nRF54L15 run its GPIOs at?** The
+nRF54L15 supports 1.8 V to 3.6 V VDD, and its GPIO levels follow VDD. If the host board
+runs at 3.0 or 3.3 V, this shield connects it directly to a part rated 1.98 V absolute
+maximum.
+
+**How to test it in five minutes, with no rework:** power the shield through J3 only,
+with J2 and J6 disconnected. If the supply current is then normal, the fault arrives
+through the signal lines and the IO domain is the problem. If the current is still
+excessive with every signal disconnected, the fault is on the shield itself.
+
 ## Smaller observations
 
 - `RSVD1` (E3) and `RSVD2` (E12) are left unconnected. Correct if the datasheet says so;

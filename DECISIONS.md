@@ -1098,3 +1098,29 @@ Also worth recording for the paper: the energy model currently carries ST's 150 
 headline and nothing measured. Inrush, per-rail steady current and the VCSEL peak all
 become measurable on this board once the limit is raised, and all three matter more than
 the headline does.
+
+## 2026-09-06 - No level shifting on the shield, and the rail tracks the current limit
+What: two things landed together. Victor reports that raising the supply current limit
+lets the rail rise closer to its set voltage. And the netlist shows the shield has **no
+level shifting anywhere**: /SDA, /SCL, /XSHUT, /AP_CLK, /Interrupt and /SYNC_IN run
+straight from connectors J2 and J6 to the sensor balls, with no shifters, no series
+resistors and no protection. V_Host, brought in on J3 pin 2 and the obvious reference for
+a shifter, connects to nothing at all.
+What the bench behaviour means: a rail that rises as the limit is raised is NOT a hard
+short - a hard short holds the voltage near zero whatever the limit. It is a load drawing
+whatever it is allowed, so V is roughly I_limit x R_effective. The distinguishing
+question is whether the current SETTLES once the rail is up. If it drops to an operating
+level, the earlier inrush explanation stands. If it stays pinned at the limit, this is a
+sustained overload and something is conducting that should not be.
+The leading candidate for that, given the netlist: **IO overvoltage**. The sensor's IOVDD
+is 1.8 V and every digital pin lives in that domain with an absolute maximum of 1.98 V.
+If the host drives its GPIOs above 1.8 V - and the nRF54L15's GPIO levels follow its VDD,
+which may be 3.0 or 3.3 V - then all six signals are overdriven, the pin protection
+diodes conduct, current flows from the signals into IOVDD, and the part can be damaged or
+latched. That produces exactly what is being seen: excess current, a rail that tracks the
+limit, and a device that never answers.
+This was flagged once on 2026-09-04 as a check worth making and not pursued. It should
+have been pursued.
+Test, and it needs no rework: power the shield through J3 alone with J2 and J6
+disconnected. Normal current means the fault arrives through the signal lines and the IO
+domain is the problem. Still-excessive current means the fault is on the shield itself.
