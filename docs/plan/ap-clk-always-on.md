@@ -96,6 +96,13 @@ Two caveats to check if we go that way, neither of them blocking:
 
 ## 2026-09-06 — "always on" was not actually always on
 
+> **Why this was never cosmetic — UM3683 §2.5.1, read 2026-09-06.** An active external
+> clock is one of three necessary conditions for the device to leave `POWER_OFF`, and ST
+> states that if any condition *"becomes invalid, the sensor returns to the off state"*. So
+> an intermittent AP_CLK does not produce degraded ranging or a corrupt frame. It resets
+> the part, continuously. See `docs/research/um3683-power-on-and-boot.md`.
+
+
 Victor measured the 8 MHz on P0.00 and found it **intermittent**: on and off, not absent.
 Two causes were found in the tree, and only one of them is the real one.
 

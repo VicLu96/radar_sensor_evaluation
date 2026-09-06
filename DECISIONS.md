@@ -1190,3 +1190,45 @@ on the bench.
 Still VERIFY: the shield's supply pins and current (UM3656 is the software manual and does
 not state them), whether the shield carries its own I2C pull-ups, and the nRF54L15's GPIO
 voltage - which is now needed to set J1 correctly, not just to assess overvoltage risk.
+
+## 2026-09-06 - UM3683 added; it explains the whole bring-up failure in one sentence
+What: Victor supplied UM3683 Rev 3, the VL53L9CX programming guide, now tracked at
+docs/um3683-programming-guide-stmicroelectronics.pdf. Notes in
+docs/research/um3683-power-on-and-boot.md.
+Section 2.5.1 gives three necessary conditions to leave POWER_OFF: all three supplies
+(AVDD, DVDD, IOVDD) up, XSHUT high at IOVDD level (Victor flagged this), and the external
+clock active. Any order. Then the sentence that matters: "If at any point, one of the three
+conditions becomes invalid, the sensor returns to the off state."
+So an intermittent AP_CLK does not degrade communication - it RESETS THE PART. The clock
+was running in bursts that tracked CPU activity, so the sensor was being returned to
+POWER_OFF continuously, and a device in POWER_OFF cannot acknowledge at any address. The
+clean NAKs, the correct pin levels and the silence at both 0x29 and 0x52 are all exactly
+what that failure looks like. It also means testing I2C before the clock was continuous
+could never have proven anything - condition 3 is a precondition for the device being on
+the bus at all, not for good data.
+Two driver gaps this exposed, both fixed:
+- DEVICE_ID at register 0x0000 must read 0x53334C39 ("S3L9"). Section 2.5.2 lists this as
+  a check the driver MUST perform. Ours read it and logged it without ever comparing it,
+  which passes as long as anything acknowledges - a wrong part at the address, or a
+  half-powered device returning zeros, both counted as success. Now validated at the point
+  the clean path and the bus-recovery path converge, with all-zeros and all-ones called out
+  separately as the bus idle level rather than a device.
+- SYSTEM_FSM at 0x008C (Table 8) reports the state machine directly: NONE, READY_TO_BOOT,
+  STANDBY, STREAMING. The driver now logs it after a successful probe. Expect
+  READY_TO_BOOT. Reading NONE from a part that just answered is the exact signature of a
+  supply or clock that is present but not holding - the 2.5.1 failure made observable
+  instead of inferred.
+Also confirmed, from the other direction: the default I2C address is 0x29 stated as 7-bit
+(2.8.1), which closes the 0x29-vs-0x52 question the README argued on reasoning alone; and
+SYNC_IN is active low in Follower mode only (2.7.2), so SYNC_MANUAL keeps it from starting
+an exposure.
+One thing the driver does not model: DVDD. Section 2.5.1 names three supplies, the driver
+carries vdda and vddio, and the custom board's +1V2 rail is the third. Nothing in firmware
+configures it, but it is a power-on condition and belongs on the bench checklist.
+Note on the boot defaults (2.5.2): AVDD 2.8 V and IOVDD 1.8 V are the device defaults and
+are only written when they differ. The X-NUCLEO-53L9A1 sits exactly on them. The custom
+board at 3.3 V needs VDDA_CFG written - which is why the 2.8 V placeholder carried until
+2026-09-04 would have failed quietly rather than loudly: it is a configuration write, not
+a check.
+Builds both configurations: custom board FLASH 64,612 B, X-NUCLEO FLASH 64,316 B, RAM
+44,208 B.

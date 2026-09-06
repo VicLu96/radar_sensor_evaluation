@@ -27,6 +27,20 @@
 
 #include "vl53l9cx_private.h"
 #include "vl53l9.h"
+#include "vl53l9_reg.h"
+#include "vl53l9_platform.h"
+
+/*
+ * DEVICE_ID, read from register 0x0000. "S3L9" in ASCII.
+ *
+ * UM3683 Rev 3 section 2.5.2 makes this the mandated firmware start-up check:
+ * read the word and verify it. The driver used to read it and only look at the
+ * return code, which passes as long as something acknowledges - so a bus that
+ * ACKs but returns rubbish, a wrong part at the same address, or a half-powered
+ * device reading back zeros all looked like success.
+ */
+#define VL53L9CX_DEVICE_ID 0x53334C39U
+
 
 LOG_MODULE_REGISTER(vl53l9cx, CONFIG_VL53L9CX_LOG_LEVEL);
 
@@ -630,8 +644,69 @@ static int device_boot(const struct device *dev)
 		}
 
 probed:
-		LOG_INF("sensor answered on attempt %u, model id 0x%08x — bus, "
-			"power, clock and address are all good", tries, probe);
+		/*
+		 * Something answered. Now check it is the right something.
+		 *
+		 * UM3683 Rev 3 section 2.5.2 makes this the mandated firmware
+		 * start-up check: read DEVICE_ID and verify it. The driver used
+		 * to log this value without judging it, which passes as long as
+		 * anything acknowledges — so a wrong part at this address, or a
+		 * half-powered device reading back zeros, both looked like
+		 * success and failed later somewhere less informative.
+		 *
+		 * This sits after the `probed` label on purpose: the bus
+		 * recovery path jumps here, and a read rescued by recovery
+		 * deserves the same scrutiny as a clean one.
+		 */
+		if (probe != VL53L9CX_DEVICE_ID) {
+			LOG_ERR("device id mismatch: read 0x%08x, expected "
+				"0x%08x (\"S3L9\")", probe, VL53L9CX_DEVICE_ID);
+
+			if (probe == 0U || probe == 0xFFFFFFFFU) {
+				LOG_ERR("  0x%08x is the bus idle level, not a "
+					"device answering. Check the three "
+					"supplies — UM3683 2.5.1 requires AVDD, "
+					"DVDD and IOVDD all up.", probe);
+			} else {
+				LOG_ERR("  a device answered here but is not a "
+					"VL53L9CX. Suspect the address, or a "
+					"clock that dropped mid-boot: UM3683 "
+					"2.5.1 says losing AP_CLK returns the "
+					"part to OFF rather than degrading it.");
+			}
+			return -ENODEV;
+		}
+
+		LOG_INF("sensor answered on attempt %u, device id 0x%08x "
+			"(\"S3L9\") — bus, power, clock and address are all "
+			"good", tries, probe);
+
+		/*
+		 * Where the device thinks it is. UM3683 Table 8.
+		 *
+		 * Expect READY_TO_BOOT here: the three power-on conditions are
+		 * met and the firmware patch has not been uploaded yet. Reading
+		 * NONE instead means the part has not left POWER_OFF, which
+		 * given that it just answered is the signature of a supply or
+		 * clock that is present but not holding.
+		 */
+		{
+			uint8_t fsm = 0xFF;
+
+			if (vl53l9_read8((void *)dev, VL53L9_REGADDR_SYSTEM_FSM,
+					 &fsm) == VL53L9_ERROR_NONE) {
+				static const char *const names[] = {
+					"NONE — has not left POWER_OFF",
+					"READY_TO_BOOT — expected here",
+					"STANDBY — already booted",
+					"STREAMING",
+				};
+
+				LOG_INF("state machine: 0x%02x (%s)", fsm,
+					fsm < ARRAY_SIZE(names) ? names[fsm]
+								: "unknown");
+			}
+		}
 	}
 
 	ret = vl53l9_init((void *)dev);
@@ -644,7 +719,16 @@ probed:
 
 	ret = vl53l9_get_device_id((void *)dev, &id);
 	if (ret == VL53L9_ERROR_NONE) {
-		LOG_INF("device id 0x%08x", id);
+		if (id == VL53L9CX_DEVICE_ID) {
+			LOG_INF("device id 0x%08x (\"S3L9\") — correct", id);
+		} else {
+			LOG_ERR("device id 0x%08x after boot, expected 0x%08x. "
+				"The part answered the probe and then stopped "
+				"being itself, which points at a supply or "
+				"clock that is not holding.",
+				id, VL53L9CX_DEVICE_ID);
+			return -ENODEV;
+		}
 	}
 
 	return 0;

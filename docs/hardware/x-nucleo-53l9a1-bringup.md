@@ -67,6 +67,28 @@ the log looks healthy — which is indistinguishable from the failure already be
 If it does not answer, this is suspect number one, and the driver's existing
 `try_inverted_polarity()` fallback will say so in the log rather than leaving you guessing.
 
+## Before you blame the wiring: the three power-on conditions
+
+UM3683 Rev 3 §2.5.1 — the device leaves `POWER_OFF` only while **all three** hold: the
+three supplies (AVDD, DVDD, IOVDD) are up, **XSHUT is high** at IOVDD level, and **the
+external clock is active**. ST adds that if any one *"becomes invalid, the sensor returns
+to the off state"*.
+
+That is why a dropped clock looks identical to a dead sensor, and why SW1 on INT is the
+point of this whole exercise. Full notes in
+`docs/research/um3683-power-on-and-boot.md`.
+
+The firmware now tells you which of these is unmet rather than leaving you to guess:
+
+```
+device id 0x53334c39 ("S3L9") — correct
+state machine: 0x01 (READY_TO_BOOT — expected here)
+```
+
+Both lines mean the three conditions are genuinely met and the only remaining risk is the
+firmware blob upload. `0x00 (NONE)` from a part that just answered means a supply or the
+clock is present but not holding.
+
 ## Building
 
 ```bash
