@@ -1030,3 +1030,36 @@ AP_CLK is the leading candidate on the evidence available: the community driver 
 explicit that the part will not acknowledge its address at all without it, and the clock
 has never been confirmed on a scope. The app already prints the GRTC clkout enable bit at
 startup, which is the software half of that question.
+
+## 2026-09-06 - The supply hits its 100 mA limit on power enable. Likely the root cause
+What: Victor reports the bench supply going into a 100 mA current limit the moment
+power-gpios (P0.02) is asserted.
+**This plausibly explains everything observed so far**, and it explains it better than
+anything left on the suspect list. A supply in fold-back holds the rail below the
+sensor's operating minimum, so the part never boots - which produces exactly the symptom
+set we have: a healthy I2C bus, clean NAKs at both candidate addresses, correct pin
+levels, and nothing wrong in firmware. Every software check has passed because software
+was never the problem.
+What is known about the current, and what is not. **No startup or inrush figure is
+available in anything this repository holds** - X-CUBE-53L9A1 ships driver source, not the
+device datasheet, and neither community driver states one. What can be derived: the repo
+records 150 mW typical system power (source: ST, 2026-08-31). If most of that sits on the
+3.3 V analogue rail, that is **about 45 mA average while ranging**. So a 100 mA limit is
+only around twice the steady-state average before any transient is considered - and this
+is a VCSEL part, where the laser fires in short bursts and peak current is far above
+average. A 100 mA limit is plausibly below the peak the part draws in normal operation,
+never mind at switch-on into decoupling capacitance.
+Worth noting the firmware cannot see this. The pad readback added yesterday reads P0.02,
+which is the ENABLE GPIO and will read high correctly; it is the switched rail downstream
+that collapses. No software check can distinguish a rail that is enabled from a rail that
+is enabled and folded back.
+Distinguishing inrush from a fault, since the response differs:
+- **Inrush** - brief spike into decoupling capacitance, current then falls to the
+  operating level and the rail recovers. Remedy is a higher limit, or a soft-start.
+- **Overload or short** - current sits at the limit and the rail stays down. Remedy is
+  finding the short.
+Next actions, in order, and none of them are firmware: raise the limit to 500 mA or more
+and retry; measure the rail voltage while enabled; and with power disabled measure
+resistance from the sensor rail to ground, where a few ohms means an assembly fault.
+Also: record the real figures when measured. The energy model needs the actual peak and
+average, not the 150 mW headline, and this is the moment they become measurable.
