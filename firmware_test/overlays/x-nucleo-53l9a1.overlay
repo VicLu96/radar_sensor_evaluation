@@ -1,0 +1,108 @@
+/*
+ * ST X-NUCLEO-53L9A1 expansion board, driven from the nRF54L15.
+ *
+ * Applied ON TOP OF boards/water_sense_board_nrf54l15_cpuapp.overlay, which
+ * Zephyr picks up automatically by name. Everything here overrides that file,
+ * so build with:
+ *
+ *   west build -b water_sense_board/nrf54l15/cpuapp firmware_test \
+ *       -- -DBOARD_ROOT=<abs path to firmware_test> \
+ *          -DEXTRA_DTC_OVERLAY_FILE=overlays/x-nucleo-53l9a1.overlay
+ *
+ * Why this exists: the custom shield never answered on I2C, and three of the
+ * candidate causes — no AP_CLK, no level shifting, a supply that folds back at
+ * 100 mA — are all things ST's board simply does not have. Swapping to it does
+ * not diagnose the custom board, but it does prove the driver against known-good
+ * hardware, which is the missing reference this project has never had.
+ *
+ * Every value below comes from UM3656 Rev 1, Table 1 and section 3.3.2.2,
+ * read 2026-09-06. Nothing here is inferred.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+&tof {
+	/*
+	 * VDDA is 2.8 V on this board, not the 3.3 V of the custom shield.
+	 *
+	 * UM3656 section 3.3.2.2 is explicit: ".vdda must be set to 2V8". This
+	 * is written into the device and configures the analogue front end, so
+	 * carrying 3.3 V over from the other board would not fail loudly — it
+	 * would return plausible rubbish, which is worse.
+	 */
+	vdda-microvolt = <2800000>;
+
+	/*
+	 * VDDIO follows the SENSOR IOVDD jumper J6, which UM3656 says to set to
+	 * 1V8 (top). Same value as the custom board, but for a different reason
+	 * — here it is a jumper anyone can move, so check it before trusting a
+	 * reading.
+	 */
+	vddio-microvolt = <1800000>;
+
+	/*
+	 * 12 MHz, from the oscillator ON THE SHIELD. This is the whole point.
+	 *
+	 * SW1 selects the AP_CLK source: INT (bottom) takes the onboard 12 MHz
+	 * oscillator, EXT takes D11 from the host. Set it to INT. The SoC then
+	 * generates no clock at all, the GRTC output is deleted below, and the
+	 * intermittent-8-MHz problem stops being part of the picture.
+	 *
+	 * 12 MHz is also what every ST reference design uses, so this removes
+	 * the frequency as a variable at the same time as the stability.
+	 */
+	ext-clock-frequency = <12000000>;
+
+	/*
+	 * XSHUT IS ACTIVE LOW ON THIS BOARD. This is the one that will bite.
+	 *
+	 * UM3656 Table 1 lists D1 as "XSHUT — Shutdown pin — Reversed polarity".
+	 * The custom shield is active high and the overlay it inherits from says
+	 * so. Getting this backwards holds the sensor in reset for the entire
+	 * session while every line of the log looks perfectly healthy, which is
+	 * indistinguishable from the failure already being chased.
+	 */
+	xshut-gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
+
+	/*
+	 * INTR on D0, falling edge — UM3656 Table 1 says "Falling edge"
+	 * outright. That independently confirms the active-low the driver
+	 * already assumed from ST's hw_config having no polarity field.
+	 */
+	int-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+
+	/*
+	 * No power-enable pin exists on this board: it is powered from the
+	 * Arduino header whenever the host is.
+	 *
+	 * The cost is real and worth stating rather than discovering. Without
+	 * it, PM_DEVICE_ACTION_TURN_OFF has nothing to drive, so the sensor
+	 * cannot be powered down between frames and the multi-month battery
+	 * claim has no mechanism behind it here. This board is for proving the
+	 * driver and measuring active-mode energy. The duty-cycling work needs
+	 * hardware that can actually cut the rail — the custom board, once it
+	 * talks.
+	 */
+	/delete-property/ power-gpios;
+};
+
+/*
+ * Stop generating AP_CLK from the SoC.
+ *
+ * With SW1 on INT the shield clocks itself, so a GRTC fast clock output on
+ * P0.00 would drive a pin that goes nowhere — and, worse, it would keep the
+ * SYSCOUNTER awake through idle for no reason. The driver keys off this
+ * property (VL53L9CX_APCLK_FROM_GRTC), so deleting it also compiles out the
+ * keep-alive request.
+ *
+ * A useful side effect: idle current measured with this overlay is the
+ * no-AP_CLK arm of the A/B in docs/plan/ap-clk-always-on.md, which has been
+ * waiting for a measurement since 2026-09-04.
+ *
+ * GRTC itself stays enabled — it is the system timer. Only the output goes.
+ */
+&grtc {
+	/delete-property/ clkout-fast-frequency-hz;
+};

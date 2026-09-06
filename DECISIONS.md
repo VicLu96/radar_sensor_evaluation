@@ -1155,3 +1155,38 @@ re-taken with this firmware. The SYSCOUNTER now runs through idle, so the enable
 carries that cost. That is the honest figure - it is what the design actually pays - but
 any number measured before 2026-09-06 no longer describes this build.
 Builds: FLASH 63,616 B, RAM 41,136 B.
+
+## 2026-09-06 - Bring up on the X-NUCLEO-53L9A1, to get a known-good reference at last
+What: the custom shield still never acknowledges. SDA/SCL crossing is now ruled out - the
+LSM6DSV works on the same bus on the same board, which finding 1 of the KiCad review could
+not have known. So the remaining causes are AP_CLK, level shifting and the supply, and
+ST's X-NUCLEO-53L9A1 removes all three: onboard 12 MHz oscillator (SW1 = INT), level
+shifters referenced to a jumper-selected host voltage (J1), and its own regulators.
+Prepared firmware_test/overlays/x-nucleo-53l9a1.overlay, applied over the existing board
+overlay via EXTRA_DTC_OVERLAY_FILE. Builds 2026-09-06: FLASH 63,408 B, RAM 44,208 B, with
+every override confirmed in the generated devicetree.
+Facts, all from UM3656 Rev 1 (vendor/x-cube-53l9a1/Documentation), Table 1 and 3.3.2.2:
+- D15 SCL, D14 SDA, D0 INTR (falling edge), D1 XSHUT (REVERSED POLARITY), D11 CLK_IN
+  (only when SW1 = EXT), A3 SYNC_IN (follower mode only).
+- .vdda must be 2V8. The custom board is 3V3. Carrying that over would not fail loudly -
+  it configures the analogue front end, so it would return plausible rubbish.
+- SW1 INT gives the onboard 12 MHz; EXT takes 12.5 MHz from the host and ST's own
+  firmware does not support it yet.
+- J6 SENSOR IOVDD to 1V8. J1 EXT IOVDD must match host VDD.
+Three things this changes that are worth naming:
+- XSHUT polarity INVERTS relative to the custom board. Getting it backwards holds the part
+  in reset all session while every log line looks healthy - indistinguishable from the
+  failure already being chased.
+- power-gpios is DELETED because no such pin exists. PM_DEVICE_ACTION_TURN_OFF then has
+  nothing to drive, so this board cannot carry the duty-cycling work or the multi-month
+  battery claim. It proves the driver and measures active-mode energy. Nothing more.
+- The GRTC clkout is deleted, and the driver's SYSCOUNTER keep-alive now compiles out with
+  it via VL53L9CX_APCLK_FROM_GRTC. That request only ever made sense when GRTC generated
+  AP_CLK; on a self-clocking sensor board it is pure idle current, which is the one number
+  this project cannot afford to inflate by accident.
+Free consequence: idle current under this overlay IS the "AP_CLK removed" arm of the A/B
+in docs/plan/ap-clk-always-on.md, outstanding since 2026-09-04. Take it while the board is
+on the bench.
+Still VERIFY: the shield's supply pins and current (UM3656 is the software manual and does
+not state them), whether the shield carries its own I2C pull-ups, and the nRF54L15's GPIO
+voltage - which is now needed to set J1 correctly, not just to assess overvoltage risk.

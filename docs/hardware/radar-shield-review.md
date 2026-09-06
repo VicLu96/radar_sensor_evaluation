@@ -9,7 +9,20 @@ extracted from the schematic symbol, and the two compared.
 
 ---
 
-## 1. SDA and SCL look crossed at the sensor — and this would explain the NAK
+## 1. SDA and SCL look crossed at the sensor — ~~and this would explain the NAK~~
+
+> **RULED OUT 2026-09-06 (Victor).** The LSM6DSV IMU works over I²C on the same bus on the
+> same board. I had argued the crossing would be invisible to the IMU because it sits at
+> the sensor's own balls rather than on the bus — but a working device on that bus proves
+> the host's SDA and SCL are on the right pins, and the one-line pinctrl swap proposed
+> below would therefore only break what already works. **Do not run that test.**
+>
+> The swap at the sensor's balls, if it exists at all, is then between the symbol and the
+> real ball map — two errors cancelling, which is reading 2 below. The section is kept
+> because the pad-to-net extraction is still the record of what the board does.
+>
+> Attention moves to the X-NUCLEO-53L9A1 — see `x-nucleo-53l9a1-bringup.md`.
+
 
 The symbol's pin names and the nets attached to them disagree on exactly two balls:
 
