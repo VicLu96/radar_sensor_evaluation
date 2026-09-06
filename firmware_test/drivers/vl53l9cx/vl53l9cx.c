@@ -118,11 +118,20 @@ static int clock_start(const struct device *dev)
 		 * the same measurement as the always-on AP_CLK itself — see
 		 * docs/plan/ap-clk-always-on.md.
 		 */
+		bool was_active = nrfx_grtc_active_request_check();
+
 		nrfx_grtc_active_request_set(true);
-		LOG_INF("AP_CLK: GRTC SYSCOUNTER held ACTIVE (was %s) — without "
-			"this the clock output stops every time the CPU sleeps",
-			nrfx_grtc_active_request_check() ? "already set"
-							 : "not set");
+
+		/* Read back rather than trusting the write: this is the whole
+		 * fix, and a request that silently did not take would look
+		 * exactly like the intermittent clock it is meant to cure.
+		 */
+		LOG_INF("AP_CLK: GRTC SYSCOUNTER ACTIVE %s -> %s — without this "
+			"the clock output stops every time the CPU sleeps",
+			was_active ? "set" : "clear",
+			nrfx_grtc_active_request_check() ? "set" : "CLEAR (the "
+				"request did not take — expect the 8 MHz to "
+				"keep stopping)");
 
 		if (IS_ENABLED(CONFIG_VL53L9CX_HOLD_HFCLK)) {
 			const struct device *hf = DEVICE_DT_GET(DT_NODELABEL(clock));
