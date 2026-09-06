@@ -6,6 +6,12 @@ cmake_minimum_required(VERSION 3.20.0)
 # resolved.
 list(APPEND EXTRA_ZEPHYR_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/drivers/vl53l9cx)
 
+# water_sense_board lives in this project, so point Zephyr at it from here
+# rather than expecting -DBOARD_ROOT on the command line. That makes the build
+# work unchanged from the nRF Connect VS Code extension, where extra CMake
+# arguments are an easy thing to set once and then forget you set.
+list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(firmware_test)

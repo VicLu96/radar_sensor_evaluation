@@ -1,0 +1,17 @@
+# Build for ST's X-NUCLEO-53L9A1 expansion board instead of the custom shield.
+#
+# Selected as a SNIPPET so it is a dropdown in the nRF Connect VS Code
+# extension rather than a command-line argument:
+#
+#   nRF Connect side bar -> your build configuration -> Optional snippets
+#   -> tick "x-nucleo" -> Build Configuration
+#
+# With it unticked you get the custom water_sense_board shield, unchanged.
+# Nothing else differs between the two builds.
+#
+# What it changes and why is documented in
+# docs/hardware/x-nucleo-53l9a1-bringup.md. Set SW1 to INT, J6 to 1V8, and J1
+# to the host IO voltage BEFORE plugging anything in.
+name: x-nucleo
+append:
+  EXTRA_DTC_OVERLAY_FILE: x-nucleo.overlay

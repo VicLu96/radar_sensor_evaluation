@@ -22,5 +22,8 @@ vendor/
 .DS_Store
 Thumbs.db
 .vscode/
+# ...except the nRF Connect board/application roots, which have to be tracked or
+# the build does not work on a fresh clone.
+!.vscode/settings.json
 .idea/
 .claude/settings.local.json

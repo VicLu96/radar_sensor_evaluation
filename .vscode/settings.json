@@ -1,0 +1,13 @@
+{
+  "//": "nRF Connect for VS Code. Checked in so the build works on a fresh clone with no per-machine setup.",
+
+  "//boardRoots": "water_sense_board lives in firmware_test/boards/, not at the repo root, so the extension's automatic detection (which only looks for a boards/ directory directly inside a workspace folder) does not find it when the REPO is opened. This says where it is. Opening firmware_test/ directly as the folder also works without this.",
+  "nrf-connect.boardRoots": [
+    "${workspaceFolder}/firmware_test"
+  ],
+
+  "//applications": "Makes firmware_test show up under Applications in the nRF Connect side bar when the repo root is the open folder.",
+  "nrf-connect.applications": [
+    "${workspaceFolder}/firmware_test"
+  ]
+}

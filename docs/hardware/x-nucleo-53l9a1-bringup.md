@@ -89,19 +89,36 @@ Both lines mean the three conditions are genuinely met and the only remaining ri
 firmware blob upload. `0x00 (NONE)` from a part that just answered means a supply or the
 clock is present but not holding.
 
-## Building
+## Building — one tick-box
+
+This is a **Zephyr snippet**, so switching boards is a checkbox in the nRF Connect
+extension, not a command-line argument.
+
+**In VS Code:**
+
+1. nRF Connect side bar → your build configuration → **Add Build Configuration**
+   (or the pencil icon to edit an existing one).
+2. Under **Optional snippets**, tick **`x-nucleo`**.
+3. **Build Configuration**.
+
+**To go back to the custom shield: untick it.** Nothing else changes between the two —
+same board, same `prj.conf`, same everything. Keep one build configuration of each and
+switch by selecting it in the side bar.
+
+From a terminal the equivalent is `-S x-nucleo`:
 
 ```bash
-west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always -- -DBOARD_ROOT=$PWD/firmware_test -DEXTRA_DTC_OVERLAY_FILE=$PWD/firmware_test/overlays/x-nucleo-53l9a1.overlay
+west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always -S x-nucleo
 ```
 
-Verified to build 2026-09-06: FLASH 64,316 B, RAM 44,208 B. Confirmed in the generated
-devicetree: `vdda` 0x2AB980 (2.8 V), `vddio` 0x1B7740 (1.8 V), `ext-clock` 0xB71B00
-(12 MHz), `xshut-gpios` flag 0x1 (active low), `power-gpios` absent, GRTC
-`clkout-fast-frequency-hz` deleted.
+No `-DBOARD_ROOT` and no `-DEXTRA_DTC_OVERLAY_FILE` are needed any more: `.vscode/settings.json`
+carries `nrf-connect.boardRoots` for the extension, and `CMakeLists.txt` appends the board
+root for non-sysbuild command-line builds.
 
-Without the `EXTRA_DTC_OVERLAY_FILE` argument you get the custom-board build unchanged.
-The two configurations differ only by that one flag.
+Verified 2026-09-06, both under sysbuild with no extra arguments: custom board FLASH
+65,720 B, X-NUCLEO FLASH 65,440 B, RAM 45,232 B. The snippet was confirmed to take effect
+in the generated devicetree — `vdda-microvolt` reads 0x325AA0 (3.3 V) without it and
+0x2AB980 (2.8 V) with it.
 
 ## What the overlay changes, and what each costs
 
