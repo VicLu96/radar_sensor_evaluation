@@ -95,7 +95,7 @@ clock is present but not holding.
 west build -b water_sense_board/nrf54l15/cpuapp firmware_test -p always -- -DBOARD_ROOT=$PWD/firmware_test -DEXTRA_DTC_OVERLAY_FILE=$PWD/firmware_test/overlays/x-nucleo-53l9a1.overlay
 ```
 
-Verified to build 2026-09-06: FLASH 63,408 B, RAM 44,208 B. Confirmed in the generated
+Verified to build 2026-09-06: FLASH 64,316 B, RAM 44,208 B. Confirmed in the generated
 devicetree: `vdda` 0x2AB980 (2.8 V), `vddio` 0x1B7740 (1.8 V), `ext-clock` 0xB71B00
 (12 MHz), `xshut-gpios` flag 0x1 (active low), `power-gpios` absent, GRTC
 `clkout-fast-frequency-hz` deleted.
