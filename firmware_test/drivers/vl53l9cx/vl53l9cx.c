@@ -63,7 +63,7 @@ struct res_geom {
 };
 
 static const struct res_geom geom[VL53L9CX_RES_COUNT] = {
-	[VL53L9CX_RES_4X4]   = { 24,  4,  4,  4, 0, true  },
+	[VL53L9CX_RES_4X4]   = { 24,  4,  4,  4, 0, false },
 	[VL53L9CX_RES_8X6]   = { 12,  8,  6,  8, 1, false },
 	[VL53L9CX_RES_12X10] = {  8, 12, 10, 10, 0, true  },
 	[VL53L9CX_RES_18X14] = {  6, 18, 14, 14, 0, true  },
@@ -461,15 +461,19 @@ static bool try_inverted_polarity(const struct device *dev)
 		 * from software, and worth catching before anyone reaches for
 		 * a meter.
 		 */
+		/* Raw LOW is what we just drove, so a pad reading 0 is the
+		 * expected result here — the opposite of power_up(), whose
+		 * wording this used to repeat verbatim and therefore report a
+		 * correct reading as a short.
+		 */
 		{
 			int lvl = gpio_pin_get_dt(&cfg->power);
 
-			LOG_INF("power-gpios driven high, pad reads %d%s", lvl,
-				lvl == 1 ? "" :
-				lvl == 0 ? "  <-- HELD LOW. The pin is not "
-					   "reaching the level we are driving: "
-					   "a short, or a load the switch cannot"
-					   " drive." :
+			LOG_INF("power-gpios driven raw LOW (inverted test), "
+				"pad reads %d%s", lvl,
+				lvl == 0 ? "  (as driven)" :
+				lvl == 1 ? "  <-- NOT following: the pin is "
+					   "held high by something else." :
 					   "  <-- read failed");
 		}
 	}
@@ -501,6 +505,54 @@ static bool try_inverted_polarity(const struct device *dev)
 		(void)gpio_pin_set_dt(&cfg->xshut, 1);
 	}
 	return false;
+}
+
+/*
+ * Ask the device what went wrong, rather than inferring it.
+ *
+ * UM3683 section 2.4 makes error handling the driver's job outright: "It is
+ * the driver's responsibility to reboot the device and to restart the
+ * streaming when a laser safety error occurs." ST's own reference application
+ * calls this from its handle_error() (vl53l9_app.c:317).
+ *
+ * Three of these bits speak directly to the hardware questions still open on
+ * this board: pll_lock is the device's own verdict on AP_CLK, and
+ * vhv_undervoltage / spad_supply_overload speak to the supply fold-back. That
+ * turns two standing inferences into readings, for one I2C transaction.
+ *
+ * laser_driver[] is deliberately not printed: ST's vl53l9_get_status() reads
+ * all five LDD status bytes into element 0 (st/vl53l9.c:820-823, missing the
+ * `+ i`), so elements 1-4 are uninitialised. ST's file is vendored unmodified
+ * on purpose, so the bug is worked around here rather than patched there.
+ */
+static void log_device_status(const struct device *dev)
+{
+	vl53l9_status_t st;
+
+	if (vl53l9_get_status((void *)dev, &st) != VL53L9_ERROR_NONE) {
+		LOG_ERR("  could not read device status either — the part is "
+			"not answering at all now");
+		return;
+	}
+
+	LOG_ERR("  device status: fsm 0x%02x, command error 0x%02x, "
+		"firmware error 0x%04x", st.fsm, st.command, st.firmware);
+
+	if (!st.error.pll_lock) {
+		LOG_ERR("  *** PLL NOT LOCKED — this is AP_CLK. The device "
+			"cannot lock to the external clock it is being given.");
+	}
+	if (st.error.vhv_undervoltage || st.error.spad_supply_overload ||
+	    st.error.hvboost_limit) {
+		LOG_ERR("  *** SUPPLY FAULT reported by the device");
+	}
+	LOG_ERR("  error bits: vhv_ov %u vhv_uv %u spad_overload %u "
+		"hvboost_limit %u sof_outside_blanking %u pll_lock %u "
+		"ref_array %u internal_fw %u",
+		st.error.vhv_overvoltage, st.error.vhv_undervoltage,
+		st.error.spad_supply_overload, st.error.hvboost_limit,
+		st.error.sof_outside_blanking, st.error.pll_lock,
+		st.error.ref_array, st.error.internal_fw);
 }
 
 static int device_boot(const struct device *dev)
@@ -712,25 +764,49 @@ probed:
 	ret = vl53l9_init((void *)dev);
 	data->boot_ms = (uint32_t)(k_uptime_get() - t0);
 
+	/*
+	 * Check it. This return code used to be overwritten two statements
+	 * later and never read, which silently swallowed every distinguishable
+	 * boot failure ST can report: TIMEOUT waiting for READY_TO_BOOT,
+	 * PLATFORM on the patch write, TIMEOUT on the BOOT command, TIMEOUT
+	 * reaching STANDBY, and INTERNAL on a patch-version mismatch. The
+	 * failure then surfaced as a generic -EIO from configure_signalling(),
+	 * three functions away from its cause.
+	 */
+	if (ret != VL53L9_ERROR_NONE) {
+		LOG_ERR("vl53l9_init failed after %u ms: %s", data->boot_ms,
+			vl53l9_errstr(ret));
+		log_device_status(dev);
+		return -EIO;
+	}
+
 	if (IS_ENABLED(CONFIG_VL53L9CX_LOG_BOOT_TIME)) {
 		LOG_INF("firmware blob uploaded and booted in %u ms",
 			data->boot_ms);
 	}
 
+	/* And check this one's return too — it used to fall through to
+	 * `return 0`, so a device that stopped answering during boot was
+	 * reported as booted.
+	 */
 	ret = vl53l9_get_device_id((void *)dev, &id);
-	if (ret == VL53L9_ERROR_NONE) {
-		if (id == VL53L9CX_DEVICE_ID) {
-			LOG_INF("device id 0x%08x (\"S3L9\") — correct", id);
-		} else {
-			LOG_ERR("device id 0x%08x after boot, expected 0x%08x. "
-				"The part answered the probe and then stopped "
-				"being itself, which points at a supply or "
-				"clock that is not holding.",
-				id, VL53L9CX_DEVICE_ID);
-			return -ENODEV;
-		}
+	if (ret != VL53L9_ERROR_NONE) {
+		LOG_ERR("device id unreadable after boot (%s) — the part "
+			"answered the probe and has since gone quiet",
+			vl53l9_errstr(ret));
+		return -EIO;
 	}
 
+	if (id != VL53L9CX_DEVICE_ID) {
+		LOG_ERR("device id 0x%08x after boot, expected 0x%08x. "
+			"The part answered the probe and then stopped "
+			"being itself, which points at a supply or "
+			"clock that is not holding.",
+			id, VL53L9CX_DEVICE_ID);
+		return -ENODEV;
+	}
+
+	LOG_INF("device id 0x%08x (\"S3L9\") — correct", id);
 	return 0;
 }
 

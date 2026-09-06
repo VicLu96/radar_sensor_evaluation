@@ -21,6 +21,36 @@
 };
 
 &i2c21 {
+	/*
+	 * The firmware patch upload could never have worked without these.
+	 *
+	 * The platform layer writes the 16-bit register index and the payload as
+	 * two i2c_msg entries, where only the second carries I2C_MSG_STOP. That
+	 * is the correct Zephyr idiom for one START..STOP transaction, and it is
+	 * exactly the pattern i2c_nrfx_twim.c:95 detects as "merge these", which
+	 * routes both through an internal buffer capped at
+	 * MAX(zephyr,concat-buf-size, zephyr,flash-buf-max-size).
+	 *
+	 * Both default to 16 bytes (nordic,nrf-twim.yaml:31,45). With
+	 * blob-chunk-size = 1024 each chunk asks for 2 + 1024 = 1026, so every
+	 * attempt returned -ENOSPC.
+	 *
+	 * A second, independent reason for the same failure: g_vl53l9_fw_patch is
+	 * `const`, so it links into RRAM (verified: 0x0000d0dc, section R) and
+	 * TWIM EasyDMA cannot source from there. nrf_dma_accessible_check() fails
+	 * and forces the same buffer even without concatenation. That is what
+	 * zephyr,flash-buf-max-size exists for, which is why both are set.
+	 *
+	 * The two share the same RAM and the driver takes the max, so this costs
+	 * 1040 bytes once, not twice.
+	 *
+	 * Found 2026-09-06 by two independent expert reviews. It was invisible
+	 * because the sensor has never got far enough to attempt the upload, and
+	 * because device_boot() was discarding vl53l9_init()'s return code.
+	 */
+	zephyr,concat-buf-size = <1040>;
+	zephyr,flash-buf-max-size = <1040>;
+
 	/* Bus speed and pins come from the board file: 400 kHz, SCL P1.08,
 	 * SDA P1.13. That is ~404 ms for a full 54x42 frame and ~24 ms for the
 	 * 12x10 this test ranges at.
