@@ -1,0 +1,16 @@
+# Turn the MPU and hardware stack protection back on, and nothing else.
+#
+#   Optional snippets -> tick "stack-guard"
+#
+# Memory protection is off by default because Victor asked for that on
+# 2026-09-04. The cost is that a stack overflow corrupts whatever is adjacent
+# instead of faulting where it happened - which on 2026-09-07 produced a
+# USAGE FAULT with pc=0x0000000a attributed to the idle thread, several frames
+# and one thread away from the code that actually overflowed.
+#
+# Tick this if anything crashes inexplicably again. The fault then names the
+# thread that overflowed, at the instruction that did it, instead of leaving you
+# to infer it. Untick it to go back to Victor's configuration.
+name: stack-guard
+append:
+  EXTRA_CONF_FILE: stack-guard.conf

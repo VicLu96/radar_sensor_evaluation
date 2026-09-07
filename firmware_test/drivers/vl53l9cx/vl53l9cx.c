@@ -170,9 +170,23 @@ static int clock_start(const struct device *dev)
 				int cret = clock_control_on(hf,
 					CLOCK_CONTROL_NRF_SUBSYS_HF);
 
+				/* -EALREADY means a previous request is still
+				 * held - which is the intended steady state,
+				 * since this driver never releases it. Expected
+				 * on every retry after the first.
+				 */
 				LOG_INF("AP_CLK: high-frequency clock ALSO held "
-					"on (%d) — HFXO requested and never "
-					"released", cret);
+					"on — HFXO %s",
+					cret == 0 ? "requested and never released"
+					: cret == -EALREADY ? "was already held from "
+						"an earlier request (expected on "
+						"a retry)"
+					: "REQUEST FAILED");
+				if (cret != 0 && cret != -EALREADY) {
+					LOG_ERR("AP_CLK: clock_control_on "
+						"returned %d — the HF clock is "
+						"NOT held", cret);
+				}
 			} else {
 				LOG_ERR("AP_CLK: CONFIG_VL53L9CX_HOLD_HFCLK is "
 					"set but the clock-control device is "

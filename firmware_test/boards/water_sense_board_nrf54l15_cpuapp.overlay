@@ -124,7 +124,20 @@
 		 * suspecting the sensor: a missed interrupt and a dead sensor
 		 * look identical from the application.
 		 */
-		int-gpios = <&gpio0 1 GPIO_ACTIVE_LOW>;
+		/*
+		 * GPIO_PULL_UP added 2026-09-07.
+		 *
+		 * The pin is an active-low CMOS push-pull output on the sensor
+		 * side, so a weak pull-up is the correct resting level and
+		 * cannot fight the driver. Without it the line FLOATS whenever
+		 * the sensor is unpowered or has not yet been told to drive its
+		 * interrupt pad - which is the entire window during bring-up,
+		 * and the driver arms an edge interrupt on it before any of
+		 * that. A floating CMOS input near threshold both invents edges
+		 * and draws through-current, on a board whose whole point is a
+		 * multi-month battery figure.
+		 */
+		int-gpios = <&gpio0 1 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
 
 		/* Bytes per I2C write during the 9,865-byte blob upload. */
 		blob-chunk-size = <1024>;
