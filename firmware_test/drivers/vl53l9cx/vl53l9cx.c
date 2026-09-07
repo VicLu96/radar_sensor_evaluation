@@ -1166,6 +1166,37 @@ int vl53l9cx_capture(const struct device *dev, enum vl53l9cx_res res,
 	return ret;
 }
 
+int vl53l9cx_retry_boot(const struct device *dev)
+{
+	struct vl53l9cx_data *data = dev->data;
+	int ret;
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+
+	LOG_INF("=== retrying sensor bring-up on request ===");
+
+	/* Start from a known state rather than from wherever the failed boot
+	 * left things: drop the rail, let it actually fall, then run the same
+	 * sequence init runs.
+	 */
+	power_down(dev);
+	k_sleep(K_MSEC(POWER_CYCLE_MS));
+
+	ret = device_boot(dev);
+	if (ret == 0) {
+		ret = configure_signalling(dev);
+	}
+
+	if (ret == 0) {
+		LOG_INF("=== retry SUCCEEDED — the sensor is up ===");
+	} else {
+		LOG_ERR("=== retry failed (%d) ===", ret);
+	}
+
+	k_mutex_unlock(&data->lock);
+	return ret;
+}
+
 uint32_t vl53l9cx_last_boot_ms(const struct device *dev)
 {
 	struct vl53l9cx_data *data = dev->data;

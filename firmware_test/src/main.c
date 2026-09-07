@@ -542,6 +542,31 @@ int main(void)
 	while (true) {
 		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
 
+		/*
+		 * Retry the sensor bring-up until it works, roughly every ten
+		 * heartbeats.
+		 *
+		 * The driver already runs this at boot, but that happens at
+		 * POST_KERNEL — before an RTT viewer is reliably attached, and
+		 * Zephyr's RTT backend latches host_present=false once a write
+		 * fails its retries, dropping everything after that silently.
+		 * On 2026-09-07 the entire diagnostic ladder vanished that way:
+		 * 3.7 seconds of it, and the console showed only "not ready".
+		 *
+		 * Repeating it here removes the dependency on catching boot
+		 * output at all. The messages are identical; they simply arrive
+		 * at a moment when the log is demonstrably working, because you
+		 * just watched the heartbeat before them.
+		 */
+		if (!tof_ok && (beat % 10U) == 9U) {
+			if (vl53l9cx_retry_boot(tof) == 0) {
+				tof_ok = true;
+				LOG_INF("sensor came up on a retry — the boot "
+					"failure was transient, which is worth "
+					"explaining rather than moving past");
+			}
+		}
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 		if (imu_ok) {
 			imu_read_and_log();

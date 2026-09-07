@@ -1282,3 +1282,32 @@ would have exposed them:
   selecting only I2C and PWM, and built purely because the GRTC happens to be the system
   timer in this configuration.
 Not to be used for energy measurement: HFXO runs continuously under this snippet.
+
+## 2026-09-07 - The bring-up diagnostics were being silently dropped by RTT
+What: Victor flashed the always-on build and got "VL53L9CX not ready" with NO driver
+output at all - and said "but no retries". The retries had run. The whole ladder had run:
+3.7 seconds elapsed before main(), which is almost exactly the worst-case failing path
+(probe, bus recovery, both address candidates, inverted polarity, power cycle, second
+attempt). Every message of it was thrown away.
+Cause, in zephyr/subsys/logging/backends/log_backend_rtt.c:178-186 and 206-237: when a
+write fails CONFIG_LOG_BACKEND_RTT_RETRY_CNT times the backend sets host_present = false,
+and from then on the do/while exits immediately on every call - each subsequent message is
+dropped instantly, silently, with no retry. Once an RTT viewer attaches and one write
+succeeds, on_write() sets host_present = true again, which is why everything from main()
+onwards appeared perfectly.
+So the driver's diagnostics run at POST_KERNEL, in a burst, before a viewer is reliably
+attached - precisely the window that latches the flag.
+MY 2026-09-06 RTT CHANGE DID NOT FIX THIS AND MADE BOOT SLOWER. I switched to
+LOG_BACKEND_RTT_MODE_BLOCK believing blocking would stop the drops. The latch exists in
+both modes; block mode only adds RETRY_CNT x RETRY_DELAY_MS = 20 ms per message before it
+gives up. The commit message at the time claimed the log gap was a buffer overflow and
+that blocking would cure it. The first half was right, the second was not.
+Fix, and deliberately not more log tuning: vl53l9cx_retry_boot() is now public API, and
+main() calls it every ten heartbeats while the sensor is not ready. Same code path, same
+messages, but emitted at a moment when the log is demonstrably working - you have just
+watched the heartbeat that precedes it. That removes the dependency on catching boot
+output at all, which no amount of buffer sizing can guarantee.
+Buffer also raised 4 KB -> 16 KB, recorded as a mitigation and not the fix.
+Cost: RAM 45,232 -> 57,520 B (12 KB of that is the buffer), 29.9% of 188 KB. FLASH
+66,404 B.
+

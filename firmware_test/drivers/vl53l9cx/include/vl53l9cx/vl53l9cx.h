@@ -199,6 +199,26 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
  * but this function is what turns that expectation into a number. Returns 0 if
  * the blob has not been uploaded this boot.
  */
+/**
+ * @brief Re-run the full power-up, probe and boot sequence, logging all of it.
+ *
+ * Exists because the driver's own diagnostics run at POST_KERNEL, before an RTT
+ * viewer is reliably attached — and Zephyr's RTT backend latches `host_present`
+ * to false once a write fails its retries, after which every message is dropped
+ * instantly and silently. On 2026-09-07 that swallowed the entire bring-up
+ * ladder: 3.7 seconds of diagnostics, none of it visible.
+ *
+ * Rather than tune the logging and hope, this lets the application repeat the
+ * sequence once the log is demonstrably flowing. Same code path as boot, same
+ * messages, but at a moment you can see.
+ *
+ * Safe to call repeatedly on a device whose init failed. Takes roughly 600 ms
+ * on success and up to ~3.5 s on the full failing path.
+ *
+ * @return 0 if the sensor booted, negative errno otherwise.
+ */
+int vl53l9cx_retry_boot(const struct device *dev);
+
 uint32_t vl53l9cx_last_boot_ms(const struct device *dev);
 
 #ifdef __cplusplus
