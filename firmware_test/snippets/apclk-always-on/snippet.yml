@@ -24,6 +24,9 @@
 #
 # Cost: HFXO runs continuously. That is deliberate for this test and must not
 # be left on for any energy measurement - see docs/plan/ap-clk-always-on.md.
+# NOTE (2026-09-07): prj.conf currently sets CONFIG_VL53L9CX_HOLD_HFCLK=y
+# directly, so this snippet is a no-op until that block is removed. It is kept
+# because it is the right home for the option once the bench test is done.
 name: apclk-always-on
 append:
   EXTRA_CONF_FILE: apclk-always-on.conf
