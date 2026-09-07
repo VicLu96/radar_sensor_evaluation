@@ -146,6 +146,70 @@ If 1 still fails, set `CONFIG_VL53L9CX_HOLD_HFCLK=y` and repeat.
 actually pays — but it means the measurement must be taken with this firmware, not with
 anything built before today.
 
+## 2026-09-07 — the `apclk-always-on` snippet, for one decisive bench test
+
+**Tick `apclk-always-on` in the nRF Connect extension's Optional snippets, without
+`x-nucleo`.** That is the whole setup. It builds the custom `water_sense_board` firmware
+with every clock-holding mechanism engaged at once.
+
+### Why a second mechanism exists at all
+
+The 2026-09-06 fix requests **GRTC SYSCOUNTER ACTIVE**, and the reasoning behind it was
+stated here with more confidence than it deserved. An expert review of the driver pushed
+back, and the objection holds up:
+
+- `CLKOUT_FAST` divides the GRTC's **hfclock** — devicetree binds that to `pclk`, a 16 MHz
+  `fixed-clock`. `SYSCOUNTER.CLKCFG.CLKSEL` selects among **low-frequency** sources
+  (LFXO, SystemLFCLK, LFLPRC). Different registers, different clock trees.
+- Upstream Zephyr enables `CLKOUT_FAST` with no ACTIVE request at all. If the two were
+  coupled that would be an upstream bug.
+- The GRTC has its own `STATUS.CLKOUT.READY` handshake, which reads like CLKOUT makes an
+  independent clock request.
+
+What **is** confirmed is the premise about idle: `CONFIG_NRF_GRTC_TIMER_AUTO_KEEP_ALIVE=y`
+sets `MODE.AUTOEN = CpuActive`, documented as *"any local CPU that is not sleeping keeps
+the SYSCOUNTER active"* — so the SYSCOUNTER does drop out at WFI. Whether `CLKOUT_FAST`
+follows it down is the unproven link.
+
+The honest response is to stop arguing and hold both.
+
+### What the snippet holds
+
+| | Mechanism | In the default build? |
+|---|---|---|
+| 1 | GRTC **SYSCOUNTER ACTIVE**, requested once, never released | yes |
+| 2 | **HFXO / high-frequency clock domain**, `clock_control_on()`, never released | **only with this snippet** |
+
+### Reading the result
+
+Scope P0.00 across a long idle — several seconds with nothing but heartbeats.
+
+| Observation | Conclusion |
+|---|---|
+| Continuous **with** the snippet, intermittent without | Mechanism **2** is the real one. The default build is wrong and must adopt it. |
+| Continuous **both** ways | Mechanism 1 was sufficient. Leave the default alone; this snippet is then only a diagnostic. |
+| **Still intermittent** with the snippet | It is not clock gating at all. Move to the pin and the board: drive strength, the trace, the probe ground. |
+
+The firmware states which mechanisms are engaged, in the first lines of the log:
+
+```
+AP_CLK: GRTC SYSCOUNTER ACTIVE clear -> set — without this the clock output stops ...
+AP_CLK: high-frequency clock ALSO held on (0) — HFXO requested and never released
+```
+
+Without the snippet the second line reads
+`AP_CLK: HFCLK not separately held (CONFIG_VL53L9CX_HOLD_HFCLK=n)`, so a capture can never
+be ambiguous about which firmware produced it.
+
+`main.c` separately reports the GRTC clkout enable bit and the P0.00 `CTRLSEL` field, which
+together confirm the peripheral is enabled and actually owns the pin. If those two say
+"enabled" and "GRTC" and the scope still shows nothing, the fault is past the SoC.
+
+### Do not measure energy with this build
+
+HFXO runs continuously. That is the point for this test and disqualifying for any other:
+the idle current under this snippet is not a number that belongs in the table above.
+
 ## What this changes in the repo today
 
 - The driver's `TURN_OFF` no longer claims to gate AP_CLK. Corrected in

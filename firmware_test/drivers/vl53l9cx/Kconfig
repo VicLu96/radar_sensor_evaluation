@@ -5,6 +5,7 @@ config VL53L9CX
 	default y
 	depends on DT_HAS_ST_VL53L9CX_ENABLED
 	select I2C
+	select NRFX_GRTC if SOC_SERIES_NRF54LX
 	select PWM
 	help
 	  Driver for the VL53L9CX dToF LiDAR module (up to 54x42 zones) over

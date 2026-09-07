@@ -1253,3 +1253,32 @@ vdda-microvolt enum [2800000, 3300000] against VDDA_2V8 = 0 / VDDA_3V3 = 1, and
 vddio-microvolt enum [1200000, 1800000] against VDDIO_1V2 = 0 / VDDIO_1V8 = 1. Both match.
 Reordering either enum would invert the value written into the device and misconfigure the
 analogue front end with no error anywhere - worth knowing before anyone tidies the YAML.
+
+## 2026-09-07 - apclk-always-on snippet, to settle the AP_CLK mechanism on the bench
+What: Victor is doing one more test on the custom board and asked for firmware with AP_CLK
+definitively always on. Added firmware_test/snippets/apclk-always-on/, ticked in the nRF
+Connect extension alongside the default (custom board) configuration.
+It engages both mechanisms at once: the GRTC SYSCOUNTER ACTIVE request that has been in the
+default build since 2026-09-06, and CONFIG_VL53L9CX_HOLD_HFCLK=y, which holds the
+high-frequency clock domain via clock_control_on() and never releases it.
+Why both: the expert review on 2026-09-06 showed the SYSCOUNTER-gates-CLKOUT reasoning is
+unproven. CLKOUT_FAST divides the GRTC hfclock (pclk, a 16 MHz fixed-clock) while
+SYSCOUNTER.CLKCFG.CLKSEL selects among low-frequency sources, and upstream Zephyr enables
+CLKOUT_FAST with no ACTIVE request at all. The AUTO_KEEP_ALIVE premise is confirmed - the
+SYSCOUNTER does drop out at WFI - but whether the clock output follows it is not. Rather
+than argue it further, hold both and let the scope decide.
+The three outcomes are written down in docs/plan/ap-clk-always-on.md so the reading is not
+made up after the fact: continuous only with the snippet means mechanism 2 is real and the
+default build is wrong; continuous both ways means mechanism 1 sufficed; still intermittent
+means it is not clock gating at all and the search moves to the pin and the board.
+Two hardening fixes made at the same time, because turning HOLD_HFCLK on is exactly what
+would have exposed them:
+- DEVICE_DT_GET(DT_NODELABEL(clock)) and the nrfx GRTC calls were guarded by runtime
+  IS_ENABLED() branches, so they survived only by dead-code elimination. DEVICE_DT_GET
+  emits a __device_dts_ord_<N> reference from the front end, so HOLD_HFCLK=y on a build
+  without &clock enabled would have been a link error naming nothing useful. Both are now
+  #if guards.
+- The driver's Kconfig now selects NRFX_GRTC on nRF54L. It was calling into nrfx GRTC while
+  selecting only I2C and PWM, and built purely because the GRTC happens to be the system
+  timer in this configuration.
+Not to be used for energy measurement: HFXO runs continuously under this snippet.

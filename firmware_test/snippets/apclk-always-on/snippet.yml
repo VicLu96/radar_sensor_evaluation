@@ -1,0 +1,29 @@
+# Hold AP_CLK on by every mechanism available, for one decisive bench test.
+#
+#   nRF Connect side bar -> build configuration -> Optional snippets
+#   -> tick "apclk-always-on" -> Build Configuration
+#
+# Use it WITHOUT the x-nucleo snippet: this is for the custom water_sense_board,
+# where the SoC generates the 8 MHz on P0.00. On the X-NUCLEO the sensor module
+# clocks itself and this snippet does nothing useful.
+#
+# Why it exists: the 8 MHz measured as intermittent, and the fix committed on
+# 2026-09-06 requests GRTC SYSCOUNTER ACTIVE. An expert review then pointed out
+# that the reasoning behind that fix is unproven - CLKOUT_FAST divides the GRTC
+# hfclock, while SYSCOUNTER.CLKCFG selects among LOW-frequency sources, so they
+# may be independent. The honest response is to stop arguing and hold BOTH.
+#
+# With this snippet the firmware holds:
+#   1. GRTC SYSCOUNTER ACTIVE   (already in the default build)
+#   2. the high-frequency clock domain, via clock_control_on(HF), never released
+#
+# If the 8 MHz is continuous with this and intermittent without it, mechanism 2
+# is the real one and the default build needs changing. If it is continuous
+# both ways, mechanism 1 was sufficient. If it is STILL intermittent, the cause
+# is not clock gating at all and the search moves to the pin and the board.
+#
+# Cost: HFXO runs continuously. That is deliberate for this test and must not
+# be left on for any energy measurement - see docs/plan/ap-clk-always-on.md.
+name: apclk-always-on
+append:
+  EXTRA_CONF_FILE: apclk-always-on.conf
