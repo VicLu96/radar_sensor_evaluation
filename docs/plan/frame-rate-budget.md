@@ -137,3 +137,72 @@ rate, the duty cycle and the application requirement pull in opposite directions
 which is precisely the argument for the event-triggered hybrid, where the coarse mode
 is cheap enough to run continuously and the expensive mode runs only when someone is
 actually there.
+
+---
+
+## What actually limits 1 MHz — checked 2026-09-10
+
+The 1 MHz question keeps returning (it decides whether the corner-mount track tier has
+headroom), so here is what stands in the way, ranked, from this board rather than in general.
+
+### 1. There are no external pull-ups. This is the blocker.
+
+Extracted from `radar_shield.kicad_pcb`: the only parts touching `/SDA` and `/SCL` are **J6
+(the connector) and U1 (the sensor)**. No resistors. So the bus is running on the
+**nRF54L15's internal pull-ups**, which is exactly what `bias-pull-up` in the board pinctrl
+turned on — and what changed the bus from `-ETIMEDOUT` to `-EIO` on 2026-09-06.
+
+Nordic's internal pull-up is roughly **13 kΩ**. Rise time is `t_r = 0.8473 · R · C`:
+
+| Bus C | Internal 13 kΩ | 4.7 kΩ | 2.2 kΩ | 1.0 kΩ |
+|---|---|---|---|---|
+| 50 pF | 551 ns | 199 ns | **93 ns** | **42 ns** |
+| 100 pF | 1101 ns | 398 ns | 186 ns | **85 ns** |
+| 150 pF | 1652 ns | 597 ns | 280 ns | 127 ns |
+
+I²C allows **300 ns** at Fast-mode (400 kHz) and **120 ns** at Fast-mode Plus (1 MHz).
+
+Two things follow:
+
+- **1 MHz is impossible as the board stands.** At 13 kΩ and 100 pF the rise takes 1.1 µs,
+  and a 1 MHz bit period is 1 µs — the line would never get high.
+- **400 kHz is already out of spec.** 551–1652 ns against a 300 ns limit. It works because
+  I²C is static and the controller samples late, not because the timing is legal. Worth
+  knowing: some of the marginal behaviour chased during bring-up may have been this.
+
+**Fix: fit ~1 kΩ external pull-ups to +1V8 on SDA and SCL.** Sink current is then 1.8 mA,
+and Fm+ devices must sink 20 mA, so that side is trivial. **Board change — Victor's.**
+
+### 2. Bus capacitance, which this build makes worse
+
+The path is MCU → J2/J6 → flying leads → shield → sensor. Connectors and unshielded leads
+add capacitance that a monolithic board would not have, which is why the 100–150 pF columns
+above are the realistic ones rather than 50 pF. Shorter leads are worth as much as smaller
+resistors here.
+
+### 3. The IMU may cap the bus — `VERIFY`
+
+The LSM6DSV16BX shares this bus. **Several ST IMUs in that family are 400 kHz maximum over
+I²C**, with the higher rates only on MIPI I3C. If that holds here, the slowest device sets
+the bus speed and 1 MHz is off the table while the IMU is fitted. **Check the datasheet
+before buying pull-ups** — this could settle the question on its own.
+
+### 4. Pin drive mode
+
+Nordic recommend high drive on the low side for Fm+. The I²C pins currently take pinctrl's
+default `S0D1` (standard low, disconnect high). `H0D1` would be the Fm+ setting — a board
+pinctrl change, and only relevant once 1 and 3 are resolved.
+
+### 5. The SoC and the sensor both support it
+
+Cleared, so they are not the obstacle. `TWIM_FREQUENCY_FREQUENCY_K1000` is defined for the
+nRF54L15, so `NRF_TWIM_HAS_1000_KHZ_FREQ` is 1 and Zephyr's `I2C_SPEED_FAST_PLUS` maps
+straight to it. On the sensor side ST's own reference sets 1 MHz explicitly, and UM3683
+Table 1's read times imply it.
+
+### What it buys
+
+A 54×42 frame goes from **~404 ms to ~162 ms**, and the ceiling from ~2.5 fps to ~6.2 fps.
+For the corner-mount design that is the difference between a track tier with no margin and
+one with room to spare — see the TODO in
+[ble-streaming-and-web-ui.md](ble-streaming-and-web-ui.md).
