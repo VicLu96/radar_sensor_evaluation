@@ -157,9 +157,22 @@
  *
  *     I = C dV/dt = 15 pF x 1.8 V / 10 ns = 2.7 mA
  *
- * which is several times what standard drive delivers. NRF_DRIVE_H0H1 is the
- * high-drive setting on both levels and is the right tool for a continuous
- * clock output.
+ * which is several times what standard drive delivers.
+ *
+ * Raised again 2026-09-10 (Victor), from NRF_DRIVE_H0H1 to NRF_DRIVE_E0E1 —
+ * EXTRA high drive on both edges, which is the strongest setting the nRF54L15
+ * GPIO offers. Confirmed available on this die: GPIO_PIN_CNF_DRIVE0_E0 is
+ * defined in nrf54l15_types.h, so NRF_GPIO_HAS_DRIVE_EXTRA is 1 and
+ * pinctrl_nrf.c:32 maps NRF_DRIVE_E0E1 through to it. On parts without it the
+ * drive_modes[] table stops at H0D1 and this would not compile.
+ *
+ * Worth knowing what this can and cannot fix. It attacks slew rate: a stronger
+ * driver charges the trace and pad capacitance faster, so the edges square up
+ * and the waveform reaches full IOVDD swing sooner. It does NOT fix a clock
+ * that is absent, gated, or routed to the wrong pin, and it does not change the
+ * frequency. If the 8 MHz is still not clean at the sensor ball after this, the
+ * trace, the connector and the probe ground are the remaining suspects — not
+ * the SoC.
  *
  * This is defined here rather than in the board file so water_sense_board stays
  * Victor's: the group below simply replaces the board's grtc_default at the
@@ -172,7 +185,7 @@
 	grtc_apclk_hidrive: grtc_apclk_hidrive {
 		group1 {
 			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
-			nordic,drive-mode = <NRF_DRIVE_H0H1>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
 		};
 	};
 
@@ -188,7 +201,7 @@
 	grtc_apclk_hidrive_sleep: grtc_apclk_hidrive_sleep {
 		group1 {
 			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
-			nordic,drive-mode = <NRF_DRIVE_H0H1>;
+			nordic,drive-mode = <NRF_DRIVE_E0E1>;
 		};
 	};
 };
