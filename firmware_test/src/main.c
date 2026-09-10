@@ -243,6 +243,11 @@ static void log_sensor_power(void)
 /* ~18 KB. Static: one of these is more than the whole main stack. */
 static struct vl53l9cx_frame frame;
 
+/* File scope so tof_capture_and_log() can mark the device as needing recovery
+ * and main()'s retry loop will pick it up on the next pass.
+ */
+static bool tof_ok;
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 
 /* Integer square root, so the magnitude check below needs no float printf
@@ -564,6 +569,10 @@ static void tof_capture_and_log(void)
 
 	if (ret < 0) {
 		LOG_ERR("ToF capture failed (%d)", ret);
+		/* Hand it to the recovery path above rather than retrying a
+		 * capture forever against a part that has stopped answering.
+		 */
+		tof_ok = false;
 		if (ret == -EIO) {
 			LOG_ERR("  -EIO here usually carries ST's "
 				"INVALID_STATE (-3) underneath: the device was "
@@ -739,7 +748,6 @@ static void tof_capture_and_log(void)
 int main(void)
 {
 	uint32_t beat = 0;
-	bool tof_ok;
 #if defined(CONFIG_APP_ENABLE_IMU)
 	bool imu_ok;
 #endif
@@ -841,7 +849,22 @@ int main(void)
 		 * at a moment when the log is demonstrably working, because you
 		 * just watched the heartbeat before them.
 		 */
-#if !defined(APP_POWER_HOLD_ACTIVE)
+		/*
+		 * Recovery, and it must run even while the rail is held.
+		 *
+		 * On 2026-09-10 the device stopped acknowledging entirely
+		 * mid-session - NAKs on a two-byte index write - and every
+		 * capture for the next two and a half minutes failed, because
+		 * nothing ever tried to boot it again. Disabling this under
+		 * CONFIG_APP_HOLD_SENSOR_POWER left the firmware with no
+		 * recovery path at all, which was my mistake: holding the rail
+		 * is about not power-cycling underneath a measurement, not about
+		 * abandoning a dead sensor.
+		 *
+		 * A part that has stopped answering has almost certainly been
+		 * returned to POWER_OFF (UM3683 2.5.1), and the only way back is
+		 * the full sequence.
+		 */
 		if (!tof_ok && (beat % 10U) == 9U) {
 			if (vl53l9cx_retry_boot(tof) == 0) {
 				tof_ok = true;
@@ -850,14 +873,6 @@ int main(void)
 					"explaining rather than moving past");
 			}
 		}
-#else
-		/* No periodic retry while the rail is being held: that retry
-		 * begins with a deliberate power cycle, and power-cycling the
-		 * board underneath the probes defeats the measurement this
-		 * mode exists for. Turn CONFIG_APP_HOLD_SENSOR_POWER off to
-		 * get it back.
-		 */
-#endif
 
 #if defined(CONFIG_APP_ENABLE_IMU)
 		/*

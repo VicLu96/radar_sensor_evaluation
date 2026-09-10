@@ -5,7 +5,11 @@ mainmenu "water_sense_board bring-up test"
 
 choice APP_TOF_RES
 	prompt "ToF capture resolution"
-	default APP_TOF_RES_54X42
+	# Stepped down from 54X42 on 2026-09-10: full resolution times out waiting
+	# for frame-ready, and 24x20 is the next size down (576 transmitted zones
+	# against 2268). If this works, the fault scales with frame size or with
+	# per-zone signal; if it fails identically, neither is the variable.
+	default APP_TOF_RES_24X20
 	help
 	  Which resolution vl53l9cx_capture() asks for.
 

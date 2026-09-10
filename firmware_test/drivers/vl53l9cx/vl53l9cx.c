@@ -1226,12 +1226,61 @@ int vl53l9cx_stop(const struct device *dev)
 	return (ret == VL53L9_ERROR_NONE) ? 0 : -EIO;
 }
 
+/*
+ * Is the DEVICE saying a frame is ready? The only authority that matters.
+ *
+ * vl53l9_get_frame() refuses unless FRAME_READY (0x008E) reads 1 - it checks
+ * that register, not the FSM (st/vl53l9.c). So the interrupt is a hint about
+ * when to look, and this is the fact.
+ */
+static bool frame_is_ready(const struct device *dev)
+{
+	uint8_t ready = 0;
+
+	if (vl53l9_read8((void *)dev, VL53L9_REGADDR_FRAME_READY, &ready)
+	    != VL53L9_ERROR_NONE) {
+		return false;
+	}
+	return (ready & 0x01U) != 0U;
+}
+
 static int wait_frame(const struct device *dev, k_timeout_t timeout)
 {
 	struct vl53l9cx_data *data = dev->data;
 
 	if (data->use_interrupt) {
-		return k_sem_take(&data->frame_ready, timeout);
+		/*
+		 * Interrupt-ASSISTED polling, not pure interrupt.
+		 *
+		 * 2026-09-10 showed both failure directions in one run. A
+		 * spurious edge woke the wait 15 ms after trigger - impossible
+		 * for a 54x42 frame with 16 ms exposure - so get_frame was
+		 * called before FRAME_READY was set and returned INVALID_STATE.
+		 * Later, a real frame completed and no edge arrived at all.
+		 *
+		 * Waiting on the semaphore ALONE trusts a line that has been
+		 * unreliable since it was armed unpulled before the sensor was
+		 * powered. Confirming against FRAME_READY costs one 1-byte read
+		 * and fixes both: a spurious edge finds the frame not ready and
+		 * goes back to waiting, and a missed edge is caught by the poll.
+		 * A working interrupt still returns immediately, which is the
+		 * whole point of having it.
+		 */
+		const bool forever = K_TIMEOUT_EQ(timeout, K_FOREVER);
+		const int64_t deadline =
+			forever ? 0 : k_uptime_get() +
+				      k_ticks_to_ms_ceil64(timeout.ticks);
+
+		for (;;) {
+			(void)k_sem_take(&data->frame_ready, K_MSEC(20));
+
+			if (frame_is_ready(dev)) {
+				return 0;
+			}
+			if (!forever && k_uptime_get() >= deadline) {
+				return -EAGAIN;
+			}
+		}
 	}
 
 	/* Polling fallback. Deliberately coarse: this path exists so a board
@@ -1295,11 +1344,16 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 		LOG_ERR("frame wait failed (%d): FSM 0x%02x, FRAME_READY 0x%02x",
 			ret, fsm, ready);
 
-		if (fsm == 0x02 || (ready & 0x01U)) {
+		if (ready & 0x01U) {
 			LOG_ERR("  *** THE FRAME WAS READY AND WE MISSED THE "
 				"INTERRUPT. The sensor did its job; the INTR "
 				"path did not. Suspect P0.01, its pull, or the "
 				"interrupt pad mode — not the sensor.");
+		} else if (fsm == 0x02) {
+			LOG_ERR("  device is in STANDBY with NO frame ready: it "
+				"left streaming without producing one. Not an "
+				"interrupt problem — the frame itself never "
+				"completed.");
 		} else if (fsm == 0x03) {
 			LOG_ERR("  device is STILL STREAMING with no frame "
 				"ready: it genuinely has not finished. That is "
@@ -1342,8 +1396,11 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 			: fsm == 0x02 ? "STANDBY — the frame ended before we "
 					"read it; we waited on a stale or "
 					"spurious interrupt"
-			: fsm == 0x03 ? "STREAMING — state is fine, so the read "
-					"itself failed"
+			: fsm == 0x03 ? "STREAMING — the state is fine, so this "
+					"is FRAME_READY still clear: we read "
+					"before the frame was finished"
+			: fsm == 0xFF ? "UNREADABLE — the device is not "
+					"acknowledging at all any more"
 					: "unknown");
 		ret = -EIO;
 		goto out;
