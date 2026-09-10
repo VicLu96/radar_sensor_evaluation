@@ -525,7 +525,84 @@ u16 temperature_raw
 `zones_reliable / zones_total` is the number that says whether the mount is usable. Show it
 as a percentage and colour it.
 
-### 3.5 Telemetry service — `53l92001-…`
+### 3.5 Two operating modes, and only one of them uses a connection
+
+**Victor, 2026-09-10.** This is the deployment architecture, and it is what makes the
+battery claim defensible.
+
+| Mode | Radio | Connection | What the host does |
+|---|---|---|---|
+| **Streaming (dev)** | connectable advertising, ~100 ms | **yes** — frame + config + telemetry services | connects, streams frames, tunes |
+| **Counting (deployed)** | connectable advertising, 1–10 s, **count in the advert** | **no, normally** | just listens to adverts. Connects only to change mode or config. |
+
+The point: in counting mode **nobody connects**. The count is broadcast in the
+advertisement and anything in range can read it without pairing, connecting or maintaining
+a link. A connection is established only to reconfigure, and then dropped.
+
+#### The advertisement payload
+
+Manufacturer-specific data (AD type `0xFF`), company ID **`0xFFFF`** — the range reserved
+for development, which is the honest choice for a research node.
+
+```
+u8  protocol_version
+u8  instance_id       which node
+u8  count             people
+u8  confidence        0..100
+u8  flags             bit0 calibrated
+                      bit1 ACTIVITY NOW   (motion seen in the last report period)
+                      bit2 background stale
+                      bit3 degraded field of view
+                      bit4 sensor fault
+u16 report_seq        increments per new report — lets a listener tell a fresh
+                      value from a re-broadcast of the same one
+u8  battery_pct
+```
+
+**10 bytes**, inside the 31-byte legacy advertising budget with room for flags and a short
+name.
+
+`report_seq` matters more than it looks: advertising is stateless and repeats the same
+payload until it changes, so without a sequence number a listener cannot distinguish "still
+3 people" from "the node has stopped updating".
+
+#### No clock on the device
+
+**Victor, 2026-09-10: the web interface timestamps on receipt; the device needs no time.**
+That removes the RTC, the time-sync command and the drift question in one go. The advert
+carries no timestamp — `report_seq` plus the receiver's own clock is enough, and it is
+strictly more honest than a device clock that was set once and has drifted since.
+
+#### Why connectionless is worth the design effort
+
+Rough per-report radio cost *(estimates)*: an advertising event is three channels at ~0.4 ms
+each ≈ **1.2 ms of radio**. At a 1 s interval that is ~0.12% duty; at 10 s, ~0.012%. A
+maintained connection at the same interval costs a comparable event **plus** supervision,
+re-connection handling, and — the part that actually hurts — a scheduling constraint that
+keeps the SoC out of its deepest sleep between events.
+
+At the 0.05–0.2 Hz this design targets, the radio stops being a term in the budget at all.
+That is the whole argument.
+
+#### Mode switching
+
+`Command` characteristic gains `SET_MODE(streaming | counting)`. A node in counting mode
+stays **connectable** so it can always be reconfigured — the advertising interval is the
+only thing that changes how quickly you can reach it. Slower adverts mean lower power and a
+longer wait to connect; **1 s is a reasonable default and should be configurable.**
+
+#### Configuration does not persist
+
+**Victor, 2026-09-10: no NVS for configuration.** Defaults on every boot; the host sets what
+it wants after connecting.
+
+> **One thing worth separating from that decision: calibration.** Config is cheap to
+> re-send, but a calibration needs an **empty room** and 16 frames. If it lives only in RAM,
+> every power cycle means clearing the room again. That is a different cost from re-sending
+> a threshold, and worth deciding deliberately rather than inheriting from the config
+> answer.
+
+### 3.6 Telemetry service — `53l92001-…`
 
 | Char | UUID | Props | Payload |
 |---|---|---|---|

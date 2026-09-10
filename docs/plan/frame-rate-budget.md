@@ -145,33 +145,45 @@ actually there.
 The 1 MHz question keeps returning (it decides whether the corner-mount track tier has
 headroom), so here is what stands in the way, ranked, from this board rather than in general.
 
-### 1. There are no external pull-ups. This is the blocker.
+### 1. Pull-up value — the one thing to change
 
-Extracted from `radar_shield.kicad_pcb`: the only parts touching `/SDA` and `/SCL` are **J6
-(the connector) and U1 (the sensor)**. No resistors. So the bus is running on the
-**nRF54L15's internal pull-ups**, which is exactly what `bias-pull-up` in the board pinctrl
-turned on — and what changed the bus from `-ETIMEDOUT` to `-EIO` on 2026-09-06.
+> **Corrected 2026-09-10.** I first wrote that there were no external pull-ups. That was
+> wrong: I extracted the netlist from `radar_shield.kicad_pcb` — the shield — and the
+> pull-ups are on the **host board**, which I never opened. **Victor: 4.7 kΩ, and
+> adjustable.** The rise-time arithmetic below is unchanged; only the starting point moves.
 
-Nordic's internal pull-up is roughly **13 kΩ**. Rise time is `t_r = 0.8473 · R · C`:
+Rise time is `t_r = 0.8473 · R · C`. I²C allows **300 ns** at 400 kHz and **120 ns** at
+Fast-mode Plus.
 
-| Bus C | Internal 13 kΩ | 4.7 kΩ | 2.2 kΩ | 1.0 kΩ |
-|---|---|---|---|---|
-| 50 pF | 551 ns | 199 ns | **93 ns** | **42 ns** |
-| 100 pF | 1101 ns | 398 ns | 186 ns | **85 ns** |
-| 150 pF | 1652 ns | 597 ns | 280 ns | 127 ns |
+**Maximum permissible pull-up:**
 
-I²C allows **300 ns** at Fast-mode (400 kHz) and **120 ns** at Fast-mode Plus (1 MHz).
+| Bus C | for 400 kHz | for 1 MHz |
+|---|---|---|
+| 50 pF | 7.1 kΩ | 2.8 kΩ |
+| 80 pF | 4.4 kΩ | 1.8 kΩ |
+| 100 pF | 3.5 kΩ | **1.4 kΩ** |
+| 150 pF | 2.4 kΩ | 0.94 kΩ |
 
-Two things follow:
+**What 4.7 kΩ gives today**: 199 ns at 50 pF, 319 ns at 80 pF, 398 ns at 100 pF. So the
+present bus is **borderline-to-out-of-spec at 400 kHz already**, and comfortably outside
+Fm+. It works because I²C is static and the controller samples late — not because the
+timing is legal — and some of the marginal behaviour chased during bring-up may have been
+this.
 
-- **1 MHz is impossible as the board stands.** At 13 kΩ and 100 pF the rise takes 1.1 µs,
-  and a 1 MHz bit period is 1 µs — the line would never get high.
-- **400 kHz is already out of spec.** 551–1652 ns against a 300 ns limit. It works because
-  I²C is static and the controller samples late, not because the timing is legal. Worth
-  knowing: some of the marginal behaviour chased during bring-up may have been this.
+**Recommendation: 1 kΩ.** It meets Fm+ up to ~140 pF, which covers this board's
+connectorised path with margin, and it fixes 400 kHz outright as a side effect. Sink
+current is then **1.8 mA at 1.8 V**, against the 3 mA every I²C device must manage and the
+20 mA Fm+ requires — so nothing is stressed.
 
-**Fix: fit ~1 kΩ external pull-ups to +1V8 on SDA and SCL.** Sink current is then 1.8 mA,
-and Fm+ devices must sink 20 mA, so that side is trivial. **Board change — Victor's.**
+- **820 Ω** if the flying leads are long (2.2 mA, still trivial).
+- **1.5 kΩ** is the most I would fit and still call 1 MHz safe, and only with short leads.
+- **Do not go below ~600 Ω**: no benefit, and V_OL starts to matter.
+
+**Cost, since this is a battery design:** 1 kΩ draws 1.8 mA per line *only while that line
+is held low*, so roughly 1.8 mA average across a transfer with both lines active. At 162 ms
+per frame and 0.1 Hz that is **~0.3 µA average** — irrelevant. At the track tier's 2 fps it
+becomes ~0.6 mA average and stops being irrelevant, which is one more reason the fast tier
+should run only while someone is moving.
 
 ### 2. Bus capacitance, which this build makes worse
 
