@@ -3,6 +3,28 @@
 
 mainmenu "water_sense_board bring-up test"
 
+config APP_HOLD_SENSOR_POWER
+	bool "Drive the sensor power enable high and keep it there"
+	default y
+	help
+	  Asserts power-gpios (P0.02) from the application at startup and holds
+	  it, so the sensor rails stay up for as long as the board is running.
+
+	  This is for BENCH MEASUREMENT. The driver already raises P0.02 during
+	  its own bring-up, but it also drops it: power_down() takes it low on
+	  every retry and on PM_DEVICE_ACTION_TURN_OFF, and
+	  try_inverted_polarity() drives it low for half a second as a
+	  diagnostic. A board that keeps power-cycling underneath the probes is
+	  no use when the thing being measured is whether the rails come up at
+	  all.
+
+	  What it costs: the periodic bring-up retry is skipped while this is
+	  set, because that retry begins with a deliberate power cycle. Turn
+	  this off to get the retry and its diagnostics back.
+
+	  The pad level is logged on every heartbeat, so a rail that sags or a
+	  pin that cannot reach its level is visible without a meter.
+
 config APP_ENABLE_IMU
 	bool "Probe and read the LSM6DSV..BX IMU"
 	default y

@@ -23,6 +23,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/version.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <stdio.h>
@@ -141,6 +142,60 @@ static const struct axis_layout *layout;
 #define TOF_RES  VL53L9CX_RES_12X10
 
 static const struct device *const tof = DEVICE_DT_GET(TOF_NODE);
+
+#if defined(CONFIG_APP_HOLD_SENSOR_POWER) && DT_NODE_HAS_PROP(TOF_NODE, power_gpios)
+#define APP_POWER_HOLD_ACTIVE 1
+/*
+ * The sensor power enable, held by the application rather than the driver.
+ *
+ * GPIO_INPUT alongside the output connects the input buffer so the PAD can be
+ * read back, not the output latch. That distinction is the whole point here: on
+ * 2026-09-10 P0.02 was driven high and the pad read low, and only a pad readback
+ * can show that.
+ */
+static const struct gpio_dt_spec sensor_pwr =
+	GPIO_DT_SPEC_GET(TOF_NODE, power_gpios);
+
+static void hold_sensor_power(void)
+{
+	int ret;
+
+	if (!gpio_is_ready_dt(&sensor_pwr)) {
+		LOG_ERR("power-gpios port not ready — cannot hold the rail on");
+		return;
+	}
+
+	ret = gpio_pin_configure_dt(&sensor_pwr, GPIO_OUTPUT_ACTIVE | GPIO_INPUT);
+	if (ret < 0) {
+		LOG_ERR("power-gpios configure failed (%d)", ret);
+		return;
+	}
+
+	ret = gpio_pin_set_dt(&sensor_pwr, 1);
+	if (ret < 0) {
+		LOG_ERR("power-gpios set failed (%d)", ret);
+		return;
+	}
+
+	LOG_INF("SENSOR POWER HELD ON: P0.02 driven high and kept there for the "
+		"whole session. The driver's power cycling is disabled.");
+	LOG_INF("  pad reads %d immediately after asserting",
+		gpio_pin_get_dt(&sensor_pwr));
+	LOG_INF("  rails should now be up: measure +3V3 (AVDD), +1V8 (IOVDD) "
+		"and +1V2 (DVDD) at the sensor. UM3683 2.5.1 needs all three.");
+}
+
+static void log_sensor_power(void)
+{
+	int lvl = gpio_pin_get_dt(&sensor_pwr);
+
+	LOG_INF("PWR_EN P0.02 pad = %d%s", lvl,
+		lvl == 1 ? "  (high — rails should be up)" :
+		lvl == 0 ? "  <-- LOW WHILE BEING DRIVEN HIGH. The net is held "
+			   "down: a short, or a load the pin cannot drive." :
+			   "  <-- read failed");
+}
+#endif /* CONFIG_APP_HOLD_SENSOR_POWER && power_gpios */
 
 /* ~18 KB. Static: one of these is more than the whole main stack. */
 static struct vl53l9cx_frame frame;
@@ -581,6 +636,13 @@ int main(void)
 		"fault as easily as a sensor fault.");
 #endif
 
+#if defined(APP_POWER_HOLD_ACTIVE)
+	/* Before anything else touches the sensor: get the rails up and leave
+	 * them up. Measuring whether they come up at all is the current job.
+	 */
+	hold_sensor_power();
+#endif
+
 	/* Stage 3 — the VL53L9CX. Same policy: report and carry on. */
 	tof_report_config();
 
@@ -608,6 +670,10 @@ int main(void)
 	while (true) {
 		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
 
+#if defined(APP_POWER_HOLD_ACTIVE)
+		log_sensor_power();
+#endif
+
 		/*
 		 * Retry the sensor bring-up until it works, roughly every ten
 		 * heartbeats.
@@ -624,6 +690,7 @@ int main(void)
 		 * at a moment when the log is demonstrably working, because you
 		 * just watched the heartbeat before them.
 		 */
+#if !defined(APP_POWER_HOLD_ACTIVE)
 		if (!tof_ok && (beat % 10U) == 9U) {
 			if (vl53l9cx_retry_boot(tof) == 0) {
 				tof_ok = true;
@@ -632,6 +699,14 @@ int main(void)
 					"explaining rather than moving past");
 			}
 		}
+#else
+		/* No periodic retry while the rail is being held: that retry
+		 * begins with a deliberate power cycle, and power-cycling the
+		 * board underneath the probes defeats the measurement this
+		 * mode exists for. Turn CONFIG_APP_HOLD_SENSOR_POWER off to
+		 * get it back.
+		 */
+#endif
 
 #if defined(CONFIG_APP_ENABLE_IMU)
 		/*
