@@ -248,6 +248,15 @@ static struct vl53l9cx_frame frame;
  */
 static bool tof_ok;
 
+/* Capture bookkeeping, so a log tells you the RATE of failure at a glance
+ * rather than making you count lines.
+ */
+static uint32_t tof_attempt;
+static uint32_t tof_ok_count;
+static uint32_t tof_fail;
+static int      tof_last_err;
+static uint32_t tof_repeat;
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 
 /* Integer square root, so the magnitude check below needs no float printf
@@ -564,33 +573,56 @@ static void tof_capture_and_log(void)
 	int64_t took;
 	int ret;
 
+	tof_attempt++;
 	ret = vl53l9cx_capture(tof, TOF_RES, &frame, K_SECONDS(5));
 	took = k_uptime_get() - t0;
 
 	if (ret < 0) {
-		LOG_ERR("ToF capture failed (%d)", ret);
-		/* Hand it to the recovery path above rather than retrying a
-		 * capture forever against a part that has stopped answering.
+		/*
+		 * Counted and deduplicated.
+		 *
+		 * The driver has already diagnosed this failure against the
+		 * device's own registers and printed the verdict. Repeating a
+		 * guess underneath it adds nothing, and on 2026-09-10 the guess
+		 * was WRONG twice - claiming a boot race for a device that had
+		 * gone permanently silent, and claiming a missed edge and a
+		 * stalled sensor were indistinguishable when the driver had just
+		 * distinguished them.
+		 *
+		 * Repeats are suppressed because thirty identical explanations
+		 * are how a new one gets missed - and on RTT they are bandwidth
+		 * that the frame grid needs.
+		 */
+		tof_fail++;
+		if (ret != tof_last_err) {
+			tof_last_err = ret;
+			tof_repeat = 0;
+			LOG_ERR("CAPTURE FAILED (%d, %s)  [attempt %u, %u ok, "
+				"%u failed]", ret,
+				ret == -EAGAIN ? "no frame within the timeout" :
+				ret == -EIO    ? "device refused or the bus did" :
+				ret == -ENODEV ? "device not answering" : "see above",
+				tof_attempt, tof_ok_count, tof_fail);
+			LOG_ERR("  the vl53l9cx lines above carry the device's "
+				"own verdict — read those, not this line");
+		} else if (++tof_repeat == 3U) {
+			LOG_ERR("  ... same failure repeating; further "
+				"identical ones will be counted, not printed");
+		}
+
+		/* Hand it to the recovery path rather than retrying a capture
+		 * forever against a part that has stopped answering.
 		 */
 		tof_ok = false;
-		if (ret == -EIO) {
-			LOG_ERR("  -EIO here usually carries ST's "
-				"INVALID_STATE (-3) underneath: the device was "
-				"not in STREAMING when the frame was read. The "
-				"first capture after boot can lose this race; "
-				"later ones should not.");
-		}
-		if (ret == -EAGAIN) {
-			LOG_ERR("  timed out waiting for frame-ready (%s). The "
-				"sensor never signalled a completed measurement.",
-				DT_NODE_HAS_PROP(TOF_NODE, int_gpios)
-					? "int-gpios IS wired, so either the "
-					  "interrupt never fired or the frame "
-					  "never completed — a missed edge and a "
-					  "stalled sensor look identical here"
-					: "no int-gpios, so frame-ready is polled");
-		}
 		return;
+	}
+
+	tof_ok_count++;
+	if (tof_last_err != 0) {
+		LOG_INF("capture RECOVERED after %u consecutive failures",
+			tof_repeat + 1U);
+		tof_last_err = 0;
+		tof_repeat = 0;
 	}
 
 	for (uint16_t i = 0; i < (uint16_t)frame.cols * frame.rows; i++) {
@@ -827,7 +859,13 @@ int main(void)
 	}
 
 	while (true) {
-		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
+		if (tof_attempt > 0U) {
+			LOG_INF("heartbeat %u  (uptime %lld ms)  [ToF %u/%u ok]",
+				beat, k_uptime_get(), tof_ok_count, tof_attempt);
+		} else {
+			LOG_INF("heartbeat %u  (uptime %lld ms)", beat,
+				k_uptime_get());
+		}
 
 #if defined(APP_POWER_HOLD_ACTIVE)
 		log_sensor_power();

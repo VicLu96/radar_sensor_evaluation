@@ -547,9 +547,16 @@ static bool try_inverted_polarity(const struct device *dev)
  * `+ i`), so elements 1-4 are uninitialised. ST's file is vendored unmodified
  * on purpose, so the bug is worked around here rather than patched there.
  */
+/* Set by log_device_status() when the device reports a laser safety fault, so
+ * the caller can act on UM3683 2.4 rather than only printing it.
+ */
+static bool last_status_was_laser_fault;
+
 static void log_device_status(const struct device *dev)
 {
 	vl53l9_status_t st;
+
+	last_status_was_laser_fault = false;
 
 	if (vl53l9_get_status((void *)dev, &st) != VL53L9_ERROR_NONE) {
 		LOG_ERR("  could not read device status either — the part is "
@@ -609,6 +616,8 @@ static void log_device_status(const struct device *dev)
 			      "first thing to check — it is VBAT_LDD, straight "
 			      "off the load switch."
 			    : "  (all clear)");
+
+		last_status_was_laser_fault = any;
 	}
 }
 
@@ -1419,6 +1428,33 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 			 */
 			LOG_ERR("  asking the device why it stopped:");
 			log_device_status(dev);
+
+			/*
+			 * UM3683 2.4: "It is the driver's responsibility to
+			 * reboot the device and to restart the streaming when a
+			 * laser safety error occurs." The part sits in safe
+			 * mode until then, so every later capture is guaranteed
+			 * to fail. Reboot here rather than waiting for the
+			 * application's ten-heartbeat retry.
+			 */
+			if (last_status_was_laser_fault) {
+				LOG_WRN("  laser safe mode: rebooting now, as "
+					"UM3683 2.4 requires. Nothing works "
+					"until this happens.");
+				k_mutex_lock(&data->lock, K_FOREVER);
+				power_down(dev);
+				k_sleep(K_MSEC(POWER_CYCLE_MS));
+				if (device_boot(dev) == 0 &&
+				    configure_signalling(dev) == 0) {
+					LOG_WRN("  reboot after laser fault "
+						"SUCCEEDED");
+				} else {
+					LOG_ERR("  reboot after laser fault "
+						"FAILED — the part is not "
+						"coming back on its own");
+				}
+				k_mutex_unlock(&data->lock);
+			}
 		} else if (fsm == 0x03) {
 			LOG_ERR("  device is STILL STREAMING with no frame "
 				"ready: it genuinely has not finished. That is "
