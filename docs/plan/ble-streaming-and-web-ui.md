@@ -310,15 +310,86 @@ back to being what decides whether the track tier has any headroom.
    neighbour with a gate? Nearest-neighbour is probably enough at 2 fps and is far cheaper.
 4. **What "an activity" is.** A track that persists for N frames? One that moves more than
    X metres? This is the definition the count depends on, and it is not yet decided.
-5. **Standing-still people.** A motion-based counter loses anyone who stops moving. Does the
-   count persist a stationary track, and for how long? For room occupancy — people who stay
-   put — this is not a corner case, it is the main case, and it is the sharpest tension
-   between "detect movement" and "count occupancy".
+5. ~~**Standing-still people.**~~ **ANSWERED, Victor 2026-09-10: both signals, fused.**
+   Background subtraction finds people who sit still; motion tracking follows people who
+   move. See "Fusing the two" below — this turns out to resolve the frame-rate tension as
+   well, and to be the strongest part of the design.
 6. **Watch-tier trigger**: what change threshold wakes the track tier without firing on
    noise, sunlight, or a curtain.
 7. **Whether background subtraction still works at all** at oblique incidence, where a wall
    seen at a grazing angle returns very little — expect the reliable-zone percentage from
    calibration to be much lower than the overhead case.
+
+#### Fusing the two — and why this is the right answer
+
+**Victor, 2026-09-10: it does both.** Calibration gives the static signal, frame-to-frame
+differencing gives the moving one. They are complementary, and neither works alone:
+
+| | Catches | Misses / confuses |
+|---|---|---|
+| **Background subtraction** | anyone present, moving or not | a coat on a chair, a moved bin, a delivered box — anything absent at calibration |
+| **Motion differencing** | anyone walking, and confirms a blob is alive | anyone who sits down and stops |
+
+Fused, each covers the other's failure. **Motion promotes a blob to "person"; background
+subtraction keeps it counted once it stops.**
+
+##### The track lifecycle
+
+This is the mechanism, and it is what makes "sitting still" work:
+
+| State | Enter when | Counted? |
+|---|---|---|
+| `TENTATIVE` | a foreground blob appears that was not in the background | no |
+| `CONFIRMED` | that blob shows motion, or persists with person-like size and distance | **yes** |
+| `DORMANT` | a confirmed track stops moving but its blob is still in foreground | **yes** — this is the person who sat down |
+| `LOST` | the blob leaves foreground for more than `lost_timeout` | no |
+
+A person walks in (motion → `CONFIRMED`), sits (motion stops → `DORMANT`, still counted),
+gets up and leaves (blob gone → `LOST`). A coat dropped on a chair enters `TENTATIVE`, never
+shows motion, and either stays uncounted or is absorbed into the background — a policy
+decision, not an accident.
+
+##### The trap: never adapt the background under a live track
+
+Background models normally adapt slowly, to absorb furniture that moved. Do that naively
+here and **a person sitting still is absorbed into the background and vanishes from the
+count** — the exact failure this design exists to avoid.
+
+So background update must be **selective**: adapt only zones not covered by a `CONFIRMED` or
+`DORMANT` track. This is a small rule and it is the difference between the algorithm working
+and quietly losing everyone who settles.
+
+##### It also resolves the frame-rate problem
+
+The two-tier idea above stops being an energy optimisation and becomes **structurally
+required**, because the two signals genuinely need different rates:
+
+| Tier | Rate | Job |
+|---|---|---|
+| **Watch** | 0.05–0.2 Hz | Are `DORMANT` blobs still there? Has new foreground appeared? Background subtraction only — no association, so no rate requirement. |
+| **Track** | 1.5–2.5 fps | Association and motion, run only while something is moving. |
+
+A `DORMANT` person needs nothing faster than the watch tier — the blob is not going
+anywhere, and confirming it every 10 s is enough. The fast rate is only needed *while
+someone is walking*, which in a room where people sit is a small fraction of the time.
+
+**So the duty cycle scales with activity, not with time**, and the multi-month claim
+survives after all — for rooms where people mostly sit, which is the stated use case. That
+is a much better result than a fixed duty cycle, and it is a genuine contribution rather
+than a tuning choice: **the energy cost of occupancy sensing becomes a function of how much
+the occupants move.**
+
+##### What this adds to the plan's open questions
+
+- **What promotes `TENTATIVE` to `CONFIRMED` without motion?** A person already seated when
+  the system starts has never moved in view. Size, distance and shape plausibility have to
+  carry it, or the system waits for the first fidget.
+- **`lost_timeout` and `dormant_timeout`.** Too short and a still person is dropped; too
+  long and a departed one is counted for minutes.
+- **Does a `DORMANT` track survive a watch-tier frame where its blob is marginal?** At
+  oblique incidence and long range, a seated person may drop below threshold intermittently.
+- **What wakes the track tier?** A foreground-zone count change beyond a threshold is the
+  obvious trigger, but it must not fire on sunlight, a curtain, or noise.
 
 #### Where it sits
 

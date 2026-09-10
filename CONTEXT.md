@@ -73,9 +73,12 @@ schematic and the pin assignments.
    overhead head-detection design and invalidates fixed blob gates (zone footprint swings
    4x across the frame) and the 0.1 Hz frame rate (tracking needs >=1.5 fps, which is 15-30x
    faster and takes duty cycle to ~100%). Likely answer is adaptive two-tier duty cycling,
-   which may be the paper's real contribution. **Settle first: does the count have to
-   include people who are sitting still?** A motion-based counter loses them, and for room
-   occupancy that is the main case rather than a corner case. See
+   which may be the paper's real contribution. ANSWERED 2026-09-10: it does BOTH -
+   background subtraction for people sitting still, motion tracking for people walking,
+   fused via a track lifecycle (TENTATIVE -> CONFIRMED -> DORMANT -> LOST). Motion promotes
+   a blob to "person", background subtraction keeps it counted once it stops. That also
+   makes the two-tier duty cycle structurally required rather than an optimisation, so the
+   battery claim survives. See
    `docs/plan/ble-streaming-and-web-ui.md`, "TODO - Tier 4 is superseded by a corner mount".
 1. **Build and flash the board test.** `west build -b water_sense_board/nrf54l15/cpuapp
    firmware_test`, then `west flash`, then open RTT. It touches no
