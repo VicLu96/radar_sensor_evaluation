@@ -614,6 +614,68 @@ static void tof_capture_and_log(void)
 		}
 	}
 
+	/*
+	 * Amplitude, split by validity. This is the measurement that says which
+	 * way to go when zones come back empty, and it costs nothing because the
+	 * driver already reads amplitude on every frame and we were discarding
+	 * it.
+	 *
+	 *   invalid zones with near-zero amplitude -> no light is coming back.
+	 *     Raise exposure, or accept that nothing is there: a dark, angled or
+	 *     distant surface genuinely returns nothing, and no register fixes
+	 *     physics.
+	 *
+	 *   invalid zones with amplitude comparable to the valid ones -> signal
+	 *     IS returning and something is rejecting it. That is a threshold or
+	 *     configuration problem, and worth chasing in registers.
+	 *
+	 * Without this split the two are indistinguishable, and they need
+	 * opposite responses.
+	 */
+	{
+		uint32_t amp_v = 0, amp_i = 0, amb_sum = 0;
+		uint16_t nv = 0, ni = 0;
+		uint16_t total = (uint16_t)frame.cols * frame.rows;
+
+		for (uint16_t i = 0; i < total; i++) {
+			const struct vl53l9cx_zone *z = &frame.zone[i];
+
+			amb_sum += z->ambient;
+			if (z->valid) {
+				amp_v += z->amplitude;
+				nv++;
+			} else {
+				amp_i += z->amplitude;
+				ni++;
+			}
+		}
+
+		LOG_INF("  amplitude  valid mean %u (n=%u)   INVALID mean %u "
+			"(n=%u)   ambient mean %u",
+			nv ? amp_v / nv : 0U, nv,
+			ni ? amp_i / ni : 0U, ni,
+			total ? amb_sum / total : 0U);
+
+		if (ni > 0U) {
+			uint32_t mv = nv ? amp_v / nv : 0U;
+			uint32_t mi = amp_i / ni;
+
+			if (mi * 4U < mv || mi < 16U) {
+				LOG_INF("    invalid zones have little or no "
+					"return: raise CONFIG_VL53L9CX_EXPOSURE_MS "
+					"(now %u), or those directions genuinely "
+					"have no target within range.",
+					CONFIG_VL53L9CX_EXPOSURE_MS);
+			} else {
+				LOG_WRN("    invalid zones are receiving "
+					"comparable signal to the valid ones, so "
+					"light IS coming back and something is "
+					"rejecting it. That is a threshold or "
+					"configuration problem, not exposure.");
+			}
+		}
+	}
+
 	LOG_INF("  distances in cm (\'   .\' = no target):");
 
 	for (uint8_t r = 0; r < frame.rows; r++) {

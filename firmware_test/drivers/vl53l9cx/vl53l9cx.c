@@ -1042,6 +1042,42 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 	 * Requires STANDBY, like set_context and set_binning above, which is why
 	 * it belongs here rather than at boot.
 	 */
+	/*
+	 * The two profile values UM3683 section 2.5.5.1 recommends and nothing
+	 * in ST's driver writes.
+	 *
+	 * DISTANCE_SWITCHOVER (context 2 at 0x057C) resets to 0x1F4 = 500; the
+	 * guideline says 650. It is the threshold at which the firmware picks
+	 * the long-distance result over the short one, so a value set too low
+	 * makes the device commit to a short-range answer for targets that
+	 * needed the long-range path — and a wrong choice there can end as no
+	 * answer at all.
+	 *
+	 * DISTANCE_RTN_SHORT_OFFSET resets to 0; the guideline says 2. Signed,
+	 * -64..63, and documented as having no effect on pulse position.
+	 *
+	 * Written before the exposure below because all of these are context
+	 * settings and the device is in STANDBY for the whole block.
+	 */
+	{
+		int pret = vl53l9_write16((void *)dev,
+			VL53L9_REGADDR_STREAM_SWITCHOVER_DIST(VL53L9_CONTEXT_LONG),
+			650U);
+
+		if (pret == VL53L9_ERROR_NONE) {
+			pret = vl53l9_write8((void *)dev,
+				VL53L9_REGADDR_STREAM_RTN_SHORT_OFFSET(VL53L9_CONTEXT_LONG),
+				2U);
+		}
+		if (pret != VL53L9_ERROR_NONE) {
+			LOG_WRN("profile settings (UM3683 2.5.5.1) failed (%s)",
+				vl53l9_errstr(pret));
+		} else {
+			LOG_INF("profile: switchover 650 mm, rtn_short_offset 2 "
+				"(UM3683 2.5.5.1; resets are 500 and 0)");
+		}
+	}
+
 	ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG,
 				  CONFIG_VL53L9CX_EXPOSURE_MS);
 	if (ret != VL53L9_ERROR_NONE) {
