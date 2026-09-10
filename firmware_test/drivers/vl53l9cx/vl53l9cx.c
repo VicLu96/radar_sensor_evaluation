@@ -1280,7 +1280,26 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 	/* This also acknowledges the frame and releases the interrupt pin. */
 	ret = vl53l9_get_frame((void *)dev, data->raw, size);
 	if (ret != VL53L9_ERROR_NONE) {
-		LOG_ERR("get_frame failed (%d)", ret);
+		uint8_t fsm = 0xFF;
+
+		/* Where the device actually was, not where we assumed. ST's
+		 * get_frame refuses unless the FSM reads STREAMING, and the two
+		 * ways to be wrong point in opposite directions: STANDBY means
+		 * the frame finished and the device left streaming before we
+		 * read it; READY_TO_BOOT means it reset underneath us.
+		 */
+		(void)vl53l9_read8((void *)dev, VL53L9_REGADDR_SYSTEM_FSM, &fsm);
+		LOG_ERR("get_frame failed (%s) with FSM 0x%02x (%s)",
+			vl53l9_errstr(ret), fsm,
+			fsm == 0x00 ? "NONE — the part left POWER_OFF state, "
+				      "suspect a supply or the clock"
+			: fsm == 0x01 ? "READY_TO_BOOT — it RESET underneath us"
+			: fsm == 0x02 ? "STANDBY — the frame ended before we "
+					"read it; we waited on a stale or "
+					"spurious interrupt"
+			: fsm == 0x03 ? "STREAMING — state is fine, so the read "
+					"itself failed"
+					: "unknown");
 		ret = -EIO;
 		goto out;
 	}

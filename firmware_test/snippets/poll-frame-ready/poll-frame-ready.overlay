@@ -1,0 +1,4 @@
+/* Remove the data-ready interrupt so the driver polls instead. */
+&tof {
+	/delete-property/ int-gpios;
+};

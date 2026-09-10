@@ -1,0 +1,24 @@
+# Bypass the INTR line and poll frame-ready over I2C instead.
+#
+#   Optional snippets -> tick "poll-frame-ready"
+#
+# A decisive experiment, not a fix. On 2026-09-10 at full resolution the same
+# run produced BOTH failure directions: a frame read that found the device
+# already out of STREAMING (so we waited on an edge that was not a real
+# frame-ready), and a 5-second timeout where no edge arrived at all. Those are
+# opposite faults, and an unreliable INTR line explains both.
+#
+# P0.01 has history here: it was armed before the sensor was powered and had no
+# pull until 2026-09-07, so it spent every bring-up floating with an edge
+# interrupt attached.
+#
+# Deleting int-gpios makes the driver poll the frame-ready register instead. If
+# captures become reliable with this ticked, the interrupt line is the problem
+# and the fault is electrical. If they fail identically, INTR is exonerated and
+# the cause is in the device's own state handling.
+#
+# Not for normal use: polling keeps the CPU awake across the integration time,
+# which is exactly the energy this design exists to avoid spending.
+name: poll-frame-ready
+append:
+  EXTRA_DTC_OVERLAY_FILE: poll-frame-ready.overlay
