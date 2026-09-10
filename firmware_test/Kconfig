@@ -3,6 +3,44 @@
 
 mainmenu "water_sense_board bring-up test"
 
+choice APP_TOF_RES
+	prompt "ToF capture resolution"
+	default APP_TOF_RES_54X42
+	help
+	  Which resolution vl53l9cx_capture() asks for.
+
+	  Made a build option on 2026-09-10 for two reasons. Immediately, to
+	  bracket the full-resolution frame timeouts: if 24x20 works and 54x42
+	  does not, the fault scales with frame size or with per-zone signal, and
+	  that is a different search than if both fail.
+
+	  Longer term this is the axis the paper sweeps - energy against zone
+	  count - so it wants to be a build switch rather than an edit.
+
+	  Note the FAMILIES DIFFER. 4x4, 8x6 and 24x20 are square formats that
+	  transmit a larger array and crop; 12x10, 18x14 and 54x42 are wide. Do
+	  not mix families within one energy-versus-zones curve.
+
+config APP_TOF_RES_4X4
+	bool "4x4 (square family)"
+
+config APP_TOF_RES_8X6
+	bool "8x6 (square family)"
+
+config APP_TOF_RES_12X10
+	bool "12x10 (wide family)"
+
+config APP_TOF_RES_18X14
+	bool "18x14 (wide family)"
+
+config APP_TOF_RES_24X20
+	bool "24x20 (square family)"
+
+config APP_TOF_RES_54X42
+	bool "54x42 (wide family, full array)"
+
+endchoice
+
 config APP_LOG_FULL_GRID
 	bool "Print the full distance grid for every capture"
 	default y

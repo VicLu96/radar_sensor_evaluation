@@ -158,7 +158,19 @@ static const struct axis_layout *layout;
  * It is also the strongest argument for Fast-mode Plus later. UM3683 Table 1
  * quotes I2C reads implying ~1 MHz, which would cut this to ~134 ms.
  */
+#if defined(CONFIG_APP_TOF_RES_4X4)
+#define TOF_RES  VL53L9CX_RES_4X4
+#elif defined(CONFIG_APP_TOF_RES_8X6)
+#define TOF_RES  VL53L9CX_RES_8X6
+#elif defined(CONFIG_APP_TOF_RES_12X10)
+#define TOF_RES  VL53L9CX_RES_12X10
+#elif defined(CONFIG_APP_TOF_RES_18X14)
+#define TOF_RES  VL53L9CX_RES_18X14
+#elif defined(CONFIG_APP_TOF_RES_24X20)
+#define TOF_RES  VL53L9CX_RES_24X20
+#else
 #define TOF_RES  VL53L9CX_RES_54X42
+#endif
 
 static const struct device *const tof = DEVICE_DT_GET(TOF_NODE);
 
