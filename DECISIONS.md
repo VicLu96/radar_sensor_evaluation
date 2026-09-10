@@ -1311,3 +1311,24 @@ Buffer also raised 4 KB -> 16 KB, recorded as a mitigation and not the fix.
 Cost: RAM 45,232 -> 57,520 B (12 KB of that is the buffer), 29.9% of 188 KB. FLASH
 66,404 B.
 
+## 2026-09-10 - IMU refitted and re-enabled; the bus finally has a control
+What: Victor refitted the LSM6DSV15BXTR, so CONFIG_APP_ENABLE_IMU goes back to y and the
+accelerometer is now read on every heartbeat rather than once at startup.
+Why it matters beyond the IMU: it is the SECOND DEVICE ON THE SAME I2C BUS, and therefore
+the only control this project has. Every VL53L9CX NAK so far has had two possible
+explanations - a bus fault or a sensor fault - and main.c has been saying so in as many
+words since the part was unfitted. With the IMU answering at 0x6B, SDA P1.13, SCL P1.08,
+the pull-ups, the pinctrl and the 400 kHz bitrate are all proven, and a silent 0x29 is
+unambiguously on the ToF side.
+Reading it every beat rather than once is deliberate: a single startup probe proves the bus
+worked at t=0, whereas a per-heartbeat read re-exercises it once a second for as long as
+the board runs. If the ToF keeps NAKing while the IMU keeps answering in the same log, that
+is not a bus problem, and it is proven continuously rather than inferred from one probe.
+The existing sanity check carries over: a board at rest reads one gravity, and
+imu_read_and_log() warns if |a| is outside 800-1200 mg. Two axes at exactly 0 means the
+block base is wrong; three plausible but small means the scale is. That is the check that
+caught the 16BX reversed axis order (Z,Y,X) on 2026-09-05.
+No driver changes. All three functions - pick_variant(), imu_configure(),
+imu_read_and_log() - were already written and were only gated off.
+FLASH 69,340 B, RAM 60,784 B.
+

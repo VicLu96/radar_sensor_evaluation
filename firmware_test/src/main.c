@@ -505,8 +505,15 @@ int main(void)
 		}
 	}
 
-	if (!imu_ok) {
+	if (imu_ok) {
+		LOG_INF("IMU is up. THE I2C BUS IS THEREFORE PROVEN: SDA P1.13, "
+			"SCL P1.08, the pull-ups and the 400 kHz bitrate all "
+			"work. If the VL53L9CX below still does not answer, the "
+			"fault is on the ToF side of the bus and nowhere else.");
+	} else {
 		LOG_WRN("IMU not usable — continuing without it.");
+		LOG_WRN("  The bus stays UNPROVEN, so a silent VL53L9CX below "
+			"has two possible explanations rather than one.");
 	}
 #else
 	LOG_INF("IMU stage disabled (CONFIG_APP_ENABLE_IMU=n) — part not fitted.");
@@ -541,6 +548,26 @@ int main(void)
 
 	while (true) {
 		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
+
+#if defined(CONFIG_APP_ENABLE_IMU)
+		/*
+		 * Accelerometer on every beat.
+		 *
+		 * Two jobs, and the second is the reason it is here rather than
+		 * once at startup. It shows the IMU is alive and sane — a board
+		 * at rest reads one gravity, which imu_read_and_log() checks
+		 * automatically — and it re-exercises the I2C bus once a second
+		 * for as long as the board is running.
+		 *
+		 * That second job is what makes a silent VL53L9CX diagnostic.
+		 * A bus that keeps working for the IMU while the ToF keeps
+		 * NAKing is not a bus problem, and this line proves it
+		 * continuously rather than once at boot.
+		 */
+		if (imu_ok) {
+			imu_read_and_log();
+		}
+#endif
 
 		/*
 		 * Retry the sensor bring-up until it works, roughly every ten
