@@ -902,6 +902,28 @@ static int configure_signalling(const struct device *dev)
 			"respond to the SYNC_IN pin", vl53l9_errstr(ret));
 	}
 
+	/*
+	 * DSS_DEFAULT_INIT_LUT, which ST's _init_default_config() forgets.
+	 *
+	 * UM3683 section 2.5.4.3 lists it among the DSS guidelines and says to
+	 * write 3; the reset value is 0 (Table 14) and ST writes the other three
+	 * DSS settings but not this one. DSS is dynamic SPAD selection, so the
+	 * start-up LUT choice affects which SPADs are enabled on the first frame
+	 * and therefore how much signal a weak zone collects.
+	 */
+	{
+		int dret = vl53l9_write8((void *)dev,
+					 VL53L9_REGADDR_DSS_DEFAULT_INIT_LUT, 3U);
+
+		if (dret != VL53L9_ERROR_NONE) {
+			LOG_WRN("DSS_DEFAULT_INIT_LUT write failed (%s)",
+				vl53l9_errstr(dret));
+		} else {
+			LOG_INF("DSS_DEFAULT_INIT_LUT set to 3 (UM3683 2.5.4.3 "
+				"— ST's own default config omits this)");
+		}
+	}
+
 	if (!data->use_interrupt) {
 		LOG_WRN("no int-gpios: falling back to polling frame-ready. "
 			"This keeps the CPU awake across integration, which is "
@@ -1006,6 +1028,29 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 			"device to be in STANDBY", g->binning, ret);
 		return -EIO;
 	}
+
+	/*
+	 * Exposure. Not optional, and its absence is why zones came back empty.
+	 *
+	 * vl53l9_set_exposure() programs NB_SHOT_STEP_n (UM3683 Table 13,
+	 * 0x0580 + n*4, reset 0x0). Zero shots per step still produces frames -
+	 * the device streams, the counter increments, the timing looks right -
+	 * but a zone with a weak return has nothing integrated and reports no
+	 * target. ST's own reference always sets this via
+	 * vl53l9_utils_set_profile(); we never did.
+	 *
+	 * Requires STANDBY, like set_context and set_binning above, which is why
+	 * it belongs here rather than at boot.
+	 */
+	ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG,
+				  CONFIG_VL53L9CX_EXPOSURE_MS);
+	if (ret != VL53L9_ERROR_NONE) {
+		LOG_ERR("set_exposure(%u ms) failed (%s) — zones with a weak "
+			"return will come back invalid",
+			CONFIG_VL53L9CX_EXPOSURE_MS, vl53l9_errstr(ret));
+		return -EIO;
+	}
+	LOG_INF("exposure %u ms per frame", CONFIG_VL53L9CX_EXPOSURE_MS);
 
 	data->binning = g->binning;
 	data->cols = g->cols;

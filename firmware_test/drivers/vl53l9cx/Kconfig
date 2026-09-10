@@ -64,6 +64,30 @@ config VL53L9CX_XSHUT_SETTLE_MS
 	  a fault — the driver's probe retries against a deadline for exactly
 	  this reason, so this value being slightly short is recoverable.
 
+config VL53L9CX_EXPOSURE_MS
+	int "Exposure time per frame, milliseconds"
+	default 8
+	range 1 100
+	help
+	  Passed to vl53l9_set_exposure(), which programs NB_SHOT_STEP_n - the
+	  number of VCSEL shots the device integrates per step.
+
+	  THE DRIVER DID NOT CALL THIS UNTIL 2026-09-10, so the register sat at
+	  its reset value of ZERO. Frames still arrive with zero shots, but zones
+	  with a weak return have nothing to integrate and come back invalid,
+	  which is exactly what the first working captures showed: 73 of 120
+	  zones valid, the rest reported as no-target.
+
+	  8 ms is ST's own value for their long-range profile
+	  (VL53L9_USECASE_AR_RANGE, vl53l9_utils.c:37); their profiles span 4 to
+	  10 ms. More exposure means more valid zones at distance and better
+	  ambient rejection.
+
+	  It is also the most direct energy knob on the whole device: exposure is
+	  time with the VCSEL firing, so this multiplies the active-mode energy
+	  the paper is about. Sweep it against valid-zone count before settling
+	  on a number, and record both.
+
 config VL53L9CX_LOG_BOOT_TIME
 	bool "Log firmware blob upload duration at init"
 	default y
