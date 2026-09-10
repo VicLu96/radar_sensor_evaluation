@@ -234,6 +234,103 @@ they cross. A build-time constant would make that sweep a firmware rebuild per p
   and that zone then never detects. Report the reliable-zone count and the mean background
   distance so an obviously wrong calibration is visible.
 
+### TODO — Tier 4 is superseded by a corner mount. This needs its own plan.
+
+**Victor, 2026-09-10: mount the sensor at an angle in a ceiling corner, detect blobs that
+MOVE, treat each as an activity, and count those as people.**
+
+That is a different sensor geometry and a different algorithm from everything above, and it
+invalidates three things I had just settled. **This is a TODO, not a design** — it needs
+planning properly before any firmware is written. What follows is what a plan has to solve,
+and the arithmetic that constrains it.
+
+#### What it invalidates
+
+**1. Head detection is gone.** From directly overhead, a head is the closest point on a
+person — that was the entire basis for counting heads instead of blobs. From a corner at an
+angle, the nearest point is whatever body part happens to face the sensor, and it changes as
+someone turns or walks. Local minima stop meaning "head".
+
+**2. Fixed blob-size gates are meaningless.** The oblique view makes zone footprint a
+function of range:
+
+| Range | Zone footprint | A 45 cm person spans |
+|---|---|---|
+| 2 m | ~3 cm | **~13 zones** across |
+| 4 m | ~7 cm | ~6 zones |
+| 8 m | ~14 cm | **~3 zones** |
+
+That is a **4× swing linearly, ~16× in area**, inside one frame. `min_blob_zones` and
+`max_blob_zones` must become functions of the measured distance, not constants. At 45° tilt
+from 2.7 m the slant range spans roughly **3.0–6.6 m** across the field of view; at 30° tilt
+the far edge reaches beyond 15 m, where a person is 2–3 zones and almost certainly below the
+noise floor.
+
+**3. The frame rate assumption breaks, and this is the serious one.** Tracking movement
+requires associating a blob in one frame with the same blob in the next. A walking person
+covers 1.4 m/s:
+
+| Rate | Movement between frames | Usable? |
+|---|---|---|
+| **0.1 Hz** (the room-dwell plan) | **14 m** | No. No correspondence is possible at all. |
+| 0.5 Hz | 2.8 m | No — further than the spacing between people. |
+| **1.5 Hz** | 0.9 m | Marginal, if people stay >1 m apart. |
+| 2.5 Hz | 0.6 m | Workable. |
+
+**Motion tracking needs ≥1.5 fps — fifteen to thirty times the rate
+[room-occupancy.md](room-occupancy.md) is built on.** At 54×42 over 400 kHz the ceiling is
+~2.5 fps, so it is *just* achievable with no margin, and duty cycle goes to essentially
+**100%**. The multi-month battery claim does not survive that.
+
+#### The resolution this probably needs, and why it may be the paper
+
+The tension is real but it points somewhere good: **adaptive two-tier duty cycling.**
+
+- **Watch tier**: 0.05–0.2 Hz, low resolution, tiny energy. Answers only "has anything
+  changed since the background?"
+- **Track tier**: burst to 1.5–2.5 fps at full resolution when the watch tier fires, run
+  the tracker, count the activities, then drop back.
+
+Energy then scales with *occupancy* rather than with time, which is exactly the
+energy-accuracy trade-off the paper claims to be about — and it is a stronger result than a
+fixed duty cycle, because the interesting quantity becomes the cost of a *detection event*
+rather than a frame.
+
+It also makes 1 MHz I²C matter again. [frame-rate-budget.md](frame-rate-budget.md) demoted
+that to a tuning detail when the goal became room dwell; at 6.2 fps instead of 2.5 it is
+back to being what decides whether the track tier has any headroom.
+
+#### What the plan has to answer
+
+1. **Tilt angle and mounting height**, because every range figure above depends on them, and
+   30° versus 45° is the difference between a 6.6 m and a 17 m far edge.
+2. **Distance-normalised blob gating** — the size model, and what it does when a person
+   straddles a big range gradient.
+3. **Association**: centroid plus size plus mean distance? A Kalman filter, or nearest
+   neighbour with a gate? Nearest-neighbour is probably enough at 2 fps and is far cheaper.
+4. **What "an activity" is.** A track that persists for N frames? One that moves more than
+   X metres? This is the definition the count depends on, and it is not yet decided.
+5. **Standing-still people.** A motion-based counter loses anyone who stops moving. Does the
+   count persist a stationary track, and for how long? For room occupancy — people who stay
+   put — this is not a corner case, it is the main case, and it is the sharpest tension
+   between "detect movement" and "count occupancy".
+6. **Watch-tier trigger**: what change threshold wakes the track tier without firing on
+   noise, sunlight, or a curtain.
+7. **Whether background subtraction still works at all** at oblique incidence, where a wall
+   seen at a grazing angle returns very little — expect the reliable-zone percentage from
+   calibration to be much lower than the overhead case.
+
+#### Where it sits
+
+This does **not** block the BLE and UI work. Phases 0–5 are instrumentation and are
+unchanged: streaming frames, configuring the sensor and seeing the picture are needed
+whichever algorithm runs. Phases 6–8 as written assume the overhead mount and should be
+treated as **on hold** until this is planned.
+
+**Point 5 is the one to settle first.** If the deployed goal is counting people who sit
+still in a room, a purely motion-based counter is the wrong instrument no matter how well it
+is built — and that is a question about the product, not the code.
+
 ### Commands, not settings
 
 `START`, `STOP`, `SINGLE_SHOT`, `REBOOT`, **`CALIBRATE`**, **`CLEAR_CALIBRATION`**.

@@ -68,6 +68,15 @@ schematic and the pin assignments.
    where the paper is
 
 ## Next session — TODO, in order
+0. **PLAN THE CORNER-MOUNT MOTION ALGORITHM.** Victor, 2026-09-10: sensor angled in a
+   ceiling corner, detect moving blobs, count each as a person. This supersedes the
+   overhead head-detection design and invalidates fixed blob gates (zone footprint swings
+   4x across the frame) and the 0.1 Hz frame rate (tracking needs >=1.5 fps, which is 15-30x
+   faster and takes duty cycle to ~100%). Likely answer is adaptive two-tier duty cycling,
+   which may be the paper's real contribution. **Settle first: does the count have to
+   include people who are sitting still?** A motion-based counter loses them, and for room
+   occupancy that is the main case rather than a corner case. See
+   `docs/plan/ble-streaming-and-web-ui.md`, "TODO - Tier 4 is superseded by a corner mount".
 1. **Build and flash the board test.** `west build -b water_sense_board/nrf54l15/cpuapp
    firmware_test`, then `west flash`, then open RTT. It touches no
    peripheral: if it prints a heartbeat, the toolchain, the SoC target, the flash offset
