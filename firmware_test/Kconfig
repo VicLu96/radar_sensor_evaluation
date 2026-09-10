@@ -3,6 +3,22 @@
 
 mainmenu "water_sense_board bring-up test"
 
+config APP_LOG_FULL_GRID
+	bool "Print the full distance grid for every capture"
+	default y
+	help
+	  Prints one line per row of the frame.
+
+	  Cheap at 12x10 - ten lines. At 54x42 it is 42 lines of 216 characters,
+	  about 8.9 KB per capture, and RTT will start dropping when that lands
+	  in a burst: the backend latches host_present=false once a write
+	  exhausts its retries and then discards everything until a write
+	  succeeds again.
+
+	  Leave it on while you are looking at the picture. Turn it off for
+	  duty-cycle and energy runs, where the summary and the amplitude split
+	  carry the information and the grid is just bandwidth.
+
 config APP_HOLD_SENSOR_POWER
 	bool "Drive the sensor power enable high and keep it there"
 	default y

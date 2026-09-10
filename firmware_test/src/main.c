@@ -139,7 +139,26 @@ static const struct axis_layout *layout;
  * preview of what full resolution sees, at a twentieth of the bus time, and it
  * prints as a grid a human can actually read.
  */
-#define TOF_RES  VL53L9CX_RES_12X10
+/*
+ * Full resolution: 54x42, the whole array. 2268 zones.
+ *
+ * The goal is the highest resolution first and duty-cycling afterwards, so this
+ * is deliberately the expensive end of the range. What it costs, measured
+ * rather than guessed:
+ *
+ *   frame bytes   3 * 2268 * 2 + 2268/2 + 100 = 14,842
+ *   bus time      ~334 ms at 400 kHz, against 40 ms for 12x10
+ *   grid log      42 rows x 216 chars = 8.9 KB per capture
+ *
+ * All three matter. The bus time is why CONFIG_I2C_NRFX_TRANSFER_TIMEOUT had to
+ * go up, the log volume is why the grid is now behind its own Kconfig, and the
+ * 334 ms is the number the energy model needs: it is CPU-awake, sensor-active
+ * time paid on every single frame, and it is what duty-cycling has to amortise.
+ *
+ * It is also the strongest argument for Fast-mode Plus later. UM3683 Table 1
+ * quotes I2C reads implying ~1 MHz, which would cut this to ~134 ms.
+ */
+#define TOF_RES  VL53L9CX_RES_54X42
 
 static const struct device *const tof = DEVICE_DT_GET(TOF_NODE);
 
@@ -528,7 +547,7 @@ static void tof_capture_and_log(void)
 	int64_t took;
 	int ret;
 
-	ret = vl53l9cx_capture(tof, TOF_RES, &frame, K_SECONDS(2));
+	ret = vl53l9cx_capture(tof, TOF_RES, &frame, K_SECONDS(5));
 	took = k_uptime_get() - t0;
 
 	if (ret < 0) {
@@ -674,6 +693,14 @@ static void tof_capture_and_log(void)
 					"configuration problem, not exposure.");
 			}
 		}
+	}
+
+	if (!IS_ENABLED(CONFIG_APP_LOG_FULL_GRID)) {
+		LOG_INF("  grid not printed (CONFIG_APP_LOG_FULL_GRID=n). At "
+			"%ux%u it is %u lines and about %u KB per capture.",
+			frame.cols, frame.rows, frame.rows,
+			(unsigned int)((frame.rows * (frame.cols * 4 + 6)) / 1024));
+		return;
 	}
 
 	LOG_INF("  distances in cm (\'   .\' = no target):");

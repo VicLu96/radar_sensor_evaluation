@@ -1396,4 +1396,31 @@ Still open: no IMU output in this log across 22 heartbeats despite CONFIG_APP_EN
 so imu_ok was false. The startup probe result is not in the captured log, so the reason is
 unknown. Needs the first second of a fresh capture.
 FLASH 71,204 B, RAM 60,792 B.
+## 2026-09-10 - Full resolution: 54x42, and what it costs
+What: Victor wants maximum resolution first and duty-cycling afterwards, framerate to be
+decided later. TOF_RES is now VL53L9CX_RES_54X42 - the whole array, 2268 zones.
+Three consequences, all measured from the geometry rather than guessed, and each needing
+a change:
+- FRAME SIZE 14,842 bytes (3 planes x 2268 x 2, plus 1134 DSS, plus the 100-byte status
+  line). At 400 kHz that is ~334 ms of bus time against 40 ms for 12x10.
+- I2C TIMEOUT had to go up. The nRF TWIM default is 500 ms, so a 334 ms read would have
+  sat at 67% of budget with only bus overhead in reserve, and a timeout there calls
+  i2c_nrfx_twim_recover_bus() - which would have presented as a sensor fault rather than
+  as the tight deadline it was. Now 2000 ms. The ST protocol review flagged this on
+  2026-09-06 as something to fix before running the full-resolution arm.
+- LOG VOLUME. The grid is 42 rows of 216 characters, about 8.9 KB per capture, arriving as
+  a burst. RTT drops that once the backend latches host_present=false. The grid is now
+  behind CONFIG_APP_LOG_FULL_GRID (default y, and it says so when off), and the RTT buffer
+  goes 16 KB -> 32 KB. Turn the grid off for energy runs, where the summary and the
+  amplitude split carry the information and the grid is only bandwidth.
+Capture timeout raised 2 s -> 5 s; the old value was sized when a read took 40 ms.
+RAM 60,792 -> 77,176 B (40.1% of 188 KB), almost all of it the larger RTT buffer. The frame
+struct was already full-size: it is static and dimensioned VL53L9CX_ZONES_FULL, so
+switching resolution costs nothing there.
+FOR THE ENERGY WORK, the number that matters is the 334 ms. It is CPU-awake,
+sensor-active time paid on every frame, it does not shrink with duty cycle, and it is what
+duty-cycling has to amortise. It is also the strongest argument for Fast-mode Plus: UM3683
+Table 1 quotes I2C reads implying ~1 MHz, which would cut it to ~134 ms. That needs
+clock-frequency changed in the board file (Victor's) and probably stronger pull-ups, so it
+is his call and not urgent until the sensor work settles.
 
