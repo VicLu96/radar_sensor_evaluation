@@ -619,6 +619,28 @@ static int device_boot(const struct device *dev)
 	int64_t t0;
 	int ret;
 
+	/*
+	 * Forget the applied resolution. THIS IS NOT BOOKKEEPING.
+	 *
+	 * apply_resolution() returns early when data->binning already matches
+	 * what is being asked for, which is right while the device keeps
+	 * running. But a boot resets every one of those registers - context,
+	 * binning, the switchover pair, exposure - back to their defaults, and
+	 * exposure's default is ZERO SHOTS PER STEP.
+	 *
+	 * Without this line the cache still holds the old binning after a
+	 * reboot, apply_resolution() skips the whole block, and every capture
+	 * from then on runs against a device configured with reset values. The
+	 * recovery path would appear to succeed and then never produce a frame
+	 * again - which is exactly the pattern Victor spotted on 2026-09-10:
+	 * "=== retry SUCCEEDED ===" followed immediately by another failure.
+	 *
+	 * Before the caching was added on 2026-09-10 every capture re-applied
+	 * these writes, so a reboot was self-healing by accident. The
+	 * optimisation removed that without replacing it.
+	 */
+	data->binning = 0;
+
 	ret = power_up(dev);
 	if (ret < 0) {
 		return ret;
