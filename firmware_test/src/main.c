@@ -383,6 +383,65 @@ static void tof_report_config(void)
 				  "nothing is driving it. This is a firmware "
 				  "fault, not a wiring one");
 	}
+
+	/*
+	 * P0.02, the sensor power enable — the same question, asked because on
+	 * 2026-09-10 the pad read LOW while the driver was holding it high.
+	 *
+	 * Three things have to be true for that reading to mean a board fault,
+	 * and this checks the two that are testable in software:
+	 *
+	 *   CTRLSEL must be GPIO. If some peripheral owns the pad, our GPIO
+	 *   write goes nowhere and the readback is measuring that peripheral,
+	 *   not a short. (Devicetree says nothing else claims P0.02, but that
+	 *   is an argument; this is a measurement.)
+	 *
+	 *   DIR must be output and the pull must be off. A pin left as an input,
+	 *   or with a pull-down enabled, reads low for reasons that have nothing
+	 *   to do with the board.
+	 *
+	 * If all three read as expected and the pad is still low, the SoC is
+	 * genuinely driving high into something that will not let it, and the
+	 * fault is electrical.
+	 */
+	{
+		uint32_t cnf = NRF_P0->PIN_CNF[2];
+		uint32_t sel = (cnf & GPIO_PIN_CNF_CTRLSEL_Msk)
+			       >> GPIO_PIN_CNF_CTRLSEL_Pos;
+		uint32_t dir = (cnf & GPIO_PIN_CNF_DIR_Msk)
+			       >> GPIO_PIN_CNF_DIR_Pos;
+		uint32_t pull = (cnf & GPIO_PIN_CNF_PULL_Msk)
+				>> GPIO_PIN_CNF_PULL_Pos;
+		uint32_t drive0 = (cnf & GPIO_PIN_CNF_DRIVE0_Msk)
+				  >> GPIO_PIN_CNF_DRIVE0_Pos;
+		uint32_t drive1 = (cnf & GPIO_PIN_CNF_DRIVE1_Msk)
+				  >> GPIO_PIN_CNF_DRIVE1_Pos;
+
+		LOG_INF("  P0.02 PIN_CNF = 0x%08x: CTRLSEL %u (%s), DIR %s, "
+			"PULL %s, DRIVE %u/%u", cnf, sel,
+			sel == 0 ? "GPIO — ours to drive, as it should be"
+				 : "NOT GPIO — a peripheral owns this pad and "
+				   "our writes are going nowhere",
+			dir ? "output" : "INPUT (it should be output)",
+			pull == 1 ? "PULLDOWN — this alone would explain a low "
+				    "reading"
+			: pull == 3 ? "pullup" : "none",
+			drive0, drive1);
+
+		LOG_INF("  P0.02 OUT latch = %u, pad IN = %u",
+			(NRF_P0->OUT >> 2) & 1U, (NRF_P0->IN >> 2) & 1U);
+		if (((NRF_P0->OUT >> 2) & 1U) == 1U &&
+		    ((NRF_P0->IN >> 2) & 1U) == 0U && sel == 0 && dir == 1 &&
+		    pull != 1) {
+			LOG_ERR("  P0.02 IS DRIVEN HIGH AND READS LOW, with the "
+				"pad owned by GPIO, direction output and no "
+				"pulldown. Nothing in firmware explains that: "
+				"the net is being held down externally, or the "
+				"output driver is damaged. Disconnect the "
+				"shield and re-read — if it goes high, the "
+				"fault is on the board.");
+		}
+	}
 	LOG_INF("--------------------------------------------------");
 }
 
