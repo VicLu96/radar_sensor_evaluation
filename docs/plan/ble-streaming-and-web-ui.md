@@ -1,520 +1,402 @@
-# Plan: BLE frame streaming and the Next.js configuration UI
+# Plan: BLE, on-device people counting, and the web interface
 
-Written 2026-09-10. **Nothing here is implemented.** This is the design to build against.
+Consolidated 2026-09-10 from four rounds of design discussion. **Nothing here is
+implemented.** This is the document to build against.
 
 ---
 
-## 0. The rule this crosses, and how to keep it intact
+## Status
 
-`CLAUDE.md`: *"Counts leave the device, frames never do. The privacy claim is architectural
-and free — do not add a raw-frame transmit path."*
+### Decided
 
-This plan streams raw frames. That is a real conflict and it needs a deliberate answer, not
-a footnote.
+| | Decision | When |
+|---|---|---|
+| Mount | Angled, in a **ceiling corner** — not overhead | 2026-09-10 |
+| Ceiling height | 2.5–3 m | 2026-09-10 |
+| People to count | **3–5** simultaneously | 2026-09-10 |
+| Detection | **Both** static (calibrated background) **and** motion, fused | 2026-09-10 |
+| Algorithm location | **On the MCU.** Only the count leaves | 2026-09-10 |
+| Deployed reporting | **Connectionless** — count in the advertisement | 2026-09-10 |
+| Device clock | **None.** The web interface timestamps on receipt | 2026-09-10 |
+| Config persistence | **No NVS.** Defaults on boot | 2026-09-10 |
+| Multi-node | Plan for several now — `instance_id` from the start | 2026-09-10 |
+| Ground truth | **Live observer log**, not frame logging | 2026-09-10 |
 
-**Tier 4 below resolves this rather than excusing it.** The deployed application is
-people counting running ON the MCU, emitting a single integer. That IS the counts-only
-architecture the rule describes. Frame streaming is the instrument used to build and score
-that algorithm — a bench tool, not the product.
+### Blocking
 
-**So: two firmware profiles, and the privacy claim attaches to one of them.**
+1. **The sensor does not yet range reliably.** It boots, uploads its blob and enters
+   streaming, then leaves streaming without producing a frame — UM3683 §2.4 says a laser
+   safety fault does exactly that. Until this is closed, everything below is theory.
+   **Streaming a fault is not progress.**
+2. **Pull-ups need changing** if the track tier is to have headroom — see §3.
+
+### The two things I could not answer and you should
+
+- **Does calibration persist?** Config does not, by decision. But a calibration needs an
+  **empty room** and 16 frames, and losing it on every power cycle is a different cost from
+  re-sending a threshold. Not the same question.
+- **Does the count include people already seated when the node powers up?** They have never
+  moved in view, so motion cannot confirm them. See §6.6 item 4.
+
+---
+
+## 1. Architecture
+
+```
+  VL53L9CX ──I²C──▶ nRF54L15 ──────────────────────────────▶ host
+   14,842 B         · capture                BLE
+   per frame        · calibrate              ├─ STREAMING mode: connection,
+                    · detect + count         │    frames + config + telemetry
+                    · advertise              └─ COUNTING mode: advertisement only,
+                                                  count + activity, nobody connects
+```
+
+**Two firmware profiles**, and the privacy claim attaches to one:
 
 | | `dev-stream` | `deployed` |
 |---|---|---|
-| Frames over BLE | yes | **never** |
-| Counts over BLE | yes | yes |
-| Counting algorithm | runs, and is scored against the frames | runs, and is all there is |
-| Built by | `-S dev-stream` snippet | plain build |
-| Purpose | tuning, calibration, the paper's data | the product |
+| Frames over BLE | yes | **never — not compiled in** |
+| Counting algorithm | runs, scored against the frames | runs, and is all there is |
+| Built by | `-S dev-stream` | plain build |
 
-The tuning work *requires* seeing frames — you cannot choose a resolution, exposure or
-threshold from a count. What the privacy claim actually says is that the **deployed** node
-has no frame transmit path compiled into it, and that is checkable: the GATT frame service
-must not exist in the default build.
-
-**Make it verifiable, not just stated.** A CI or pre-release check that greps the deployed
-`.elf` for the frame-service UUID and fails if present is worth more than any amount of
-documentation. `strings zephyr.elf | grep 53l90002` must return nothing.
-
-Update `CLAUDE.md` to say this explicitly before writing the code, so the rule and the
-build agree.
+`CLAUDE.md` says *"counts leave the device, frames never do"*. Tier 4 **is** that
+architecture; streaming is the instrument used to build and score it. Make it checkable, not
+merely stated: **`strings zephyr.elf | grep 53l90002` must return nothing** in the deployed
+build. Update `CLAUDE.md` to say this before writing code, so the rule and the build agree.
 
 ---
 
-## 1. What we are building
+## 2. The numbers this has to live inside
 
-```
-  VL53L9CX ──I²C 400 kHz──▶ nRF54L15 ──BLE 2M PHY──▶ Chrome ──▶ Next.js UI
-   14,842 B/frame           fragment +               Web           canvas heatmap
-   ~404 ms read             GATT notify              Bluetooth     + config panel
-                                  ▲                                      │
-                                  └───────── config writes ◀─────────────┘
-```
+Measured or derived, not assumed. Sources: [ble-frame-rate.md](ble-frame-rate.md),
+[frame-rate-budget.md](frame-rate-budget.md).
 
-**Established numbers this design has to live inside** (from
-[ble-frame-rate.md](ble-frame-rate.md) and [frame-rate-budget.md](frame-rate-budget.md)):
+| | |
+|---|---|
+| Full frame 54×42 | **14,842 B** (3 planes × 2268 × 2, + 1134 DSS, + 100 status) |
+| I²C read @ 400 kHz | **~404 ms** → **~2.5 fps ceiling** |
+| I²C read @ 1 MHz | ~162 ms → ~6.2 fps |
+| Blob upload on boot | **306 ms**, measured |
+| BLE practical | 105–140 kB/s → a full frame in 106–141 ms |
+| ATT payload @ MTU 247 | 244 B → **62 fragments** per full frame, 19 distance-only |
+| Distance-only | **4,536 B** — the default; other planes opt-in |
 
-- Full frame 54×42 = **14,842 bytes** (3 planes × 2268 × 2, + 1134 DSS, + 100 status)
-- I²C read at 400 kHz ≈ **404 ms** → **~2.5 fps ceiling**, and the bus is the bottleneck
-- BLE practical **105–140 kB/s** → a full frame in 106–141 ms, so BLE has ~3× headroom
-- ATT payload with MTU 247 = **244 bytes** per notification
-
-At 2.5 fps with all three planes that is ~37 kB/s — comfortable. **Distance-only is 4,536
-bytes**, and should be the default; the other planes are opt-in.
+**The bus is the bottleneck, not BLE.** BLE has ~3× headroom at 400 kHz.
 
 ---
 
-## 2. Realtime configuration — what is worth exposing
+## 3. Hardware prerequisites
 
-Chosen from what actually changed behaviour during bring-up, not from what the register map
-allows.
+### 3.1 Pull-ups — fit 1 kΩ
 
-### Tier 1 — the tuning loop, needed constantly
+Currently **4.7 kΩ** (Victor, adjustable). `t_r = 0.8473·R·C`; I²C allows 300 ns at 400 kHz
+and 120 ns at Fast-mode Plus.
 
-| Parameter | Range | Why | Constraint |
+| Bus C | max R @ 400 kHz | max R @ 1 MHz | 4.7 kΩ gives |
 |---|---|---|---|
-| **Resolution** | 4×4 … 54×42 | The paper's main axis: energy vs zone count | STANDBY |
-| **Exposure** | 1–30 ms | Decides valid-zone count. `set_exposure` limit is ST's | STANDBY |
-| **Planes streamed** | distance / +amplitude / +ambient | Bandwidth vs diagnosis. Amplitude is how we tell "no signal" from "rejected signal" | host-side |
-| **Frame period** | 10 ms – 1 s | Autonomous rate. ST rejects outside this | STANDBY |
-| **Sync mode** | manual / autonomous | Single-shot for stepping, autonomous for streaming | STANDBY |
+| 80 pF | 4.4 kΩ | 1.8 kΩ | 319 ns |
+| 100 pF | 3.5 kΩ | **1.4 kΩ** | 398 ns |
+| 150 pF | 2.4 kΩ | 0.94 kΩ | 597 ns |
+
+**4.7 kΩ is already out of spec at 400 kHz.** It works because I²C is static and the
+controller samples late — not because the timing is legal. **1 kΩ** meets Fm+ to ~140 pF and
+fixes 400 kHz as a side effect. Sink current 1.8 mA against a 20 mA requirement. 820 Ω if
+the leads are long; 1.5 kΩ is the most that is still safe for 1 MHz.
+
+*Cost:* 1.8 mA per line while held low — ~0.3 µA average at 0.1 Hz, but ~0.6 mA at 2 fps.
+One more reason the track tier runs only during activity.
+
+### 3.2 `VERIFY` — the IMU may cap the bus at 400 kHz
+
+Several ST parts in the LSM6DSV family are 400 kHz maximum over I²C, with higher rates only
+on I3C. The slowest device on a shared bus wins. **Check the datasheet before buying
+resistors** — it could close the 1 MHz question on its own.
+
+### 3.3 Cleared
+
+The nRF54L15 supports 1 MHz (`TWIM_FREQUENCY_FREQUENCY_K1000` defined → Zephyr's
+`I2C_SPEED_FAST_PLUS` maps through). The sensor supports it (ST's reference sets it
+explicitly). Neither is the obstacle.
+
+---
+
+## 4. Operating modes
+
+| Mode | Radio | Connection | Host behaviour |
+|---|---|---|---|
+| **Streaming** (dev) | connectable adv, ~100 ms | **yes** | connects; frames + config + telemetry |
+| **Counting** (deployed) | connectable adv, 1–10 s, **count in the advert** | **no** | listens to adverts; connects only to reconfigure |
+
+The node stays **connectable in both modes**, so it can always be reached. Only the
+advertising interval changes: slower is cheaper but slower to reach. 1 s default,
+configurable.
+
+### 4.1 The advertisement payload
+
+Manufacturer-specific data (AD type `0xFF`), company ID **`0xFFFF`** — the development
+range, the honest choice for a research node.
+
+```
+u8  protocol_version
+u8  instance_id
+u8  count
+u8  confidence     0..100
+u8  flags          bit0 calibrated
+                   bit1 ACTIVITY NOW
+                   bit2 background stale
+                   bit3 degraded field of view
+                   bit4 sensor fault
+u16 report_seq
+u8  battery_pct
+```
+
+**10 bytes**, well inside the 31-byte legacy advertising budget.
+
+`report_seq` is not decoration: advertising is stateless and repeats the same payload until
+it changes, so without it a listener cannot tell *"still 3 people"* from *"the node has
+stopped updating"*.
+
+**No timestamp** — the receiver stamps on arrival. That removes the RTC, the time-sync
+command and drift, and is more honest than a device clock set once and drifting since.
+
+### 4.2 Why connectionless
+
+An advertising event is three channels at ~0.4 ms ≈ **1.2 ms of radio**; at 1 s that is
+~0.12% duty, at 10 s ~0.012%. A maintained connection costs a comparable event **plus**
+supervision, reconnection logic, and a scheduling constraint that keeps the SoC out of its
+deepest sleep between events. At 0.05–0.2 Hz the radio stops being a term in the budget.
+
+---
+
+## 5. Configuration surface
+
+### Tier 1 — the tuning loop
+
+| Parameter | Range | Constraint |
+|---|---|---|
+| Resolution | 4×4 … 54×42 | STANDBY |
+| Exposure | 1–30 ms (ST's limit) | STANDBY |
+| Planes streamed | distance / +amplitude / +ambient | host-side |
+| Frame period | 10 ms – 1 s (ST's limit) | STANDBY |
+| Sync mode | manual / autonomous | STANDBY |
 
 ### Tier 2 — the energy experiment
 
-| Parameter | Range | Why |
-|---|---|---|
-| **Power mode** | regular / low / ultra-low | ST's three modes, never yet compared |
-| **Duty cycle** | on-time / off-time ms | The stage-4 experiment: `TURN_OFF` between frames vs standby |
-| **Sensor power** | on / off | Manual rail control, for measuring the crossover directly |
-| **AP_CLK hold** | on / off | The A/B that has been outstanding since 2026-09-04 |
+Power mode (regular / low / ultra-low), duty-cycle on/off times, manual rail control,
+AP_CLK hold.
 
-### Tier 3 — profile tuning, rarely touched
+### Tier 3 — profile tuning, behind an "advanced" panel
 
 `DISTANCE_SWITCHOVER`, `DISTANCE_RTN_SHORT_OFFSET`, `DSS_DEFAULT_INIT_LUT`, context
-short/long. Expose as raw register writes behind an "advanced" panel, because getting these
-wrong is how you produce plausible rubbish.
+short/long. Getting these wrong produces plausible rubbish, so they are deliberately awkward
+to reach.
 
-### Tier 4 — people counting on the MCU. **This is the product.**
+> **Every Tier-1 change needs STANDBY.** The handler must stop → `wait_for_standby()` →
+> apply → restart, reporting each step. That exact sequencing is what broke on 2026-09-10.
 
-Everything above is instrumentation. This is what the paper is about, and it is the only
-mode a deployed node runs.
+### Commands
 
-**Why the algorithm belongs on the MCU and not in the browser.** `CLAUDE.md` already says
-it: sensor energy dominates and MCU cycles are nearly free. Two passes over 2268 zones on a
-128 MHz Cortex-M33 is well under a millisecond, against a **404 ms** I²C read. The
-computation is free; the transmission is not. Counting on-device turns 14,842 bytes per
-frame into **8 bytes per report**, and at 0.1 Hz that is the difference between a
-maintained streaming connection and a radio that is off almost always.
-
-#### The scene, and what it implies
-
-From [room-occupancy.md](room-occupancy.md): ceiling-mounted, 0.05–0.2 Hz, and the
-difficulty is **segmentation, not timing**. The field of view is 1.02h × 0.77h, so at a
-2.7 m ceiling the footprint is ~2.8 × 2.1 m and each 54×42 zone covers roughly **5 × 5 cm**.
-
-**Confirmed by Victor 2026-09-10: ~2.5–3 m standard ceiling, and 3–5 people must be counted
-simultaneously.** Both numbers below follow from that and are no longer assumptions.
-
-A seated or standing person's shoulders span ~45 cm ≈ **9 zones across**, and a whole person
-is a blob of roughly **50–150 zones**.
-
-#### Why 3–5 people changes the algorithm, not just the constants
-
-The footprint is **5.88 m²**. Five people is **1.18 m² each** — about 1.1 m of average
-spacing. Areal coverage is only ~11%, so they are not packed, and blobs will often be
-separate.
-
-But *often* is the problem. People in conversation stand 0.5–1 m apart, and at 0.5 m
-separation two 45 cm shoulder spans leave a **5 cm gap — exactly one zone**. One noisy zone
-and the two blobs merge. So with 3–5 people, **merging is not a corner case; it is a
-routine event**, and connected-component counting alone will systematically under-count
-precisely when the room is busiest — which is the worst possible error profile for an
-occupancy sensor.
-
-**Therefore the primary detector is heads, not blobs.** From a ceiling sensor a head is the
-closest point on a person: floor background ~2.7 m, a standing head ~1.0 m nearer, shoulders
-~0.25 m further than the head. A head is ~20 cm ≈ **4 zones** across and shows as a distinct
-local minimum in distance. Two people whose shoulder blobs merge still present **two
-separate minima**, which is the whole point.
-
-This is also the established approach for overhead ToF counting, and it is a better fit
-here than blob counting was.
-
-#### Calibration: the empty-room background
-
-Triggered by command, because only a human knows the room is empty.
-
-1. Capture `N` frames (default **16**) at the configured resolution.
-2. Per zone, accumulate the mean of *valid* distances and count how many frames were valid.
-3. A zone with validity below `min_valid_pct` (default 75%) is marked **unreliable** and
-   excluded from detection for good — glass, a dark absorbing surface, or a grazing angle
-   will never give a usable background, and pretending otherwise manufactures false blobs.
-4. Record the **temperature** from the status line alongside it.
-5. Persist to NVS so it survives reboot and power-cycling.
-
-**Storage**: `u16 bg_mm` per zone plus a validity bit = 2268 × 2 + 284 ≈ **4.8 KB**.
-
-**Report the quality back.** "1,932 of 2,268 zones have a usable background (85%)" tells
-you immediately whether the mount is any good. A calibration that only fixes 40% of the
-frame is a mounting problem, and it should say so rather than silently producing bad counts.
-
-#### Detection, per frame
-
-| Step | What | Parameters |
-|---|---|---|
-| 1 | **Foreground**: `bg_mm[z] − dist_mm[z] > fg_threshold_mm`, zone valid, zone reliable, `amplitude > min_amplitude` | `fg_threshold_mm` (300), `min_amplitude` |
-| 2 | **Despeckle**: 3×3 majority filter | — |
-| 3 | **Head candidates**: local minima of distance within a `head_window` box, at least `head_prominence_mm` nearer than the window edge | `head_window_zones` (5 ≈ 25 cm), `head_prominence_mm` (150) |
-| 4 | **Non-maximum suppression**: candidates closer together than `min_head_sep_zones` collapse to the nearest one | `min_head_sep_zones` (8 ≈ 40 cm) |
-| 5 | **Connected components** for *support*, not for counting: a candidate with no plausible body around it is noise, and blob size feeds confidence | `min_blob_zones` (30), `max_blob_zones` (400) |
-| 6 | **Temporal debounce**: present in `n` of last `m` frames | `temporal_n` (2), `temporal_m` (3) |
-| 7 | **Count** = surviving heads; **confidence** from stability and the reliable-zone fraction | — |
-
-Steps 3–4 are what make 3–5 people workable. Blob analysis is demoted to a sanity check: a
-box on a chair produces a blob but no head-shaped minimum, and a merged two-person blob
-produces two minima.
-
-`fg_threshold_mm` at 300 says a head is at least 30 cm below the background. Step 6 matters
-more than it looks at 0.1 Hz: with frames 10 s apart, "present in 2 of the last 3" costs up
-to **30 s of latency** — right for dwell, wrong for anything transient. **Make it
-configurable and show the implied latency in the UI**, so nobody sets it without seeing the
-cost.
-
-**The failure mode to watch** is two heads at the same height 40 cm apart, which NMS will
-merge. `min_head_sep_zones` trades that against splitting one person's head-and-shoulder
-into two. That trade cannot be settled on paper — it needs the observer log.
-
-**Working memory**: a `u16` label per zone = 4.5 KB, plus the background model. About 10 KB
-total, against 77 KB used of 188 KB.
-
-#### What gets sent
-
-```
-u32 timestamp_s
-u8  count
-u8  confidence      0..100
-u8  flags           bit0 calibrated, bit1 background stale, bit2 degraded FoV
-u8  instance_id     which node
-```
-
-**8 bytes.** Sent on a configurable period, or immediately on change, or both.
-
-`instance_id` costs nothing now and is a protocol break later, so it goes in from the
-start — Victor confirmed on 2026-09-10 that several nodes are planned. **One consequence
-worth flagging early**: a single sensor's 2.8 × 2.1 m footprint does not cover a room, so
-multiple nodes will need coverage stitching and de-duplication of people seen by two
-sensors. That is a design question of its own and is not solved by an id field.
-
-#### How the paper gets its accuracy axis
-
-**In `dev-stream`, the frame and the count are sent together for the same capture.** That is
-the whole point of building the streaming path: it lets the count be scored against the
-picture that produced it, offline, at every resolution and exposure. Without that pairing
-there is no accuracy axis and no paper — so the Frame Info header and the Count payload
-must carry the **same `seq`**.
-
-#### Configurable, and that is deliberate
-
-Every parameter above is exposed over BLE, because the paper's contribution is the
-trade-off curve. Resolution and exposure move energy; `fg_threshold_mm`,
-`min_blob_zones` and the temporal window move accuracy; and the interesting result is where
-they cross. A build-time constant would make that sweep a firmware rebuild per point.
-
-#### Honest open questions
-
-- **Two people touching** merge into one blob. Size gating catches some of it
-  (`max_blob_zones`), watershed splitting would catch more, and neither is free. Decide
-  after seeing real data.
-- **Furniture moved** invalidates the background silently. The `background stale` flag can
-  be driven by a slow drift estimate, but the real answer is recalibration, which is why it
-  is a command.
-- **Temperature drift** shifts distances. Calibration records the temperature; whether that
-  needs compensating is a measurement, not a guess.
-- **A person under the sensor at calibration time** is baked into the background as floor,
-  and that zone then never detects. Report the reliable-zone count and the mean background
-  distance so an obviously wrong calibration is visible.
-
-### TODO — Tier 4 is superseded by a corner mount. This needs its own plan.
-
-**Victor, 2026-09-10: mount the sensor at an angle in a ceiling corner, detect blobs that
-MOVE, treat each as an activity, and count those as people.**
-
-That is a different sensor geometry and a different algorithm from everything above, and it
-invalidates three things I had just settled. **This is a TODO, not a design** — it needs
-planning properly before any firmware is written. What follows is what a plan has to solve,
-and the arithmetic that constrains it.
-
-#### What it invalidates
-
-**1. Head detection is gone.** From directly overhead, a head is the closest point on a
-person — that was the entire basis for counting heads instead of blobs. From a corner at an
-angle, the nearest point is whatever body part happens to face the sensor, and it changes as
-someone turns or walks. Local minima stop meaning "head".
-
-**2. Fixed blob-size gates are meaningless.** The oblique view makes zone footprint a
-function of range:
-
-| Range | Zone footprint | A 45 cm person spans |
-|---|---|---|
-| 2 m | ~3 cm | **~13 zones** across |
-| 4 m | ~7 cm | ~6 zones |
-| 8 m | ~14 cm | **~3 zones** |
-
-That is a **4× swing linearly, ~16× in area**, inside one frame. `min_blob_zones` and
-`max_blob_zones` must become functions of the measured distance, not constants. At 45° tilt
-from 2.7 m the slant range spans roughly **3.0–6.6 m** across the field of view; at 30° tilt
-the far edge reaches beyond 15 m, where a person is 2–3 zones and almost certainly below the
-noise floor.
-
-**3. The frame rate assumption breaks, and this is the serious one.** Tracking movement
-requires associating a blob in one frame with the same blob in the next. A walking person
-covers 1.4 m/s:
-
-| Rate | Movement between frames | Usable? |
-|---|---|---|
-| **0.1 Hz** (the room-dwell plan) | **14 m** | No. No correspondence is possible at all. |
-| 0.5 Hz | 2.8 m | No — further than the spacing between people. |
-| **1.5 Hz** | 0.9 m | Marginal, if people stay >1 m apart. |
-| 2.5 Hz | 0.6 m | Workable. |
-
-**Motion tracking needs ≥1.5 fps — fifteen to thirty times the rate
-[room-occupancy.md](room-occupancy.md) is built on.** At 54×42 over 400 kHz the ceiling is
-~2.5 fps, so it is *just* achievable with no margin, and duty cycle goes to essentially
-**100%**. The multi-month battery claim does not survive that.
-
-#### The resolution this probably needs, and why it may be the paper
-
-The tension is real but it points somewhere good: **adaptive two-tier duty cycling.**
-
-- **Watch tier**: 0.05–0.2 Hz, low resolution, tiny energy. Answers only "has anything
-  changed since the background?"
-- **Track tier**: burst to 1.5–2.5 fps at full resolution when the watch tier fires, run
-  the tracker, count the activities, then drop back.
-
-Energy then scales with *occupancy* rather than with time, which is exactly the
-energy-accuracy trade-off the paper claims to be about — and it is a stronger result than a
-fixed duty cycle, because the interesting quantity becomes the cost of a *detection event*
-rather than a frame.
-
-It also makes 1 MHz I²C matter again. [frame-rate-budget.md](frame-rate-budget.md) demoted
-that to a tuning detail when the goal became room dwell; at 6.2 fps instead of 2.5 it is
-back to being what decides whether the track tier has any headroom.
-
-#### What the plan has to answer
-
-1. **Tilt angle and mounting height**, because every range figure above depends on them, and
-   30° versus 45° is the difference between a 6.6 m and a 17 m far edge.
-2. **Distance-normalised blob gating** — the size model, and what it does when a person
-   straddles a big range gradient.
-3. **Association**: centroid plus size plus mean distance? A Kalman filter, or nearest
-   neighbour with a gate? Nearest-neighbour is probably enough at 2 fps and is far cheaper.
-4. **What "an activity" is.** A track that persists for N frames? One that moves more than
-   X metres? This is the definition the count depends on, and it is not yet decided.
-5. ~~**Standing-still people.**~~ **ANSWERED, Victor 2026-09-10: both signals, fused.**
-   Background subtraction finds people who sit still; motion tracking follows people who
-   move. See "Fusing the two" below — this turns out to resolve the frame-rate tension as
-   well, and to be the strongest part of the design.
-6. **Watch-tier trigger**: what change threshold wakes the track tier without firing on
-   noise, sunlight, or a curtain.
-7. **Whether background subtraction still works at all** at oblique incidence, where a wall
-   seen at a grazing angle returns very little — expect the reliable-zone percentage from
-   calibration to be much lower than the overhead case.
-
-#### Fusing the two — and why this is the right answer
-
-**Victor, 2026-09-10: it does both.** Calibration gives the static signal, frame-to-frame
-differencing gives the moving one. They are complementary, and neither works alone:
-
-| | Catches | Misses / confuses |
-|---|---|---|
-| **Background subtraction** | anyone present, moving or not | a coat on a chair, a moved bin, a delivered box — anything absent at calibration |
-| **Motion differencing** | anyone walking, and confirms a blob is alive | anyone who sits down and stops |
-
-Fused, each covers the other's failure. **Motion promotes a blob to "person"; background
-subtraction keeps it counted once it stops.**
-
-##### The track lifecycle
-
-This is the mechanism, and it is what makes "sitting still" work:
-
-| State | Enter when | Counted? |
-|---|---|---|
-| `TENTATIVE` | a foreground blob appears that was not in the background | no |
-| `CONFIRMED` | that blob shows motion, or persists with person-like size and distance | **yes** |
-| `DORMANT` | a confirmed track stops moving but its blob is still in foreground | **yes** — this is the person who sat down |
-| `LOST` | the blob leaves foreground for more than `lost_timeout` | no |
-
-A person walks in (motion → `CONFIRMED`), sits (motion stops → `DORMANT`, still counted),
-gets up and leaves (blob gone → `LOST`). A coat dropped on a chair enters `TENTATIVE`, never
-shows motion, and either stays uncounted or is absorbed into the background — a policy
-decision, not an accident.
-
-##### The trap: never adapt the background under a live track
-
-Background models normally adapt slowly, to absorb furniture that moved. Do that naively
-here and **a person sitting still is absorbed into the background and vanishes from the
-count** — the exact failure this design exists to avoid.
-
-So background update must be **selective**: adapt only zones not covered by a `CONFIRMED` or
-`DORMANT` track. This is a small rule and it is the difference between the algorithm working
-and quietly losing everyone who settles.
-
-##### It also resolves the frame-rate problem
-
-The two-tier idea above stops being an energy optimisation and becomes **structurally
-required**, because the two signals genuinely need different rates:
-
-| Tier | Rate | Job |
-|---|---|---|
-| **Watch** | 0.05–0.2 Hz | Are `DORMANT` blobs still there? Has new foreground appeared? Background subtraction only — no association, so no rate requirement. |
-| **Track** | 1.5–2.5 fps | Association and motion, run only while something is moving. |
-
-A `DORMANT` person needs nothing faster than the watch tier — the blob is not going
-anywhere, and confirming it every 10 s is enough. The fast rate is only needed *while
-someone is walking*, which in a room where people sit is a small fraction of the time.
-
-**So the duty cycle scales with activity, not with time**, and the multi-month claim
-survives after all — for rooms where people mostly sit, which is the stated use case. That
-is a much better result than a fixed duty cycle, and it is a genuine contribution rather
-than a tuning choice: **the energy cost of occupancy sensing becomes a function of how much
-the occupants move.**
-
-##### What this adds to the plan's open questions
-
-- **What promotes `TENTATIVE` to `CONFIRMED` without motion?** A person already seated when
-  the system starts has never moved in view. Size, distance and shape plausibility have to
-  carry it, or the system waits for the first fidget.
-- **`lost_timeout` and `dormant_timeout`.** Too short and a still person is dropped; too
-  long and a departed one is counted for minutes.
-- **Does a `DORMANT` track survive a watch-tier frame where its blob is marginal?** At
-  oblique incidence and long range, a seated person may drop below threshold intermittently.
-- **What wakes the track tier?** A foreground-zone count change beyond a threshold is the
-  obvious trigger, but it must not fire on sunlight, a curtain, or noise.
-
-#### Where it sits
-
-This does **not** block the BLE and UI work. Phases 0–5 are instrumentation and are
-unchanged: streaming frames, configuring the sensor and seeing the picture are needed
-whichever algorithm runs. Phases 6–8 as written assume the overhead mount and should be
-treated as **on hold** until this is planned.
-
-**Point 5 is the one to settle first.** If the deployed goal is counting people who sit
-still in a room, a purely motion-based counter is the wrong instrument no matter how well it
-is built — and that is a question about the product, not the code.
-
-### Commands, not settings
-
-`START`, `STOP`, `SINGLE_SHOT`, `REBOOT`, **`CALIBRATE`**, **`CLEAR_CALIBRATION`**.
-
-> **Every Tier-1 change needs the device in STANDBY.** The firmware must stop streaming,
-> apply, and restart — and report which happened. That sequencing is exactly what broke on
-> 2026-09-10, so the config handler must reuse `wait_for_standby()` rather than assume.
+`START`, `STOP`, `SINGLE_SHOT`, `REBOOT`, `CALIBRATE`, `CLEAR_CALIBRATION`, `SET_MODE`.
 
 ---
 
-## 3. GATT design
+## 6. Tier 4 — the counting algorithm. This is the product.
 
-One base UUID, three services. **These are arbitrary but must be frozen before both sides
-are written.**
+### 6.1 Geometry: the corner mount changes everything
 
-Base: `53l9XXXX-1e2d-11ef-9262-0242ac120002`
+**Angled from a ceiling corner**, not overhead. Two consequences.
 
-### 3.1 Frame service — `53l90001-…`  *(dev-stream builds only)*
+**Head detection is impossible.** From overhead a head is the closest point on a person —
+that was the whole basis for counting heads rather than blobs. From a corner the nearest
+point is whatever body part faces the sensor, and it changes as someone turns.
 
-| Char | UUID | Props | Payload |
-|---|---|---|---|
-| Frame Data | `53l90002` | Notify | fragment, ≤244 B |
-| Frame Info | `53l90003` | Read, Notify | 16-byte frame header, sent once per frame **before** its fragments |
+**Blob-size gates must scale with range**, because the oblique view makes zone footprint a
+function of distance:
 
-**Frame Info (16 B, little-endian)** — the reassembler needs this before the data:
+| Range | Zone footprint | A 45 cm person spans |
+|---|---|---|
+| 2 m | ~3 cm | **~13 zones** |
+| 4 m | ~7 cm | ~6 zones |
+| 8 m | ~14 cm | **~3 zones** |
+
+A **4× swing linearly, ~16× in area, inside one frame.** At 45° tilt from 2.7 m the slant
+range spans ~3.0–6.6 m; at 30° the far edge passes 15 m, where a person is 2–3 zones and
+probably below the noise floor. **Tilt angle is a design input, not a mounting detail.**
+
+### 6.2 Fusing static and motion
+
+Neither signal works alone:
+
+| | Catches | Misses |
+|---|---|---|
+| Background subtraction | anyone present, moving or not | a coat on a chair, a moved bin |
+| Motion differencing | anyone walking; confirms a blob is alive | anyone who sits down |
+
+**Motion promotes a blob to "person"; background subtraction keeps it counted once it
+stops.** The mechanism is a track lifecycle:
+
+| State | Enters when | Counted |
+|---|---|---|
+| `TENTATIVE` | foreground blob appears that was not in the background | no |
+| `CONFIRMED` | it shows motion, or persists with plausible size/distance | **yes** |
+| `DORMANT` | a confirmed track stops moving, blob still in foreground | **yes** ← sat down |
+| `LOST` | blob out of foreground beyond `lost_timeout` | no |
+
+A coat enters `TENTATIVE`, never moves, and is either left uncounted or absorbed — a policy
+decision rather than an accident.
+
+> **The trap: never adapt the background under a live track.** Background models normally
+> adapt to absorb moved furniture. Do that naively and **a person sitting still is absorbed
+> and vanishes from the count** — the exact failure this design exists to prevent. Update
+> only zones not covered by a `CONFIRMED` or `DORMANT` track.
+
+### 6.3 Two-tier duty cycling — structurally required, not an optimisation
+
+The two signals need different rates, and that is what saves the battery claim:
+
+| Tier | Rate | Job |
+|---|---|---|
+| **Watch** | 0.05–0.2 Hz | Are `DORMANT` blobs still there? Any new foreground? Background subtraction only — no association, so no rate requirement |
+| **Track** | 1.5–2.5 fps | Association and motion, run only while something moves |
+
+Why the track tier needs that rate — a walking person covers 1.4 m/s:
+
+| Rate | Movement between frames | Usable? |
+|---|---|---|
+| 0.1 Hz | **14 m** | No — no correspondence possible |
+| 0.5 Hz | 2.8 m | No — further than the spacing between people |
+| 1.5 Hz | 0.9 m | Marginal |
+| 2.5 Hz | 0.6 m | Workable |
+
+At 400 kHz the ceiling is ~2.5 fps, so the track tier has **no margin**. This is what makes
+§3.1 worth doing: at 1 MHz it becomes 6.2 fps.
+
+**Duty scales with activity, not time** — and *that* is the paper's result. The energy cost
+of occupancy sensing becomes a function of how much the occupants move, which is a stronger
+claim than a fixed duty cycle.
+
+### 6.4 Calibration
+
+Triggered by command, because only a human knows the room is empty.
+
+1. Capture **16** frames.
+2. Per zone: mean of *valid* distances, and the count of valid frames.
+3. Validity below `min_valid_pct` (75%) → **permanently unreliable**, excluded. Glass, dark
+   surfaces and grazing angles never give a usable background, and pretending otherwise
+   manufactures false blobs. **Expect far more of these at oblique incidence than overhead.**
+4. Record the temperature.
+
+**Storage** ~4.8 KB (`u16` per zone + a validity bit).
+
+**Report quality back**: *"1,932 of 2,268 zones usable (85%)"* tells you the mount is wrong
+before the counts do.
+
+### 6.5 Detection per frame
+
+| Step | What |
+|---|---|
+| 1 | Foreground: `bg − dist > fg_threshold_mm`, valid, reliable, `amplitude > min_amplitude` |
+| 2 | Despeckle (3×3 majority) |
+| 3 | Connected components, 8-connectivity |
+| 4 | **Range-normalised** size gating — the gate is a function of the blob's mean distance |
+| 5 | Motion: difference against the previous frame within each blob |
+| 6 | Association to existing tracks (nearest neighbour on centroid + size + mean distance) |
+| 7 | Lifecycle update; count = `CONFIRMED` + `DORMANT` |
+
+**Working memory** ~10 KB (a `u16` label per zone plus the background model), against 77 KB
+used of 188 KB.
+
+**Why on the MCU**: two passes over 2268 zones on a 128 MHz M33 is well under a millisecond
+against a **404 ms** I²C read. The computation is free; the transmission is not. Counting
+on-device turns 14,842 bytes per frame into **10 bytes per advertisement**.
+
+### 6.6 What the plan still has to answer
+
+1. **Tilt angle and height** — every range figure depends on them.
+2. **The range-normalised size model**, and what it does when one person straddles a steep
+   range gradient.
+3. **What "an activity" is** — a track persisting N frames? Moving more than X metres?
+4. **Promoting a track without motion**: someone already seated at power-up has never moved
+   in view. Size and distance plausibility must carry it, or the system waits for a fidget.
+5. **`lost_timeout` / `dormant_timeout`** — too short drops a still person, too long counts a
+   departed one for minutes.
+6. **What wakes the track tier** without firing on sunlight, a curtain, or noise.
+7. **Does background subtraction survive oblique incidence at all?** A wall at a grazing
+   angle returns very little.
+
+---
+
+## 7. GATT design
+
+Base `53l9XXXX-1e2d-11ef-9262-0242ac120002`. **Freeze these before both sides are written.**
+
+### 7.1 Frame service `53l90001` *(dev-stream only)*
+
+| Char | UUID | Props |
+|---|---|---|
+| Frame Data | `53l90002` | Notify — fragment, ≤244 B |
+| Frame Info | `53l90003` | Read, Notify — 18-byte header, sent **before** its fragments |
+
+**Frame Info (18 B, LE)**
 
 ```
-u8  instance_id      which node this came from (Victor, 2026-09-10: plan for several)
+u8  instance_id
 u8  reserved0
 u16 seq              driver frame counter
-u16 device_frame     the DEVICE's counter (gaps = we dropped one, not the sensor)
+u16 device_frame     the DEVICE's counter — gaps mean we dropped one, not the sensor
 u8  cols, rows
-u8  planes           bitmask: 1 distance, 2 amplitude, 4 ambient
-u8  flags            bit0 square-format
+u8  planes           bit0 distance, bit1 amplitude, bit2 ambient
+u8  flags            bit0 square format
 u16 total_fragments
 u16 payload_bytes
 u16 temperature_raw
-u16 capture_ms       how long the capture actually took — an energy datum
+u16 capture_ms       an energy datum in itself
 ```
 
-### 3.2 Fragmentation
+**Fragment**: `u16 seq, u16 frag_index` + **240 B**. A fragment with a new `seq` discards any
+incomplete previous frame and counts a drop. No retransmission — at 2.5 fps a lost frame is
+cheaper than a stall. **Report the drop rate in the UI**; it is the honest measure of whether
+BLE keeps up.
 
-Each Frame Data notification:
+### 7.2 Config service `53l91001`
 
-```
-u16 seq              matches Frame Info
-u16 frag_index       0 .. total-1
---- 240 bytes payload ---
-```
+| Char | UUID | Props |
+|---|---|---|
+| Config | `53l91002` | Read, Write — 16-byte packed struct |
+| Command | `53l91003` | Write — `u8 opcode, u8 arg[3]` |
+| Config Result | `53l91004` | Notify — `u8 opcode, i8 status, u8 detail[2]` |
 
-4-byte header, **240 B payload** → 14,842 B = **62 fragments**; distance-only = 19.
+**Writes are transactional**: validate everything, then apply, then notify. Never partially
+apply — half a profile is how you get plausible rubbish.
 
-Reassembly rule on the host: a frame is complete when all indices for `seq` have arrived.
-Any fragment with a new `seq` **discards the incomplete previous frame** and counts a drop.
-No retransmission — at 2.5 fps a lost frame is cheaper than a stall.
+### 7.3 Counting service `53l93001` *(both builds)*
 
-**Report the drop rate in the UI.** It is the honest measure of whether BLE keeps up, and
-the paper will want it.
+| Char | UUID | Props |
+|---|---|---|
+| Count | `53l93002` | Read, Notify — the advertisement payload |
+| Detection Config | `53l93003` | Read, Write |
+| Calibration Control | `53l93004` | Write, Notify — progress then a quality summary |
+| Background Model | `53l93005` | Read — *dev-stream only*, so the UI can show why a zone never fires |
 
-### 3.3 Config service — `53l91001-…`
-
-| Char | UUID | Props | Payload |
-|---|---|---|---|
-| Config | `53l91002` | Read, Write | 16-byte packed struct below |
-| Command | `53l91003` | Write | `u8 opcode, u8 arg[3]` |
-| Config Result | `53l91004` | Notify | `u8 opcode, i8 status, u8 detail[2]` |
-
-**Config struct (16 B)**
+**Detection Config**
 
 ```
-u8  resolution       0..5 enum, matches VL53L9CX_RES_*
-u8  exposure_ms      1..30
-u32 frame_period_us  10000..1000000
-u8  sync_mode        0 slave, 1 manual, 2 autonomous
-u8  power_mode       0 regular, 1 low, 2 ultra-low
-u8  planes           bitmask
-u8  duty_on_frames   0 = continuous
-u16 duty_off_ms
-u32 reserved
-```
-
-**Write is transactional**: validate everything, then apply, then notify Config Result with
-0 or a negative errno and which field was rejected. Never partially apply — half a profile
-is how you get plausible rubbish.
-
-### 3.4 People counting service — `53l93001-…`  *(both builds — this is the product)*
-
-| Char | UUID | Props | Payload |
-|---|---|---|---|
-| Count | `53l93002` | Read, Notify | the 8 bytes above |
-| Detection Config | `53l93003` | Read, Write | thresholds, blob gates, temporal window, report period |
-| Calibration Control | `53l93004` | Write, Notify | `u8 opcode, u8 n_frames`; notifies progress then a quality summary |
-| Background Model | `53l93005` | Read | *dev-stream only.* Lets the UI draw the background and show why a zone never fires |
-
-**Detection Config (12 B)**
-
-```
-u16 fg_threshold_mm      default 300
+u16 fg_threshold_mm       default 300
 u16 min_amplitude
-u16 min_blob_zones       default 30
-u16 max_blob_zones       default 400
-u16 head_prominence_mm   default 150
-u8  head_window_zones    default 5
-u8  min_head_sep_zones   default 8
-u8  temporal_n           default 2
-u8  temporal_m           default 3
-u16 report_period_s      0 = on change only
+u16 blob_zones_at_2m_min  range-normalised, not absolute
+u16 blob_zones_at_2m_max
+u8  temporal_n            default 2
+u8  temporal_m            default 3
+u16 lost_timeout_s
+u16 dormant_timeout_s
+u16 motion_threshold_mm
+u16 report_period_s       0 = on change only
 ```
 
-**Calibration Status notification**
+**Calibration Status**
 
 ```
-u8  state           0 idle, 1 running, 2 done, 3 failed
+u8  state          0 idle, 1 running, 2 done, 3 failed
 u8  frames_done
 u16 zones_reliable
 u16 zones_total
@@ -522,226 +404,154 @@ u16 mean_bg_mm
 u16 temperature_raw
 ```
 
-`zones_reliable / zones_total` is the number that says whether the mount is usable. Show it
-as a percentage and colour it.
+### 7.4 Telemetry service `53l92001`
 
-### 3.5 Two operating modes, and only one of them uses a connection
-
-**Victor, 2026-09-10.** This is the deployment architecture, and it is what makes the
-battery claim defensible.
-
-| Mode | Radio | Connection | What the host does |
-|---|---|---|---|
-| **Streaming (dev)** | connectable advertising, ~100 ms | **yes** — frame + config + telemetry services | connects, streams frames, tunes |
-| **Counting (deployed)** | connectable advertising, 1–10 s, **count in the advert** | **no, normally** | just listens to adverts. Connects only to change mode or config. |
-
-The point: in counting mode **nobody connects**. The count is broadcast in the
-advertisement and anything in range can read it without pairing, connecting or maintaining
-a link. A connection is established only to reconfigure, and then dropped.
-
-#### The advertisement payload
-
-Manufacturer-specific data (AD type `0xFF`), company ID **`0xFFFF`** — the range reserved
-for development, which is the honest choice for a research node.
-
-```
-u8  protocol_version
-u8  instance_id       which node
-u8  count             people
-u8  confidence        0..100
-u8  flags             bit0 calibrated
-                      bit1 ACTIVITY NOW   (motion seen in the last report period)
-                      bit2 background stale
-                      bit3 degraded field of view
-                      bit4 sensor fault
-u16 report_seq        increments per new report — lets a listener tell a fresh
-                      value from a re-broadcast of the same one
-u8  battery_pct
-```
-
-**10 bytes**, inside the 31-byte legacy advertising budget with room for flags and a short
-name.
-
-`report_seq` matters more than it looks: advertising is stateless and repeats the same
-payload until it changes, so without a sequence number a listener cannot distinguish "still
-3 people" from "the node has stopped updating".
-
-#### No clock on the device
-
-**Victor, 2026-09-10: the web interface timestamps on receipt; the device needs no time.**
-That removes the RTC, the time-sync command and the drift question in one go. The advert
-carries no timestamp — `report_seq` plus the receiver's own clock is enough, and it is
-strictly more honest than a device clock that was set once and has drifted since.
-
-#### Why connectionless is worth the design effort
-
-Rough per-report radio cost *(estimates)*: an advertising event is three channels at ~0.4 ms
-each ≈ **1.2 ms of radio**. At a 1 s interval that is ~0.12% duty; at 10 s, ~0.012%. A
-maintained connection at the same interval costs a comparable event **plus** supervision,
-re-connection handling, and — the part that actually hurts — a scheduling constraint that
-keeps the SoC out of its deepest sleep between events.
-
-At the 0.05–0.2 Hz this design targets, the radio stops being a term in the budget at all.
-That is the whole argument.
-
-#### Mode switching
-
-`Command` characteristic gains `SET_MODE(streaming | counting)`. A node in counting mode
-stays **connectable** so it can always be reconfigured — the advertising interval is the
-only thing that changes how quickly you can reach it. Slower adverts mean lower power and a
-longer wait to connect; **1 s is a reasonable default and should be configurable.**
-
-#### Configuration does not persist
-
-**Victor, 2026-09-10: no NVS for configuration.** Defaults on every boot; the host sets what
-it wants after connecting.
-
-> **One thing worth separating from that decision: calibration.** Config is cheap to
-> re-send, but a calibration needs an **empty room** and 16 frames. If it lives only in RAM,
-> every power cycle means clearing the room again. That is a different cost from re-sending
-> a threshold, and worth deciding deliberately rather than inheriting from the config
-> answer.
-
-### 3.6 Telemetry service — `53l92001-…`
-
-| Char | UUID | Props | Payload |
-|---|---|---|---|
-| Health | `53l92002` | Notify | FSM, ERROR_CODE, ERROR_STATUS, 5×LDD_STATUS, capture ok/fail counts |
-| Energy | `53l92003` | Notify | last capture ms, boot ms, frames since boot, reboot count |
-
-Health is the bring-up work made remote — the same bytes the driver already reads on a
-laser fault. Push it on every failure and every 10th success.
+Health (FSM, `ERROR_CODE`, `ERROR_STATUS`, 5× `LDD_STATUS`, capture ok/fail) and Energy
+(last capture ms, boot ms, frames, reboots). The bring-up diagnostics made remote. Push on
+every failure and every 10th success.
 
 ---
 
-## 4. Firmware work
+## 8. Host software
 
-**4.1 Enable BLE.** `CONFIG_BT`, peripheral, `BT_CTLR_PHY_2M`, `BT_USER_PHY_UPDATE`,
-`BT_L2CAP_TX_MTU=247`, `BT_BUF_ACL_TX_SIZE=251`, DLE. Board already declares
-`HAS_BT_CTLR`. Expect RAM +30–40 KB; we are at 77 KB of 188 KB, so there is room.
+### 8.1 The problem nobody has hit yet: Chrome cannot read advertisements
 
-**4.2 A streaming thread**, separate from `main()`. Captures, fragments, notifies. Must
-handle backpressure: `bt_gatt_notify` returns `-ENOMEM` when buffers are full — wait on a
-callback, never spin.
+**This sits directly between two decisions and needs solving before phase 2.**
 
-**4.3 Config handlers** that stop → `wait_for_standby()` → apply → restart, reporting each
-step.
+Counting mode broadcasts the count in an advertisement, and the UI is a Chrome page. But
+**Web Bluetooth cannot scan for advertisements by default**:
+`navigator.bluetooth.requestLEScan()` and `BluetoothDevice.watchAdvertisements()` sit behind
+`chrome://flags/#enable-experimental-web-platform-features`. `VERIFY` against current
+Chrome — but plan for it being true, because it has been for years.
 
-**4.4 A `dev-stream` snippet** that enables the frame service. Default build: no frame
-service, no frame code linked.
+So the browser handles **streaming** mode fine (that is a connection) and cannot handle
+**counting** mode at all without a flag.
 
-**4.5 Keep RTT.** It is the only channel that works when BLE is the thing being debugged.
+| Option | Cost | Verdict |
+|---|---|---|
+| Require the Chrome flag | zero code; fragile setup, breaks on any machine that has not set it | fine for your own bench, not for a demo |
+| Connect in order to read counts | defeats the entire point of connectionless mode | no |
+| **Node.js scanner bridging to the page over WebSocket** | ~half a day with `noble`; runs beside `npm run dev` | **recommended** |
 
----
+The bridge is the honest answer: it becomes the gateway a deployed system needs anyway, it
+can log counts for the paper without involving the browser, and it removes Chrome version
+roulette from the experiment. **Design the page to take counts from a WebSocket regardless**,
+so the source can be the bridge or a direct connection without the UI caring.
 
-## 5. The Next.js application
+### 8.2 Next.js structure
 
 ```
 web/
-  package.json          next, react, typescript
-  app/page.tsx          single page, no routing needed
+  app/page.tsx           single page
   components/
-    ConnectButton.tsx   navigator.bluetooth.requestDevice
-    FrameCanvas.tsx     <canvas> heatmap, requestAnimationFrame
-    ConfigPanel.tsx     Tier 1 + 2 controls
-    HealthPanel.tsx     FSM, error bits, LDD — red when non-zero
-    StatsBar.tsx        fps, drop rate, capture ms, zones valid
-    CountPanel.tsx      the people count, big; confidence, flags, history plot
-    CalibratePanel.tsx  trigger, progress, reliable-zone percentage
-    DetectionOverlay    blob outlines drawn over the heatmap, so a wrong count
-                        is visibly wrong rather than just wrong
+    ConnectButton        requestDevice — streaming mode
+    FrameCanvas          <canvas> heatmap, ImageData + rAF
+    DetectionOverlay     blob/track outlines over the heatmap
+    CountPanel           the count, large; confidence, activity flag, history
+    CalibratePanel       trigger, progress, reliable-zone percentage
+    ConfigPanel          Tier 1 + 2
+    HealthPanel          FSM, error bits, LDD — red when non-zero
+    ObserverPanel        record "true count is now N", export CSV
+    StatsBar             fps, drop rate, capture ms, zones valid
   lib/
-    ble.ts              connect, subscribe, write
-    protocol.ts         decode Frame Info, reassemble, decode config
-    palette.ts          distance → colour
-  hooks/
-    useTofDevice.ts     one hook owning connection + frame state
+    ble.ts               Web Bluetooth: connect, subscribe, write
+    counts.ts            WebSocket client for the bridge
+    protocol.ts          Frame Info decode, reassembly, config codec
+  bridge/
+    scan.js              Node + noble → WebSocket
 ```
 
-**Run with `npm run dev`, open `http://localhost:3000` in Chrome.**
+Run: `npm run dev`, open `http://localhost:3000` in Chrome; `node bridge/scan.js` alongside.
 
-### Things that will bite, worth knowing before writing code
+### 8.3 Things that will bite
 
-- **Chrome only.** Web Bluetooth is not in Firefox or Safari. Say so in the UI rather than
-  failing mysteriously.
-- **Secure context required.** `localhost` counts, so `npm run dev` is fine. Deploying to a
-  plain-HTTP host is not.
-- **A user gesture is mandatory** for `requestDevice()`. It must be behind a real button.
-- **Declare every service in `optionalServices`** or `getPrimaryService` throws even after
-  a successful connect. This catches everyone once.
-- **Notification throughput in Web Bluetooth is the real risk.** Chrome on Windows has
-  historically delivered notifications far below the link's capability. **Prototype this
-  first** — a firmware build that notifies a counter as fast as it can, and a page that
-  measures the rate. If it cannot sustain ~40 kB/s, the design changes: distance-only,
-  lower resolution, or on-demand single frames instead of streaming.
-- **Render off the React render path.** Draw to canvas with `ImageData` and
-  `requestAnimationFrame`; do not put 2268 zones into component state. Keep the latest
-  frame in a ref, render on a timer.
-- **Next.js SSR has no `navigator`.** All BLE code behind `'use client'` and a `useEffect`.
+- **Chrome only.** Web Bluetooth is not in Firefox or Safari. Say so in the UI.
+- **Secure context required** — `localhost` counts, so `npm run dev` is fine.
+- **A user gesture is mandatory** for `requestDevice()`. Real button, not `useEffect`.
+- **Declare every service in `optionalServices`** or `getPrimaryService` throws after a
+  successful connect. Everyone hits this once.
+- **Notification throughput is the real risk** — see phase 0.
+- **Render off the React path.** Latest frame in a ref, draw with `ImageData` and `rAF`.
+  Never put 2268 zones in component state.
+- **No `navigator` during SSR.** All BLE behind `'use client'` + `useEffect`.
+
+### 8.4 Ground truth
+
+**Observer log, decided.** `ObserverPanel` records "true count is now N" against the
+receiver's clock, exported as CSV.
+
+**The cost, stated once:** an observer log cannot be re-scored. Every change to
+`fg_threshold_mm`, the size model or the temporal window means repeating the experiment with
+people in the room, and detection now has ~10 tunables needing empirical fitting. If that
+starts eating sessions, a "record" button dumping frames is about a day, since frames
+already arrive in `dev-stream`.
 
 ---
 
-## 6. Build order
+## 9. Firmware work
 
-Each phase ends with something demonstrable, and the risky measurement comes first.
+1. **Enable BLE**: `CONFIG_BT`, peripheral, `BT_CTLR_PHY_2M`, `BT_L2CAP_TX_MTU=247`,
+   `BT_BUF_ACL_TX_SIZE=251`, DLE. The board already declares `HAS_BT_CTLR`. Expect
+   RAM +30–40 KB against 77 KB used of 188 KB — and the 32 KB RTT buffer can shrink once BLE
+   carries the diagnostics.
+2. **Advertising**: manufacturer data, updated when the count changes; interval configurable.
+3. **Streaming thread**, separate from `main()`. `bt_gatt_notify` returns `-ENOMEM` when
+   buffers are full — wait on the callback, never spin.
+4. **Config handlers**: stop → `wait_for_standby()` → apply → restart, reporting each step.
+5. **Calibration**: capture, accumulate, quality report.
+6. **Detection**: foreground, despeckle, components, range-normalised gating, motion,
+   association, lifecycle.
+7. **Two-tier scheduler**: watch tier, wake condition, track tier, fall back.
+8. **`dev-stream` snippet**; the default build links no frame service.
+9. **Keep RTT.** It is the only channel that works when BLE is what is being debugged.
+
+---
+
+## 10. Build order
 
 | # | Phase | Done when |
 |---|---|---|
-| **0** | **Throughput spike.** Firmware notifies a counter flat out; a minimal page measures kB/s. **Two days, and it decides the rest.** | A number for sustainable Web Bluetooth throughput |
-| 1 | GATT skeleton: all three services, config read/write, telemetry. No frames. | `nRF Connect` app can read and write config; the sensor reconfigures |
-| 2 | Next.js shell: connect, config panel, health panel. Still no frames. | Configuration round-trips from the browser |
-| 3 | Frame streaming: Frame Info + fragmentation, host reassembly, drop counting. | Frames arrive with a measured drop rate |
-| 4 | Canvas heatmap + stats. | The picture, live |
-| 5 | Duty-cycle controls and the energy panel. | The stage-4 experiment is drivable from the browser |
-| **6** | **Calibration**: capture, background model, NVS persistence, quality report. | An empty room produces a background and a reliable-zone percentage |
-| **7** | **Detection on the MCU**: foreground, despeckle, connected components, gating, debounce. Count sent alongside the frame with a matching `seq`. | The UI shows a count AND the blobs it came from |
-| **8** | **Deployed profile**: counting only, frame service not compiled in, verified by the UUID grep. | `strings zephyr.elf \| grep 53l90002` returns nothing |
+| **0** | **Throughput spike.** Firmware notifies a counter flat out; a page measures kB/s. **Two days, and it decides the rest.** | A real number for Web Bluetooth throughput |
+| 1 | GATT skeleton: config + telemetry, no frames | `nRF Connect` can read/write config; the sensor reconfigures |
+| 2 | Advertising + the Node bridge | Counts arrive in a terminal with nothing connected |
+| 3 | Next.js shell: connect, config, health | Configuration round-trips from the browser |
+| 4 | Frame streaming: Frame Info, fragmentation, reassembly, drop counting | Frames arrive with a measured drop rate |
+| 5 | Canvas heatmap + stats | The picture, live |
+| 6 | Calibration: capture, model, quality report | An empty room produces a background and a percentage |
+| 7 | Detection on the MCU; count sent with a matching `seq` | The UI shows a count **and** the blobs it came from |
+| 8 | Two-tier duty cycling + energy panel | Duty scales with activity; the crossover is measurable |
+| 9 | Deployed profile: counting only, frame service absent | `strings zephyr.elf \| grep 53l90002` returns nothing |
 
-Phases 6–8 are the paper. Phases 0–5 are the instrument that makes them measurable.
+Phases 6–9 are the paper. 0–5 are the instrument that makes them measurable.
 
-**Phase 0 is not optional.** Every later phase assumes a throughput number nobody has yet,
-and if Web Bluetooth cannot sustain it the whole streaming design changes shape. Two days
-spent there is cheap against rewriting phases 3–5.
-
----
-
-## 7. What could invalidate this plan
-
-1. **Web Bluetooth throughput** below ~40 kB/s. Mitigation: distance-only (4,536 B), lower
-   resolution, or request-a-frame instead of streaming.
-2. **The sensor still does not range reliably.** Everything here assumes frames exist.
-   Streaming a fault is not progress — finish the laser/supply question first.
-3. **Segmentation may not survive real rooms.** With 3–5 people in 5.88 m², head detection
-   replaces blob counting for exactly this reason — but it has its own failure: two heads at
-   similar height within `min_head_sep_zones` merge, and one person's head-and-shoulder can
-   split into two. Both are data questions and neither can be settled on paper. **This is
-   the risk most likely to decide whether the paper has a result.**
-3. **BLE and the 400 kHz I²C read competing for CPU.** The read blocks ~404 ms; BLE
-   connection events must still be serviced. Likely fine (the TWIM is DMA-driven) but
-   unverified.
-4. **RAM.** BLE wants 30–40 KB and we are at 77 KB of 188 KB with a 32 KB RTT buffer that
-   can shrink once BLE carries the diagnostics.
+**Phase 0 is not optional.** Every later phase assumes a throughput number nobody has, and
+if Web Bluetooth cannot sustain it the streaming design changes shape.
 
 ---
 
-## 8. Open decisions for Victor
+## 11. What could invalidate this plan
 
-- **Pairing and bonding?** Plan assumes none — dev tool on a bench. A deployed node
-  reporting occupancy probably wants bonding.
-- **Multiple sensors later?** If so, put an instance id in Frame Info now rather than
-  reworking the protocol.
-- ~~Log frames to disk?~~ **Decided 2026-09-10: no. Ground truth is a live observer log.**
+1. **The sensor never ranges reliably.** Currently blocking. Laser-fault hypothesis under
+   test.
+2. **Web Bluetooth throughput** below ~40 kB/s → distance-only, lower resolution, or
+   request-a-frame instead of streaming.
+3. **Segmentation does not survive real rooms.** With 3–5 people at oblique incidence and no
+   head detection to fall back on, blob separation is doing all the work. **This is the risk
+   most likely to decide whether the paper has a result.**
+4. **Oblique background subtraction is too noisy** — a wall at a grazing angle returns
+   little, and the reliable-zone percentage may be too low to work with.
+5. **BLE and the 404 ms I²C read competing for CPU.** Probably fine — TWIM is DMA-driven —
+   but unverified.
+6. **The IMU capping the bus at 400 kHz**, leaving the track tier without margin.
 
-  The UI therefore needs an **observer panel**: a control to record "the true count is now
-  N" with a timestamp, written alongside the received counts, and exportable as CSV. That
-  is small and belongs in phase 7.
+---
 
-  **The cost, stated once.** An observer log cannot be re-scored. Every change to
-  `fg_threshold_mm`, `min_head_sep_zones` or the temporal window means repeating the
-  experiment with people in the room, rather than re-running the algorithm over saved
-  data. With head detection now carrying the count, and `min_head_sep_zones` explicitly
-  needing empirical tuning, that is a real cost in bodies and hours.
+## 12. Open questions
 
-  A cheap hedge, if it ever bites: frames are already arriving in `dev-stream`, so a
-  "record" button dumping them to disk is perhaps a day of work and preserves the option.
-  Worth reconsidering only if the parameter sweep starts eating sessions.
+- **Calibration persistence** — see Status.
+- **Confirming a track for someone already seated at power-up** — §6.6 item 4.
+- **Coverage stitching.** `instance_id` identifies a node; it does not de-duplicate a person
+  seen by two sensors, and one node's footprint does not cover a room. A design question of
+  its own once multi-node is real.
+- **Bonding**: assumed none. A deployed node broadcasting occupancy in the clear is a
+  decision rather than an oversight — worth stating explicitly in the paper.
