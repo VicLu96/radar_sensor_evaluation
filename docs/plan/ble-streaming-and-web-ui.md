@@ -112,9 +112,33 @@ From [room-occupancy.md](room-occupancy.md): ceiling-mounted, 0.05–0.2 Hz, and
 difficulty is **segmentation, not timing**. The field of view is 1.02h × 0.77h, so at a
 2.7 m ceiling the footprint is ~2.8 × 2.1 m and each 54×42 zone covers roughly **5 × 5 cm**.
 
-That sizing is what makes the algorithm tractable: a seated or standing person's shoulders
-span ~45 cm ≈ **9 zones across**, and a whole person is a blob of roughly **50–150 zones**.
-Blob size is therefore a strong discriminator, not a guess.
+**Confirmed by Victor 2026-09-10: ~2.5–3 m standard ceiling, and 3–5 people must be counted
+simultaneously.** Both numbers below follow from that and are no longer assumptions.
+
+A seated or standing person's shoulders span ~45 cm ≈ **9 zones across**, and a whole person
+is a blob of roughly **50–150 zones**.
+
+#### Why 3–5 people changes the algorithm, not just the constants
+
+The footprint is **5.88 m²**. Five people is **1.18 m² each** — about 1.1 m of average
+spacing. Areal coverage is only ~11%, so they are not packed, and blobs will often be
+separate.
+
+But *often* is the problem. People in conversation stand 0.5–1 m apart, and at 0.5 m
+separation two 45 cm shoulder spans leave a **5 cm gap — exactly one zone**. One noisy zone
+and the two blobs merge. So with 3–5 people, **merging is not a corner case; it is a
+routine event**, and connected-component counting alone will systematically under-count
+precisely when the room is busiest — which is the worst possible error profile for an
+occupancy sensor.
+
+**Therefore the primary detector is heads, not blobs.** From a ceiling sensor a head is the
+closest point on a person: floor background ~2.7 m, a standing head ~1.0 m nearer, shoulders
+~0.25 m further than the head. A head is ~20 cm ≈ **4 zones** across and shows as a distinct
+local minimum in distance. Two people whose shoulder blobs merge still present **two
+separate minima**, which is the whole point.
+
+This is also the established approach for overhead ToF counting, and it is a better fit
+here than blob counting was.
 
 #### Calibration: the empty-room background
 
@@ -138,17 +162,27 @@ frame is a mounting problem, and it should say so rather than silently producing
 
 | Step | What | Parameters |
 |---|---|---|
-| 1 | **Foreground**: `bg_mm[z] − dist_mm[z] > fg_threshold_mm`, zone valid, zone reliable, `amplitude > min_amplitude` | `fg_threshold_mm` (default 300), `min_amplitude` |
+| 1 | **Foreground**: `bg_mm[z] − dist_mm[z] > fg_threshold_mm`, zone valid, zone reliable, `amplitude > min_amplitude` | `fg_threshold_mm` (300), `min_amplitude` |
 | 2 | **Despeckle**: 3×3 majority filter | — |
-| 3 | **Connected components**, 8-connectivity, union-find | — |
-| 4 | **Blob gating** by size | `min_blob_zones` (30), `max_blob_zones` (400) |
-| 5 | **Temporal debounce**: present in `n` of last `m` frames | `temporal_n` (2), `temporal_m` (3) |
-| 6 | **Count** = surviving blobs; **confidence** from blob stability and the reliable-zone fraction | — |
+| 3 | **Head candidates**: local minima of distance within a `head_window` box, at least `head_prominence_mm` nearer than the window edge | `head_window_zones` (5 ≈ 25 cm), `head_prominence_mm` (150) |
+| 4 | **Non-maximum suppression**: candidates closer together than `min_head_sep_zones` collapse to the nearest one | `min_head_sep_zones` (8 ≈ 40 cm) |
+| 5 | **Connected components** for *support*, not for counting: a candidate with no plausible body around it is noise, and blob size feeds confidence | `min_blob_zones` (30), `max_blob_zones` (400) |
+| 6 | **Temporal debounce**: present in `n` of last `m` frames | `temporal_n` (2), `temporal_m` (3) |
+| 7 | **Count** = surviving heads; **confidence** from stability and the reliable-zone fraction | — |
 
-`fg_threshold_mm` at 300 says a person's head is at least 30 cm below the ceiling-to-floor
-background. Step 5 matters more than it looks at 0.1 Hz: with frames 10 s apart, "present
-in 2 of the last 3" costs up to 30 s of latency, which is right for dwell and wrong for
-anything transient. **Make it configurable and report the latency it implies.**
+Steps 3–4 are what make 3–5 people workable. Blob analysis is demoted to a sanity check: a
+box on a chair produces a blob but no head-shaped minimum, and a merged two-person blob
+produces two minima.
+
+`fg_threshold_mm` at 300 says a head is at least 30 cm below the background. Step 6 matters
+more than it looks at 0.1 Hz: with frames 10 s apart, "present in 2 of the last 3" costs up
+to **30 s of latency** — right for dwell, wrong for anything transient. **Make it
+configurable and show the implied latency in the UI**, so nobody sets it without seeing the
+cost.
+
+**The failure mode to watch** is two heads at the same height 40 cm apart, which NMS will
+merge. `min_head_sep_zones` trades that against splitting one person's head-and-shoulder
+into two. That trade cannot be settled on paper — it needs the observer log.
 
 **Working memory**: a `u16` label per zone = 4.5 KB, plus the background model. About 10 KB
 total, against 77 KB used of 188 KB.
@@ -160,10 +194,16 @@ u32 timestamp_s
 u8  count
 u8  confidence      0..100
 u8  flags           bit0 calibrated, bit1 background stale, bit2 degraded FoV
-u8  reserved
+u8  instance_id     which node
 ```
 
 **8 bytes.** Sent on a configurable period, or immediately on change, or both.
+
+`instance_id` costs nothing now and is a protocol break later, so it goes in from the
+start — Victor confirmed on 2026-09-10 that several nodes are planned. **One consequence
+worth flagging early**: a single sensor's 2.8 × 2.1 m footprint does not cover a room, so
+multiple nodes will need coverage stitching and de-duplication of people seen by two
+sensors. That is a design question of its own and is not solved by an id field.
 
 #### How the paper gets its accuracy axis
 
@@ -221,6 +261,8 @@ Base: `53l9XXXX-1e2d-11ef-9262-0242ac120002`
 **Frame Info (16 B, little-endian)** — the reassembler needs this before the data:
 
 ```
+u8  instance_id      which node this came from (Victor, 2026-09-10: plan for several)
+u8  reserved0
 u16 seq              driver frame counter
 u16 device_frame     the DEVICE's counter (gaps = we dropped one, not the sensor)
 u8  cols, rows
@@ -289,13 +331,16 @@ is how you get plausible rubbish.
 **Detection Config (12 B)**
 
 ```
-u16 fg_threshold_mm     default 300
+u16 fg_threshold_mm      default 300
 u16 min_amplitude
-u16 min_blob_zones      default 30
-u16 max_blob_zones      default 400
-u8  temporal_n          default 2
-u8  temporal_m          default 3
-u16 report_period_s     0 = on change only
+u16 min_blob_zones       default 30
+u16 max_blob_zones       default 400
+u16 head_prominence_mm   default 150
+u8  head_window_zones    default 5
+u8  min_head_sep_zones   default 8
+u8  temporal_n           default 2
+u8  temporal_m           default 3
+u16 report_period_s      0 = on change only
 ```
 
 **Calibration Status notification**
@@ -421,10 +466,11 @@ spent there is cheap against rewriting phases 3–5.
    resolution, or request-a-frame instead of streaming.
 2. **The sensor still does not range reliably.** Everything here assumes frames exist.
    Streaming a fault is not progress — finish the laser/supply question first.
-3. **Segmentation may not survive real rooms.** Blob counting on a 2.8 × 2.1 m footprint
-   assumes people appear separated. Two people close together, or one person at the edge of
-   the field of view, are the cases that will decide whether this needs more than connected
-   components. That is a data question and it cannot be settled on paper.
+3. **Segmentation may not survive real rooms.** With 3–5 people in 5.88 m², head detection
+   replaces blob counting for exactly this reason — but it has its own failure: two heads at
+   similar height within `min_head_sep_zones` merge, and one person's head-and-shoulder can
+   split into two. Both are data questions and neither can be settled on paper. **This is
+   the risk most likely to decide whether the paper has a result.**
 3. **BLE and the 400 kHz I²C read competing for CPU.** The read blocks ~404 ms; BLE
    connection events must still be serviced. Likely fine (the TWIM is DMA-driven) but
    unverified.
@@ -439,5 +485,18 @@ spent there is cheap against rewriting phases 3–5.
   reporting occupancy probably wants bonding.
 - **Multiple sensors later?** If so, put an instance id in Frame Info now rather than
   reworking the protocol.
-- **Log frames to disk from the browser?** Useful for the paper — the File System Access
-  API can stream to a file. Adds scope; worth deciding before phase 4.
+- ~~Log frames to disk?~~ **Decided 2026-09-10: no. Ground truth is a live observer log.**
+
+  The UI therefore needs an **observer panel**: a control to record "the true count is now
+  N" with a timestamp, written alongside the received counts, and exportable as CSV. That
+  is small and belongs in phase 7.
+
+  **The cost, stated once.** An observer log cannot be re-scored. Every change to
+  `fg_threshold_mm`, `min_head_sep_zones` or the temporal window means repeating the
+  experiment with people in the room, rather than re-running the algorithm over saved
+  data. With head detection now carrying the count, and `min_head_sep_zones` explicitly
+  needing empirical tuning, that is a real cost in bodies and hours.
+
+  A cheap hedge, if it ever bites: frames are already arriving in `dev-stream`, so a
+  "record" button dumping them to disk is perhaps a day of work and preserves the option.
+  Worth reconsidering only if the parameter sweep starts eating sessions.
