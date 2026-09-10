@@ -1266,6 +1266,51 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 
 	ret = wait_frame(dev, timeout);
 	if (ret < 0) {
+		uint8_t fsm = 0xFF;
+		uint8_t ready = 0xFF;
+
+		/*
+		 * A missed edge and a stalled sensor are NOT indistinguishable,
+		 * and the driver used to claim they were. Two registers settle
+		 * it, and they point at completely different faults:
+		 *
+		 *   FSM STANDBY, or FRAME_READY set -> the device FINISHED the
+		 *     frame and we never saw the interrupt. The INTR line is at
+		 *     fault: P0.01, its pull, or the sensor's interrupt pad
+		 *     configuration. The data is probably sitting there intact.
+		 *
+		 *   FSM STREAMING with FRAME_READY clear -> the device is still
+		 *     working and genuinely has not finished. That is exposure,
+		 *     frame period or the sensor itself - nothing to do with the
+		 *     interrupt.
+		 *
+		 * UM3683 Table 8: SYSTEM_FSM 0x008C, FRAME_READY 0x008E.
+		 */
+		k_mutex_lock(&data->lock, K_FOREVER);
+		(void)vl53l9_read8((void *)dev, VL53L9_REGADDR_SYSTEM_FSM, &fsm);
+		(void)vl53l9_read8((void *)dev, VL53L9_REGADDR_FRAME_READY,
+				   &ready);
+		k_mutex_unlock(&data->lock);
+
+		LOG_ERR("frame wait failed (%d): FSM 0x%02x, FRAME_READY 0x%02x",
+			ret, fsm, ready);
+
+		if (fsm == 0x02 || (ready & 0x01U)) {
+			LOG_ERR("  *** THE FRAME WAS READY AND WE MISSED THE "
+				"INTERRUPT. The sensor did its job; the INTR "
+				"path did not. Suspect P0.01, its pull, or the "
+				"interrupt pad mode — not the sensor.");
+		} else if (fsm == 0x03) {
+			LOG_ERR("  device is STILL STREAMING with no frame "
+				"ready: it genuinely has not finished. That is "
+				"exposure, frame period or the part — the "
+				"interrupt is not involved.");
+		} else {
+			LOG_ERR("  FSM 0x%02x is neither streaming nor standby: "
+				"the part left the state it was put in, which "
+				"points at a supply or the clock.", fsm);
+		}
+
 		return ret;
 	}
 
