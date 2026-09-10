@@ -575,6 +575,41 @@ static void log_device_status(const struct device *dev)
 		st.error.spad_supply_overload, st.error.hvboost_limit,
 		st.error.sof_outside_blanking, st.error.pll_lock,
 		st.error.ref_array, st.error.internal_fw);
+
+	/*
+	 * The five laser-driver status bytes, read one at a time.
+	 *
+	 * vl53l9_get_status() reads all five into element 0 (st/vl53l9.c:820-823,
+	 * missing the `+ i`), so its laser_driver[] cannot be trusted. ST's file
+	 * is vendored unmodified on purpose, so the fix lives here.
+	 *
+	 * These matter more than the rest on this board. UM3683 2.4: a fault in
+	 * the VCSEL driver stops laser emission, the firmware then STOPS THE
+	 * STREAMING, and the part sits in safe mode until it is rebooted - which
+	 * is exactly the "STANDBY with no frame ready" the bench keeps showing.
+	 */
+	{
+		uint8_t ldd[5];
+		bool any = false;
+
+		for (uint8_t i = 0; i < 5U; i++) {
+			ldd[i] = 0;
+			(void)vl53l9_read8((void *)dev,
+					   VL53L9_REGADDR_LDD_STATUS(i),
+					   &ldd[i]);
+			if (ldd[i] != 0U) {
+				any = true;
+			}
+		}
+
+		LOG_ERR("  laser driver status: %02x %02x %02x %02x %02x%s",
+			ldd[0], ldd[1], ldd[2], ldd[3], ldd[4],
+			any ? "  <-- NON-ZERO: a laser safety fault stopped the "
+			      "streaming (UM3683 2.4). The VCSEL rail is the "
+			      "first thing to check — it is VBAT_LDD, straight "
+			      "off the load switch."
+			    : "  (all clear)");
+	}
 }
 
 static int device_boot(const struct device *dev)
@@ -1354,6 +1389,14 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 				"left streaming without producing one. Not an "
 				"interrupt problem — the frame itself never "
 				"completed.");
+			/*
+			 * UM3683 2.4 names exactly one thing that makes the
+			 * firmware stop streaming by itself: a laser safety
+			 * fault. The error bits are sticky, so they are still
+			 * there to be read.
+			 */
+			LOG_ERR("  asking the device why it stopped:");
+			log_device_status(dev);
 		} else if (fsm == 0x03) {
 			LOG_ERR("  device is STILL STREAMING with no frame "
 				"ready: it genuinely has not finished. That is "

@@ -1423,4 +1423,34 @@ duty-cycling has to amortise. It is also the strongest argument for Fast-mode Pl
 Table 1 quotes I2C reads implying ~1 MHz, which would cut it to ~134 ms. That needs
 clock-frequency changed in the board file (Victor's) and probably stronger pull-ups, so it
 is his call and not urgent until the sensor work settles.
+## 2026-09-10 - The sensor stops streaming by itself. UM3683 2.4 names one cause.
+What: with recovery restored and the frame wait made interrupt-assisted, the failure is
+now clean and repeatable at BOTH 54x42 and 24x20:
+  frame wait failed (-11): FSM 0x02, FRAME_READY 0x00
+  device is in STANDBY with NO frame ready: it left streaming without producing one
+Boot is perfect every time - device id 0x53334c39, READY_TO_BOOT, blob in 306 ms, retry
+recovers cleanly. The device enters STREAMING and then quits without ranging.
+UM3683 section 2.4 describes exactly one mechanism that does that: "Faults related to laser
+emission are directly checked by the VCSEL driver. In case of an error or fault, the laser
+driver immediately stops the laser emission and reports an error to the firmware. The
+firmware then stops the streaming ... The laser driver switches to safe mode. It is the
+driver's responsibility to reboot the device and to restart the streaming when a laser
+safety error occurs."
+That fits everything observed: boot works and the blob uploads because neither fires the
+VCSEL; ranging fails because it does; and a reboot recovers, exactly as ST says it must.
+It also fits this board's history - VBAT_LDD comes straight off the load switch, and the
+100 mA supply fold-back has been on the open list since 2026-09-06. A rail that holds for
+logic but sags when the laser fires would produce precisely this.
+NOT YET CONFIRMED. The error bits are sticky (2.4.1) and we were not reading them on this
+path. The driver now calls log_device_status() when it finds STANDBY-with-no-frame, and
+reads the five LDD_STATUS bytes individually to work around ST's indexing bug
+(st/vl53l9.c:820-823 reads all five into element 0).
+Also learned, and it corrects a documented assumption: SYNCHRO after a fresh boot reads
+2 (AUTONOMOUS), not 0 (SLAVE). The driver has always read-then-set rather than assuming,
+which is why this never bit - but docs/research/um3683-power-on-and-boot.md states the
+reset default is SLAVE on the strength of Table 12, and the device disagrees. Either the
+patch firmware sets it during boot or the table describes the pre-patch reset value.
+Next: read the log line. A non-zero ERROR_STATUS or LDD_STATUS confirms the laser fault and
+moves this to the supply. All zeros means something else stops the streaming and the search
+reopens.
 
