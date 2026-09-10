@@ -549,26 +549,6 @@ int main(void)
 	while (true) {
 		LOG_INF("heartbeat %u  (uptime %lld ms)", beat, k_uptime_get());
 
-#if defined(CONFIG_APP_ENABLE_IMU)
-		/*
-		 * Accelerometer on every beat.
-		 *
-		 * Two jobs, and the second is the reason it is here rather than
-		 * once at startup. It shows the IMU is alive and sane — a board
-		 * at rest reads one gravity, which imu_read_and_log() checks
-		 * automatically — and it re-exercises the I2C bus once a second
-		 * for as long as the board is running.
-		 *
-		 * That second job is what makes a silent VL53L9CX diagnostic.
-		 * A bus that keeps working for the IMU while the ToF keeps
-		 * NAKing is not a bus problem, and this line proves it
-		 * continuously rather than once at boot.
-		 */
-		if (imu_ok) {
-			imu_read_and_log();
-		}
-#endif
-
 		/*
 		 * Retry the sensor bring-up until it works, roughly every ten
 		 * heartbeats.
@@ -595,6 +575,24 @@ int main(void)
 		}
 
 #if defined(CONFIG_APP_ENABLE_IMU)
+		/*
+		 * Accelerometer every beat. Two jobs, and the second is why it
+		 * is here rather than once at startup: it shows the IMU is alive
+		 * and sane (a board at rest reads one gravity, checked inside),
+		 * and it re-exercises the I2C bus once a second for as long as
+		 * the board runs.
+		 *
+		 * That second job is what makes a silent VL53L9CX diagnostic. A
+		 * bus that keeps working for the IMU while the ToF keeps NAKing
+		 * is not a bus problem, and this proves it continuously rather
+		 * than once at boot.
+		 *
+		 * EXACTLY ONE call site. On 2026-09-10 a second was added here
+		 * without noticing this one, and the result was a good sample
+		 * followed immediately by "no new accel sample" every beat —
+		 * the second read finding XLDA clear because the first had just
+		 * consumed the data. Harmless, but it read like an ODR fault.
+		 */
 		if (imu_ok) {
 			imu_read_and_log();
 		}

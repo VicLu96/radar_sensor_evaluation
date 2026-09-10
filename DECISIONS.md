@@ -1332,3 +1332,33 @@ No driver changes. All three functions - pick_variant(), imu_configure(),
 imu_read_and_log() - were already written and were only gated off.
 FLASH 69,340 B, RAM 60,784 B.
 
+## 2026-09-10 - Bus PROVEN by the IMU, and P0.02 is now being held low
+What: first log with the IMU refitted and read every heartbeat. Two findings, one of them
+new since 2026-09-07.
+1. THE I2C BUS IS PROVEN. WHO_AM_I = 0x71 (LSM6DSV16BX), accel steady at |a| = 995-996 mg
+at rest across ten heartbeats, while in the SAME log the VL53L9CX gives 58 NAKs at 0x29 and
+no ACK at 0x52. SDA P1.13, SCL P1.08, the pull-ups, the pinctrl and 400 kHz all work. Every
+previous NAK had two possible explanations; it now has one, and it is on the ToF side.
+2. P0.02 IS BEING HELD LOW, AND THIS IS NEW. The retry logs "power-gpios driven high, pad
+reads 0 <-- HELD LOW". On 2026-09-07 the identical retry read 1. The pin is configured
+GPIO_OUTPUT_INACTIVE | GPIO_INPUT so this is the actual pad, not the output register: the
+nRF54L15 drives P0.02 high for 500 ms and the net does not get there.
+What changed in between is the IMU rework. That makes a solder bridge or debris on
+/Power_Enable the first thing to check - it is the enable input of the load switch and all
+three regulators, so if it cannot be pulled high the sensor has no rails at all, and UM3683
+2.5.1 condition 1 fails. That would explain the NAKs completely and independently of
+everything else on the list.
+Cannot yet distinguish a short on the net from a damaged nRF output driver (the
+no-level-shifting overvoltage risk from 2026-09-06 would fail exactly this way). Measuring
+P0.02 with the shield disconnected separates them in one minute.
+Also fixed: I added a second imu_read_and_log() call without noticing the loop already had
+one, so every heartbeat logged a good sample followed by "no new accel sample (STATUS=0x04)"
+- the second read finding XLDA clear because the first had just consumed the data. Harmless,
+but it read like an ODR fault. One call site now, with a comment saying so.
+I2C bus speed, checked against UM3683 Table 1 on request: ST's quoted I2C read times imply
+~650-700 kbit/s effective (14900 B in 200 ms is 134,100 bits, so 670 kbit/s), i.e. Fast-mode
+Plus rather than the 400 kHz we run. NO MINIMUM IS SPECIFIED and I2C is static, so bus speed
+cannot cause a NAK - this is a throughput ceiling, not a bring-up factor. At 400 kHz a 54x42
+frame needs ~335 ms, so ~2.4 fps against ST's quoted 4.
+FLASH 69,308 B, RAM 60,784 B.
+
