@@ -187,12 +187,24 @@ static void hold_sensor_power(void)
 
 static void log_sensor_power(void)
 {
+	static int last = -2;
 	int lvl = gpio_pin_get_dt(&sensor_pwr);
 
+	/* Only on change. A line every second saying the same thing is RTT
+	 * bandwidth spent to tell you nothing, and on a log that also carries
+	 * ten grid rows per frame that bandwidth is not free. A DROP is what
+	 * matters, and a drop is a change.
+	 */
+	if (lvl == last) {
+		return;
+	}
+	last = lvl;
+
 	LOG_INF("PWR_EN P0.02 pad = %d%s", lvl,
-		lvl == 1 ? "  (high — rails should be up)" :
-		lvl == 0 ? "  <-- LOW WHILE BEING DRIVEN HIGH. The net is held "
-			   "down: a short, or a load the pin cannot drive." :
+		lvl == 1 ? "  (high — rails up)" :
+		lvl == 0 ? "  <-- DROPPED LOW WHILE BEING DRIVEN HIGH. The net "
+			   "is held down: a short, or a load the pin cannot "
+			   "drive." :
 			   "  <-- read failed");
 }
 #endif /* CONFIG_APP_HOLD_SENSOR_POWER && power_gpios */
@@ -521,10 +533,22 @@ static void tof_capture_and_log(void)
 
 	if (ret < 0) {
 		LOG_ERR("ToF capture failed (%d)", ret);
+		if (ret == -EIO) {
+			LOG_ERR("  -EIO here usually carries ST's "
+				"INVALID_STATE (-3) underneath: the device was "
+				"not in STREAMING when the frame was read. The "
+				"first capture after boot can lose this race; "
+				"later ones should not.");
+		}
 		if (ret == -EAGAIN) {
-			LOG_ERR("  timed out waiting for frame-ready. With no "
-				"int-gpios this is polled, so it means the sensor "
-				"never finished a measurement.");
+			LOG_ERR("  timed out waiting for frame-ready (%s). The "
+				"sensor never signalled a completed measurement.",
+				DT_NODE_HAS_PROP(TOF_NODE, int_gpios)
+					? "int-gpios IS wired, so either the "
+					  "interrupt never fired or the frame "
+					  "never completed — a missed edge and a "
+					  "stalled sensor look identical here"
+					: "no int-gpios, so frame-ready is polled");
 		}
 		return;
 	}
@@ -564,7 +588,33 @@ static void tof_capture_and_log(void)
 	 * Centimetres rather than millimetres purely so the columns line up in
 	 * three characters at everything up to 9.99 m.
 	 */
-	LOG_INF("  distances in cm ('   .' = no target):");
+	/*
+	 * The health bits, from the status line ST hands back intact.
+	 *
+	 * Offsets are UM3683 Table 7, verified field by field on 2026-09-06:
+	 * ERROR_CODE 0x0064 -> byte 60, ERROR_STATUS 0x0066 -> byte 62. These
+	 * are the device's own verdict on itself, and pll_lock in particular is
+	 * what says whether AP_CLK is genuinely good rather than merely present.
+	 */
+	{
+		uint16_t err_code = (uint16_t)frame.status_line[60] |
+				    ((uint16_t)frame.status_line[61] << 8);
+		uint8_t  err_bits = frame.status_line[62];
+
+		if (err_code != 0U || err_bits != 0U) {
+			LOG_WRN("  device health: ERROR_CODE 0x%04x, "
+				"ERROR_STATUS 0x%02x", err_code, err_bits);
+			if ((err_bits & 0x20U) == 0U) {
+				LOG_WRN("    PLL NOT LOCKED — AP_CLK is not "
+					"good enough for the device");
+			}
+		} else {
+			LOG_INF("  device health: all clear (ERROR_CODE 0, "
+				"ERROR_STATUS 0 — PLL locked, supplies OK)");
+		}
+	}
+
+	LOG_INF("  distances in cm (\'   .\' = no target):");
 
 	for (uint8_t r = 0; r < frame.rows; r++) {
 		char line[VL53L9CX_COLS_FULL * 4 + 1];

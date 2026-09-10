@@ -1362,3 +1362,38 @@ cannot cause a NAK - this is a throughput ceiling, not a bring-up factor. At 400
 frame needs ~335 ms, so ~2.4 fps against ST's quoted 4.
 FLASH 69,308 B, RAM 60,784 B.
 
+## 2026-09-10 - THE SENSOR WORKS. First depth frames from the VL53L9CX.
+What: "VL53L9CX ready. Firmware blob upload took 306 ms", followed by repeated
+"ToF 12x10 in 40 ms - 73/120 zones valid" with distances from 897 mm to 9568 mm and a
+device frame counter incrementing 1, 2, 3. After nine days of clean NAKs the part boots,
+uploads its 9,865-byte patch and ranges.
+What actually fixed it, in the order the evidence supports:
+- zephyr,concat-buf-size / zephyr,flash-buf-max-size raised from the 16-byte default to
+  1040 (2026-09-06, found by both expert reviews). The blob upload returned -ENOSPC on
+  every chunk before this and could never have completed. 306 ms measured against ~250 ms
+  predicted at 400 kHz, so the upload is behaving exactly as modelled.
+- device_boot() no longer discarding vl53l9_init()'s return code, which is what had been
+  hiding the above.
+- P0.02 held high by the application. The pad now reads 1 at assert and stays 1 across
+  every heartbeat, so the 2026-09-10 "HELD LOW" reading was the retry's own power cycling
+  seen mid-cycle, NOT a short and NOT a damaged pin. Recorded because I had ranked a
+  rework solder bridge as the leading suspect and that was wrong.
+Three things the first working log exposed:
+- get_frame failed (-3) = ST INVALID_STATE on the very first capture, 13 ms after boot:
+  the device was not in STREAMING yet. Later captures are clean, so it is a startup race,
+  not a defect. Now named in the log instead of surfacing as a bare -EIO.
+- One -EAGAIN frame timeout at 7.9 s, then nothing since. Worth watching.
+- The -EAGAIN message claimed "with no int-gpios this is polled" unconditionally, which is
+  FALSE on this board - int-gpios is wired to P0.01. It now reports the actual mode and
+  says that a missed edge and a stalled sensor look identical from there.
+Added, because the data was being captured and thrown away: the device health line from
+the status trailer, ERROR_CODE at byte 60 and ERROR_STATUS at byte 62 (UM3683 Table 7,
+offsets verified 2026-09-06). pll_lock among those bits is the device's own verdict on
+AP_CLK - present is not the same as good enough.
+Also cut the per-second PWR_EN line down to on-change only. A line every second saying
+nothing costs RTT bandwidth that the ten grid rows per frame actually need.
+Still open: no IMU output in this log across 22 heartbeats despite CONFIG_APP_ENABLE_IMU=y,
+so imu_ok was false. The startup probe result is not in the captured log, so the reason is
+unknown. Needs the first second of a fresh capture.
+FLASH 71,204 B, RAM 60,792 B.
+
