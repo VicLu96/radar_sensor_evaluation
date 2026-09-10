@@ -995,6 +995,58 @@ static void unpack(const struct device *dev, struct vl53l9cx_frame *out)
 /* ---------------------------------------------------------------------------
  * Public API
  * -------------------------------------------------------------------------*/
+/*
+ * Wait until the device is actually back in STANDBY.
+ *
+ * vl53l9_stop() does NOT do this. It checks the FSM is STREAMING, issues
+ * COMMAND_STOP_STREAM, and then _write_cmd() polls only until the COMMAND
+ * register clears - which means the firmware ACCEPTED the command, not that the
+ * state machine has finished leaving STREAMING. Its budget is 14 ms
+ * (st/vl53l9.c:596).
+ *
+ * At 12x10 that was always enough and the bug never showed. At 54x42 a frame is
+ * 2268 zones and ~404 ms of bus time, the wind-down is correspondingly longer,
+ * and 14 ms is not close. The next capture then calls set_context, set_binning,
+ * the profile writes, set_exposure and set_sync_mode - EVERY ONE of which
+ * returns INVALID_STATE unless the FSM reads STANDBY (st/vl53l9.c:462 and
+ * friends) - and the whole capture fails with -EIO.
+ *
+ * That is exactly the reported symptom: the first full-resolution capture
+ * succeeds, every one after it fails.
+ *
+ * Reads SYSTEM_FSM directly (UM3683 Table 8) rather than trusting a delay,
+ * because the right wait depends on resolution, exposure and where in the frame
+ * the stop landed.
+ */
+static int wait_for_standby(const struct device *dev, uint32_t timeout_ms)
+{
+	int64_t deadline = k_uptime_get() + timeout_ms;
+	uint8_t fsm = 0xFF;
+
+	for (;;) {
+		if (vl53l9_read8((void *)dev, VL53L9_REGADDR_SYSTEM_FSM, &fsm)
+		    != VL53L9_ERROR_NONE) {
+			return -EIO;
+		}
+		if (fsm == 0x02) { /* FSM_STANDBY */
+			return 0;
+		}
+		if (k_uptime_get() >= deadline) {
+			LOG_ERR("device did not return to STANDBY within %u ms "
+				"(FSM 0x%02x). The next capture's configuration "
+				"writes would all fail with INVALID_STATE.",
+				timeout_ms, fsm);
+			return -ETIMEDOUT;
+		}
+		k_sleep(K_MSEC(2));
+	}
+}
+
+/* Generous on purpose: a full-resolution frame is ~404 ms of bus time alone, so
+ * a wind-down can legitimately take a good fraction of a second.
+ */
+#define STANDBY_TIMEOUT_MS 1500
+
 static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 {
 	struct vl53l9cx_data *data = dev->data;
@@ -1004,6 +1056,20 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 
 	if (res >= VL53L9CX_RES_COUNT) {
 		return -EINVAL;
+	}
+
+	/*
+	 * Nothing to do if this resolution is already applied.
+	 *
+	 * vl53l9cx_capture() calls this on every single capture, and it is five
+	 * STANDBY-only register operations - context, binning, switchover,
+	 * short-offset, exposure. Repeating them per frame costs bus time and
+	 * energy for no change, and every one of them is a chance to hit the
+	 * state race above. Skipping the no-op case is both faster and one less
+	 * thing that can fail.
+	 */
+	if (data->binning == g->binning) {
+		return 0;
 	}
 
 	/* Ask ST rather than trusting our own table. */
@@ -1152,6 +1218,9 @@ int vl53l9cx_stop(const struct device *dev)
 	k_mutex_lock(&data->lock, K_FOREVER);
 	ret = vl53l9_stop((void *)dev);
 	data->streaming = false;
+	if (ret == VL53L9_ERROR_NONE) {
+		(void)wait_for_standby(dev, STANDBY_TIMEOUT_MS);
+	}
 	k_mutex_unlock(&data->lock);
 
 	return (ret == VL53L9_ERROR_NONE) ? 0 : -EIO;
@@ -1256,6 +1325,17 @@ int vl53l9cx_capture(const struct device *dev, enum vl53l9cx_res res,
 
 	k_mutex_lock(&data->lock, K_FOREVER);
 	(void)vl53l9_stop((void *)dev);
+
+	/* And wait for it to land. Without this the NEXT capture's STANDBY-only
+	 * writes race the wind-down — see wait_for_standby() above.
+	 */
+	{
+		int sret = wait_for_standby(dev, STANDBY_TIMEOUT_MS);
+
+		if (sret < 0 && ret == 0) {
+			ret = sret;
+		}
+	}
 	k_mutex_unlock(&data->lock);
 
 	return ret;
