@@ -81,7 +81,28 @@
 		 * clock as board-supplied and does not try to gate it, which is
 		 * correct here — see docs/plan/ap-clk-always-on.md.
 		 */
-		ext-clock-frequency = <8000000>;
+		/*
+		 * 12 MHz — Victor changed the board's AP_CLK source, 2026-09-11.
+		 *
+		 * THIS VALUE IS NOT COSMETIC. UM3683 2.5.2: setting it "allows
+		 * the firmware to configure all internal clocks required for
+		 * correct sensor operation". Declare 8 MHz while feeding 12 and
+		 * every internal clock runs 1.5x faster than the firmware
+		 * believes — including the one that times the optical pulse
+		 * against the blanking period, which 2.6.1 says exists "to
+		 * comply with the power limits of laser Class 1".
+		 *
+		 * The laser driver then trips its own safety interlock and CABDT
+		 * reports ERROR_CODE 0x0F00. Which is exactly what the bench
+		 * showed from 2026-09-10 onward, and it explains the one fact a
+		 * supply theory could not: it faulted even with NB_SHOT_STEP_n
+		 * at zero, because a timing violation is wrong on every pulse
+		 * however few there are.
+		 *
+		 * Legal range is 6-27 MHz (Table 11), so 12 MHz is fine — it
+		 * simply has to be declared.
+		 */
+		ext-clock-frequency = <12000000>;
 
 		/*
 		 * Sensor power domain, P0.02. Active high.
@@ -222,4 +243,22 @@
  */
 &clock {
 	status = "okay";
+};
+
+/*
+ * Stop the SoC driving AP_CLK, now that the board supplies 12 MHz itself.
+ *
+ * The GRTC fast clock output cannot produce 12 MHz anyway — it divides the
+ * 16 MHz pclk and 8 MHz is its maximum, at divider 1. So an external 12 MHz
+ * source and a GRTC output on the same pin is two drivers fighting over P0.00.
+ *
+ * Deleting the property also compiles out the SYSCOUNTER keep-alive, via
+ * VL53L9CX_APCLK_FROM_GRTC in the driver.
+ *
+ * If the 12 MHz is NOT external and P0.00 should still be driven, delete this
+ * block — but then the 12 MHz cannot be coming from GRTC either, and where it
+ * comes from needs settling first.
+ */
+&grtc {
+	/delete-property/ clkout-fast-frequency-hz;
 };

@@ -1585,4 +1585,39 @@ firmware side.
 NEXT MEASUREMENT, and it outranks the bisect: meter the IMU's supply rail. If it is down, that
 is a board-level supply fault and it explains both devices at once. If it is up and the IMU
 still NAKs, the IMU is damaged and the brownout hypothesis gains a lot of weight.
+## 2026-09-11 - THE ANSWER: AP_CLK is 12 MHz, the devicetree said 8 MHz
+What: Victor mentioned in passing that the board is now supplied with 12 MHz. The
+devicetree still declared ext-clock-frequency = 8000000. That is the whole bug.
+WHY IT BREAKS THE LASER AND NOTHING ELSE. UM3683 2.5.2: setting the external clock frequency
+"allows the firmware to configure ALL INTERNAL CLOCKS required for correct sensor operation".
+Declare 8 MHz while feeding 12 and every internal clock runs 1.5x faster than the firmware
+believes - including the one timing the optical pulse against the blanking period, which
+2.6.1 says exists "to comply with the power limits of laser Class 1". The laser driver trips
+its own safety interlock and CABDT reports ERROR_CODE 0x0F00, LDD fault.
+IT EXPLAINS EVERY OBSERVATION, INCLUDING THE ONE THAT KILLED THE SUPPLY THEORY:
+- worked before: 8 MHz supplied, 8 MHz declared, consistent
+- broke without a firmware change to blame, because the change was on the board
+- an LDD SAFETY fault specifically, not a supply fault
+- every supply error bit clear - vhv_ov, vhv_uv, spad_overload, current limit - because it
+  was never a supply problem
+- ldd[0] = 0x00: the interlock tripped, but the LDD had no internal error of its own
+- AND THE CONTROL RUN FAILED WITH NB_SHOT_STEP_n AT ZERO. A supply-overload theory cannot
+  explain a fault when the VCSEL is barely firing. A timing violation can: the pulse/blanking
+  ratio is wrong on every pulse, however few there are. That was the fact that did not fit,
+  and it is the fact that confirms this.
+Fixed: ext-clock-frequency = 12000000 (legal, Table 11 gives 6-27 MHz), and the GRTC fast
+clock output DELETED from P0.00 - GRTC divides the 16 MHz pclk and 8 MHz is its maximum at
+divider 1, so it cannot produce 12 MHz and an external source plus a GRTC output on one pin
+is two drivers fighting. Deleting it also compiles out the SYSCOUNTER keep-alive.
+The bisect control is removed and normal configuration restored - exposure, DSS LUT and
+profile writes all on. It did its job: the control failing at zero shots is what ruled the
+firmware out and forced the search back to the hardware.
+LESSON WORTH KEEPING. Four sessions went into this. The board changed and the devicetree did
+not, and nothing in the firmware could have known - the device reports a laser fault, not a
+clock fault, because from its point of view the clock is fine and the laser timing is wrong.
+The config banner now prints resolution, exposure and I2C speed at boot; AP_CLK belongs in
+that line too, and a mismatch between declared and measured is worth a loud check.
+Still open and unexplained: the IMU stopped answering at 0x6b in the same window. A clock
+change should not affect it. Either it is genuinely unrelated - rework, or its own supply -
+or something else happened on the board at the same time.
 

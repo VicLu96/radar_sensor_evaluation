@@ -1556,7 +1556,16 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 				 * the VCSEL supply, there is a threshold below
 				 * which it stops, and this walks down to it.
 				 */
-				if (exposure_ms > 1U) {
+				if (!IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE)) {
+					LOG_ERR("  EXPOSURE IS NOT BEING APPLIED "
+						"AT ALL (set_exposure skipped, "
+						"NB_SHOT_STEP_n = 0) AND IT "
+						"STILL FAULTS. The VCSEL is "
+						"barely firing, so this is not "
+						"an overload — the laser driver "
+						"is faulty or unpowered. Measure "
+						"+VBat_switched.");
+				} else if (exposure_ms > 1U) {
 					uint16_t was = exposure_ms;
 
 					exposure_ms /= 2U;
