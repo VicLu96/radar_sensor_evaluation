@@ -1074,7 +1074,9 @@ static int configure_signalling(const struct device *dev)
 	 * start-up LUT choice affects which SPADs are enabled on the first frame
 	 * and therefore how much signal a weak zone collects.
 	 */
-	{
+	if (!IS_ENABLED(CONFIG_VL53L9CX_WRITE_DSS_LUT)) {
+		LOG_WRN("DSS_DEFAULT_INIT_LUT write SKIPPED (left at reset 0)");
+	} else {
 		int dret = vl53l9_write8((void *)dev,
 					 VL53L9_REGADDR_DSS_DEFAULT_INIT_LUT, 3U);
 
@@ -1288,7 +1290,11 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 	 * Written before the exposure below because all of these are context
 	 * settings and the device is in STANDBY for the whole block.
 	 */
-	{
+	if (!IS_ENABLED(CONFIG_VL53L9CX_WRITE_PROFILE)) {
+		LOG_WRN("profile writes SKIPPED (switchover, rtn_short_offset "
+			"left at their resets of 500 and 0) — bisecting against "
+			"the 2026-09-10 working configuration");
+	} else {
 		int pret = vl53l9_write16((void *)dev,
 			VL53L9_REGADDR_STREAM_SWITCHOVER_DIST(VL53L9_CONTEXT_LONG),
 			650U);
@@ -1307,7 +1313,16 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 		}
 	}
 
-	ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG, exposure_ms);
+	if (!IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE)) {
+		LOG_WRN("set_exposure SKIPPED — NB_SHOT_STEP_n stays at its "
+			"reset of ZERO shots per step, which is exactly what "
+			"the 2026-09-10 working build did. Expect frames with "
+			"almost no signal.");
+		ret = VL53L9_ERROR_NONE;
+	} else {
+		ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG,
+					  exposure_ms);
+	}
 	if (ret != VL53L9_ERROR_NONE) {
 		LOG_ERR("set_exposure(%u ms) failed (%s) — zones with a weak "
 			"return will come back invalid",

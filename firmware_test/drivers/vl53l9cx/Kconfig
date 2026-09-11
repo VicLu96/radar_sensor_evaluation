@@ -64,6 +64,36 @@ config VL53L9CX_XSHUT_SETTLE_MS
 	  a fault — the driver's probe retries against a deadline for exactly
 	  this reason, so this value being slightly short is recoverable.
 
+config VL53L9CX_SET_EXPOSURE
+	bool "Call vl53l9_set_exposure()"
+	default y
+	help
+	  Turn OFF to leave NB_SHOT_STEP_n at its reset of ZERO shots per step.
+
+	  That is precisely what the 2026-09-10 working build did, because it
+	  never called set_exposure at all. It produced frames - and produced
+	  them with amplitude 9 against ambient 13, because the VCSEL was barely
+	  firing. Off is not a usable configuration; it is one arm of a bisect.
+
+config VL53L9CX_WRITE_PROFILE
+	bool "Write DISTANCE_SWITCHOVER and DISTANCE_RTN_SHORT_OFFSET"
+	default y
+	help
+	  UM3683 2.5.5.1's six-step ambient values, 650 and 2, which ST's own
+	  driver does not write. Resets are 500 and 0.
+
+	  Turn OFF to bisect against the 2026-09-10 working build, which did not
+	  write them.
+
+config VL53L9CX_WRITE_DSS_LUT
+	bool "Write DSS_DEFAULT_INIT_LUT = 3"
+	default y
+	help
+	  UM3683 2.5.4.3 asks for 3; the reset is 0 and ST's own default config
+	  omits it. DSS is dynamic SPAD selection, so this changes which SPADs
+	  are enabled - and "SPAD supply overload" is one of the device's error
+	  bits. Turn OFF to bisect.
+
 config VL53L9CX_EXPOSURE_MS
 	int "Exposure time per frame, milliseconds"
 	default 16

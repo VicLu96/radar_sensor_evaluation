@@ -1,0 +1,31 @@
+# Reproduce the device configuration of the last build that produced frames.
+#
+#   Optional snippets -> tick "legacy-config"
+#
+# On 2026-09-10 the sensor produced 12x10 frames. It has not produced one since.
+# Diffing working-2026-09-10 against HEAD shows FIVE changes to how the device is
+# configured, not the one I first claimed:
+#
+#   1. vl53l9_set_exposure() is now called at all   (was: NB_SHOT_STEP_n = 0)
+#   2. DSS_DEFAULT_INIT_LUT = 3                     (was: reset 0)
+#   3. DISTANCE_SWITCHOVER = 650                    (was: reset 500)
+#   4. DISTANCE_RTN_SHORT_OFFSET = 2                (was: reset 0)
+#   5. resolution 24x20 / 54x42                     (was: 12x10)
+#
+# This snippet reverts all five, on top of every diagnostic and bug fix since.
+#
+# It answers the one question that matters before any more bisecting:
+#
+#   IT WORKS   -> the hardware is fine and the regression is in those writes.
+#                 Re-enable them one at a time with the CONFIG_VL53L9CX_SET_EXPOSURE
+#                 / _WRITE_PROFILE / _WRITE_DSS_LUT switches and the resolution
+#                 choice, and the first one that faults is the cause.
+#   IT FAILS   -> the firmware is exonerated. Something changed in the hardware
+#                 between 2026-09-10 and now, and no amount of register bisecting
+#                 will find it.
+#
+# Not a usable configuration: with zero shots per step the VCSEL barely fires and
+# the data is nearly meaningless. It is a control, not a setting.
+name: legacy-config
+append:
+  EXTRA_CONF_FILE: legacy-config.conf
