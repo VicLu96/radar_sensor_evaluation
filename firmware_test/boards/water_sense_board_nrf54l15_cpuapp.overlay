@@ -13,6 +13,7 @@
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <zephyr/dt-bindings/regulator/nrf5x.h>
 
 / {
 	aliases {
@@ -228,6 +229,40 @@
  * So the absence of these properties here is CORRECT and deliberate. The SoC's
  * internal capacitors stay disabled because the module supplies its own.
  * -------------------------------------------------------------------------*/
+
+/* ---------------------------------------------------------------------------
+ * VREGMAIN IN DC/DC MODE — the last untested difference from Nordic's board.
+ *
+ * LOW CONFIDENCE, and stated as such. I have no mechanism for why LDO mode
+ * would stop the radio TRANSMITTING while leaving it able to receive; LDO is a
+ * supported mode and the radio is meant to work in it. This is here because it
+ * is the only configuration difference from the nRF54L15 DK that has not been
+ * tried, and because three confident explanations have already been wrong.
+ *
+ * The SoC dtsi ships both nodes disabled with VREGMAIN defaulting to LDO
+ * (nrf54l_05_10_15.dtsi:736-749). Nordic's DK enables them and selects DC/DC
+ * (nrf54l_05_10_15_cpuapp_common.dtsi:38-42). This board has done neither.
+ *
+ * SAFE TO TRY HERE because the ISP2454-LX integrates the DC-DC, inductor
+ * included - docs/hardware/mcu-isp2454ll.md, "Integrated: RF matching, antenna,
+ * 32 MHz + 32 kHz crystals, DC-DC". Selecting DC/DC mode with no inductor
+ * fitted is what would be dangerous, and that is not this board.
+ *
+ * IF THE BOARD DOES NOT BOOT AT ALL after this, that is the answer: delete
+ * this block. A dead board and a working one are easy to tell apart, which is
+ * what makes this cheap to test rather than risky.
+ *
+ * It is also worth having regardless of the radio: DC/DC mode is materially
+ * more efficient than LDO, and this project has to report energy numbers.
+ * -------------------------------------------------------------------------*/
+&regulators {
+	status = "okay";
+};
+
+&vregmain {
+	status = "okay";
+	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+};
 
 &clock {
 	status = "okay";

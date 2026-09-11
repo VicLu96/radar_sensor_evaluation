@@ -570,6 +570,33 @@ int app_ble_init(void)
 	}
 
 	/*
+	 * Ask the CONTROLLER what power it will advertise at.
+	 *
+	 * HCI LE Read Advertising Channel TX Power (0x2007) is answered by the
+	 * controller itself, not by the host's configuration. Kconfig says 0 dBm
+	 * (CONFIG_BT_CTLR_TX_PWR_0); this says what the controller actually
+	 * intends. If those disagree — or if it comes back at the bottom of the
+	 * range — that is a real finding, and it is one HCI command.
+	 */
+	{
+		struct net_buf *rsp = NULL;
+		int pret = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ADV_CHAN_TX_POWER,
+						NULL, &rsp);
+
+		if (pret) {
+			LOG_ERR("LE Read Adv Channel TX Power failed (%d)", pret);
+		} else {
+			struct bt_hci_rp_le_read_chan_tx_power *rp =
+				(void *)rsp->data;
+
+			LOG_INF("controller will advertise at %d dBm "
+				"(status 0x%02x)", rp->tx_power_level,
+				rp->status);
+			net_buf_unref(rsp);
+		}
+	}
+
+	/*
 	 * The identity address, printed because it is what a scanner shows when
 	 * the name does not come through. On Windows in particular a cached
 	 * pairing can surface a device under an old name, and then the only way
