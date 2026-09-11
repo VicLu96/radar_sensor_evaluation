@@ -130,6 +130,40 @@ config APP_BLE_FIRST
 	  Turn it OFF for unattended runs - a node that will not range until
 	  someone connects is a bring-up tool, not a sensor.
 
+config APP_BLE_ADV_SWEEP
+	bool "At boot, try four advertising configurations in turn"
+	default n
+	depends on APP_BLE
+	select BT_EXT_ADV
+	help
+	  Enumerates instead of explaining.
+
+	  On 2026-09-11 the host reported this node advertising, the controller
+	  accepted every command with status 0x00, the radio received at
+	  -42 dBm, and nothing on air could see it. Three explanations were
+	  offered and all three were wrong, each built on a single observation.
+
+	  This tries four configurations that take genuinely different paths
+	  through the controller - legacy connectable, legacy non-connectable,
+	  extended connectable, extended non-connectable - for a fixed time
+	  each, announcing every switch.
+
+	  If ANY appears on a scanner, the radio and antenna are fine and the
+	  fault is specific to the paths that do not. If NONE appears, the fault
+	  is below all four, and that is a Nordic DevZone question with an
+	  unusually clean description.
+
+	  A bring-up tool. Turn it off once the answer is known.
+
+config APP_BLE_ADV_SWEEP_SECONDS
+	int "Seconds per configuration"
+	default 10
+	range 3 60
+	depends on APP_BLE_ADV_SWEEP
+	help
+	  Long enough to find on a phone without rushing, short enough that the
+	  whole sweep is under a minute.
+
 config APP_BLE_RX_SELFTEST
 	bool "Listen for other BLE devices at boot, to prove the radio works"
 	default y

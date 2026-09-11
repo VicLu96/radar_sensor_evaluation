@@ -1882,3 +1882,35 @@ open. For a bring-up ladder that was the wrong trade; for a radio it is the righ
 WHAT TO DO WITH THIS: stop drawing conclusions from single runs. An intermittent fault
 needs a pass/fail count over several resets before any change can be called a fix - and
 that includes calling this one a fix.
+
+## 2026-09-11 - ecdc09d does NOT reproduce. The fault is persistent.
+Victor flashed the exact commit that had appeared to work and it did not. So the single
+"it works" observation was not reproducible, and EVERYTHING concluded from it is void -
+the deferred sensor boot, the removed scan response, and the load capacitors are all
+un-implicated again. So is the intermittency theory: several restarts of the current
+build all fail the same way.
+THE POSITION, and it is cleaner than it has been all day:
+  - the host says it is advertising (bt_le_adv_start -> -EALREADY, every 5 s)
+  - the controller accepted every init command with status 0x00
+  - the radio RECEIVES: 61-89 advertisements per 3 s run, strongest -40 to -42 dBm
+  - HFXO starts
+  - nothing on air sees this node: Chrome filtered, Chrome with acceptAllDevices, and
+    nRF Connect on a phone at close range
+THREE EXPLANATIONS HAVE BEEN OFFERED AND ALL THREE WERE WRONG: the sensor rail (separate
+rails - Victor), the crystal load capacitance (the module has its own - Victor), and the
+blocking RTT logging (the build that appeared to work had MORE of it, not less). Each was
+built on a single observation. That is the actual lesson from today.
+SO: STOP EXPLAINING, START ENUMERATING. CONFIG_APP_BLE_ADV_SWEEP tries four
+configurations at boot, ten seconds each, announcing every switch - legacy connectable,
+legacy non-connectable, extended connectable, extended non-connectable. These take
+genuinely different paths through the controller: different PDU types, different
+channels, and in the extended cases a different advertiser entirely.
+  any appear  -> the radio and antenna are fine and the fault is specific to the paths
+                 that do not. Narrow, real, reportable.
+  none appear -> the fault is below all four, and this becomes a Nordic DevZone question
+                 with an unusually clean description.
+STILL NOT DONE, and both would replace inference with data: the 0x200a (LE Set
+Advertising Enable) status from the HCI debug log that already exists, and a BLE sniffer -
+a second nRF board running nRF Sniffer shows whether ANYTHING is on channels 37/38/39
+from that address. Nothing in Zephyr can see into the gap between "the controller says it
+is advertising" and "packets exist".

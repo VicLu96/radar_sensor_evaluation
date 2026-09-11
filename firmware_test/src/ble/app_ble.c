@@ -427,6 +427,108 @@ static void radio_rx_selftest(void)
 }
 #endif /* CONFIG_APP_BLE_RX_SELFTEST */
 
+#if defined(CONFIG_APP_BLE_ADV_SWEEP)
+/*
+ * FOUR WAYS TO ADVERTISE, TEN SECONDS EACH.
+ *
+ * Where this comes from: the host reports the node advertising
+ * (bt_le_adv_start -> -EALREADY), the controller accepted every command with
+ * status 0x00, the radio receives at -42 dBm, and nothing on air sees it. Three
+ * explanations have been offered and all three were wrong, each built on a
+ * single observation. This stops explaining and starts enumerating.
+ *
+ * The four configurations exercise genuinely different paths through the
+ * controller:
+ *
+ *   1 LEGACY CONNECTABLE      ADV_IND on channels 37/38/39. What we use now,
+ *                             and what is failing.
+ *   2 LEGACY NON-CONNECTABLE  ADV_NONCONN_IND. Same channels, different PDU
+ *                             type, and no connectable state machine behind it.
+ *   3 EXTENDED CONNECTABLE    ADV_EXT_IND with an AUX pointer to a secondary
+ *                             channel. A different advertiser in the
+ *                             controller entirely.
+ *   4 EXTENDED NON-CONNECTABLE
+ *
+ * If ANY of them shows up on a scanner, the radio and the antenna are fine and
+ * the fault is specific to the path that does not - which is a real, narrow,
+ * reportable result. If NONE of them does, the fault is below all four, and
+ * that is a Nordic DevZone question with an unusually clean description.
+ *
+ * Either way it is one flash and forty seconds of watching a phone, instead of
+ * another hypothesis.
+ */
+static void adv_sweep(void)
+{
+	static const struct bt_le_adv_param ext_conn_param =
+		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_EXT_ADV | BT_LE_ADV_OPT_CONN,
+				     BT_GAP_ADV_FAST_INT_MIN_2,
+				     BT_GAP_ADV_FAST_INT_MAX_2, NULL);
+	const uint32_t secs = CONFIG_APP_BLE_ADV_SWEEP_SECONDS;
+	struct bt_le_ext_adv *ext = NULL;
+	int ret;
+
+	LOG_WRN("=================================================");
+	LOG_WRN(" ADVERTISING SWEEP: four configurations, %u s each.", secs);
+	LOG_WRN(" WATCH A SCANNER AND NOTE WHICH ONES APPEAR.");
+	LOG_WRN(" Name \"%s\", address is the identity printed below.",
+		CONFIG_BT_DEVICE_NAME);
+	LOG_WRN("=================================================");
+
+	/* --- 1: legacy connectable, the failing case --------------------- */
+	LOG_WRN(">>> 1/4 LEGACY CONNECTABLE (ADV_IND) — look now");
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
+			      NULL, 0);
+	LOG_WRN("    bt_le_adv_start -> %d", ret);
+	k_sleep(K_SECONDS(secs));
+	LOG_WRN("    stop -> %d", bt_le_adv_stop());
+
+	/* --- 2: legacy non-connectable ----------------------------------- */
+	LOG_WRN(">>> 2/4 LEGACY NON-CONNECTABLE (ADV_NONCONN_IND) — look now");
+	ret = bt_le_adv_start(BT_LE_ADV_NCONN_IDENTITY, ad, ARRAY_SIZE(ad),
+			      NULL, 0);
+	LOG_WRN("    bt_le_adv_start -> %d", ret);
+	k_sleep(K_SECONDS(secs));
+	LOG_WRN("    stop -> %d", bt_le_adv_stop());
+
+	/* --- 3: extended connectable ------------------------------------- */
+	LOG_WRN(">>> 3/4 EXTENDED CONNECTABLE (ADV_EXT_IND) — look now");
+	ret = bt_le_ext_adv_create(&ext_conn_param, NULL, &ext);
+	if (ret) {
+		LOG_ERR("    ext_adv_create -> %d (skipping)", ret);
+	} else {
+		ret = bt_le_ext_adv_set_data(ext, ad, ARRAY_SIZE(ad), NULL, 0);
+		LOG_WRN("    ext_adv_set_data -> %d", ret);
+		ret = bt_le_ext_adv_start(ext, BT_LE_EXT_ADV_START_DEFAULT);
+		LOG_WRN("    ext_adv_start -> %d", ret);
+		k_sleep(K_SECONDS(secs));
+		LOG_WRN("    ext_adv_stop -> %d", bt_le_ext_adv_stop(ext));
+		(void)bt_le_ext_adv_delete(ext);
+		ext = NULL;
+	}
+
+	/* --- 4: extended non-connectable --------------------------------- */
+	LOG_WRN(">>> 4/4 EXTENDED NON-CONNECTABLE — look now");
+	ret = bt_le_ext_adv_create(BT_LE_EXT_ADV_NCONN_IDENTITY, NULL, &ext);
+	if (ret) {
+		LOG_ERR("    ext_adv_create -> %d (skipping)", ret);
+	} else {
+		ret = bt_le_ext_adv_set_data(ext, ad, ARRAY_SIZE(ad), NULL, 0);
+		LOG_WRN("    ext_adv_set_data -> %d", ret);
+		ret = bt_le_ext_adv_start(ext, BT_LE_EXT_ADV_START_DEFAULT);
+		LOG_WRN("    ext_adv_start -> %d", ret);
+		k_sleep(K_SECONDS(secs));
+		LOG_WRN("    ext_adv_stop -> %d", bt_le_ext_adv_stop(ext));
+		(void)bt_le_ext_adv_delete(ext);
+	}
+
+	LOG_WRN("=== SWEEP DONE. Which numbers appeared? ===");
+	LOG_WRN("    any of them  -> the radio is fine and the fault is "
+		"specific to the paths that did not appear.");
+	LOG_WRN("    none of them -> the fault is below all four, and this is "
+		"now a very cleanly described Nordic DevZone question.");
+}
+#endif /* CONFIG_APP_BLE_ADV_SWEEP */
+
 int app_ble_init(void)
 {
 	int ret;
@@ -444,6 +546,10 @@ int app_ble_init(void)
 
 #if defined(CONFIG_APP_BLE_RX_SELFTEST)
 	radio_rx_selftest();
+#endif
+
+#if defined(CONFIG_APP_BLE_ADV_SWEEP)
+	adv_sweep();
 #endif
 
 	ret = app_svc_config_init();
