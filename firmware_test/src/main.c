@@ -655,7 +655,7 @@ static void tof_capture_and_log(void)
 		max = MAX(max, frame.zone[i].distance_mm);
 	}
 
-	LOG_INF("ToF %ux%u in %lld ms — %u/%u zones valid",
+	LOG_INF("ToF %ux%u in %lld ms @ %u ms exposure — %u/%u zones valid",
 		frame.cols, frame.rows, took, valid,
 		(unsigned)frame.cols * frame.rows);
 
@@ -758,6 +758,27 @@ static void tof_capture_and_log(void)
 					"(now %u), or those directions genuinely "
 					"have no target within range.",
 					CONFIG_VL53L9CX_EXPOSURE_MS);
+			} else if (mi > mv + (mv / 4U)) {
+				/*
+				 * The invalid zones are BRIGHTER than the valid
+				 * ones. That is not a weak-signal problem at
+				 * all - it is the opposite, and the likely
+				 * cause is saturation: too much return for the
+				 * exposure in use, so the histogram peak cannot
+				 * be located and the zone is rejected.
+				 *
+				 * Seen on 2026-09-11 at ~1 m: valid 126,
+				 * invalid 259, 86 of 480 zones usable. Near
+				 * targets and long exposures are exactly the
+				 * combination that does this.
+				 */
+				LOG_WRN("    INVALID zones are BRIGHTER than "
+					"valid ones (%u vs %u) — this is "
+					"SATURATION, not weak signal. Too much "
+					"return for %u ms of exposure at this "
+					"range. LOWER the exposure, or move the "
+					"target further away.",
+					mi, mv, vl53l9cx_exposure_ms(tof));
 			} else {
 				LOG_WRN("    invalid zones are receiving "
 					"comparable signal to the valid ones, so "

@@ -96,11 +96,21 @@ config VL53L9CX_WRITE_DSS_LUT
 
 config VL53L9CX_EXPOSURE_MS
 	int "Exposure time per frame, milliseconds"
-	default 16
+	default 4
 	range 1 100
 	help
 	  Passed to vl53l9_set_exposure(), which programs NB_SHOT_STEP_n - the
 	  number of VCSEL shots the device integrates per step.
+
+	  LOWERED TO 4 ms ON 2026-09-11, because the bench says so twice over.
+	  With AP_CLK finally declared correctly, amplitude went from 9 to 126 and
+	  ambient from 13 to 1 - so there is 14x more signal than when 16 ms was
+	  chosen, and 16 ms now SATURATES: the invalid zones came back BRIGHTER
+	  than the valid ones (259 vs 126) with only 86 of 480 zones usable. And
+	  16 ms still triggered the laser fault, while the backoff found working
+	  frames further down.
+
+	  Both point the same way. Sweep upward from here rather than down.
 
 	  Raised from 8 to 16 on 2026-09-10, after 8 ms improved the valid-zone
 	  count but did not fill the frame. ST's 8 ms is their figure for

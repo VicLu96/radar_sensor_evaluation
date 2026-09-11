@@ -1743,6 +1743,12 @@ int vl53l9cx_retry_boot(const struct device *dev)
 	return ret;
 }
 
+uint16_t vl53l9cx_exposure_ms(const struct device *dev)
+{
+	ARG_UNUSED(dev);
+	return IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE) ? exposure_ms : 0U;
+}
+
 uint32_t vl53l9cx_last_boot_ms(const struct device *dev)
 {
 	struct vl53l9cx_data *data = dev->data;

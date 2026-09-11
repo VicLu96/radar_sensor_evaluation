@@ -219,6 +219,20 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
  */
 int vl53l9cx_retry_boot(const struct device *dev);
 
+/**
+ * @brief The exposure the last capture actually used, in milliseconds.
+ *
+ * Not the same as CONFIG_VL53L9CX_EXPOSURE_MS: the laser-fault backoff halves
+ * the live value, so a frame may have been taken at a fraction of the
+ * configured setting. On 2026-09-11 a session produced working frames and
+ * faulting frames in one run and the log did not say which exposure each used,
+ * which made the result unreadable.
+ *
+ * Exposure is also the most direct energy term on the device, so a frame whose
+ * exposure is unknown is not a usable measurement.
+ */
+uint16_t vl53l9cx_exposure_ms(const struct device *dev);
+
 uint32_t vl53l9cx_last_boot_ms(const struct device *dev);
 
 #ifdef __cplusplus

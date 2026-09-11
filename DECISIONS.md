@@ -1620,4 +1620,37 @@ that line too, and a mismatch between declared and measured is worth a loud chec
 Still open and unexplained: the IMU stopped answering at 0x6b in the same window. A clock
 change should not affect it. Either it is genuinely unrelated - rework, or its own supply -
 or something else happened on the board at the same time.
+## 2026-09-11 - The 12 MHz declaration was the fix. 14x more signal, and a new problem.
+What: with ext-clock-frequency corrected to 12000000 and the GRTC output removed, the sensor
+ranges. Frames at 24x20 in 120 ms, distances 948-1344 mm with coherent spatial structure,
+device frame counter incrementing, and "device health: all clear (ERROR_CODE 0, ERROR_STATUS
+0 - PLL locked, supplies OK)".
+THE SIGNAL IMPROVEMENT IS THE PROOF, and it is not subtle:
+  amplitude   9 -> 126   (14x)
+  ambient    13 ->   1   (13x less)
+  signal/ambient 0.7 -> 126
+A 1.5x clock error does not degrade ranging gracefully. Every internal clock was wrong, so
+the ranging window sat in the wrong place relative to the return and the histogram peak was
+smeared across the wrong bins. Correcting the declaration recovered the signal that was
+always there.
+THE NEW PROBLEM IS THE OPPOSITE OF THE OLD ONE. 86 of 480 zones valid, and the INVALID zones
+are BRIGHTER than the valid ones - amplitude 259 against 126. That is not weak signal; it is
+SATURATION. The target is at about 1 m, and 16 ms of exposure at that range returns more
+light than the histogram can locate a peak in, so the zone is rejected.
+Two independent readings now agree that 16 ms is too much: saturation on the frames that
+work, and the laser fault on the ones that do not, with the backoff finding working frames
+further down. Default exposure lowered 16 -> 4 ms, and the Kconfig says to sweep UPWARD from
+there rather than down.
+Added because the last log was unreadable without it: every frame line now reports the
+exposure it was actually taken at, via vl53l9cx_exposure_ms(). The backoff halves the live
+value, so a run can contain frames at several exposures and nothing said which was which.
+Exposure is also the most direct energy term on the device, so a frame whose exposure is
+unknown is not a usable measurement.
+The saturation case is now named in the log rather than described as "comparable signal",
+which was true but useless - invalid zones at twice the amplitude of valid ones deserve their
+own verdict.
+STILL OPEN: intermittent laser faults even after the clock fix. The backoff walks down and
+finds a working point, which is consistent with a supply that is marginal at high VCSEL
+current - the original hypothesis, now stripped of the clock confound. The threshold exposure
+is the number to record. Also still open: the IMU at 0x6b, silent since 2026-09-10.
 
