@@ -27,25 +27,22 @@ standby. Cutting it from 313 ms to ~125 ms moves that crossover.
 
 ## The three parts, and what each needs
 
-### 1. The IMU — **RESOLVED 2026-09-11, and it is not the obstacle**
+### 1. The IMU — **CLOSED 2026-09-11. It is not the obstacle.**
 
-This was the open `VERIFY`: the slowest device on a shared bus wins, so an IMU
-capped at 400 kHz would close the question on its own.
+**The fitted part is the LSM6DSV16BX — confirmed by Victor, 2026-09-11.** Its
+I²C interface supports fast mode *and* **fast mode plus at 1 MHz**, so the
+slowest-device-wins problem does not arise.
 
-| part | I²C maximum | verdict |
-|---|---|---|
-| **LSM6DSV16BX** — the part this repo documents as fitted | fast mode **and fast mode plus, 1 MHz** | **no obstacle** |
-| **LSM6DSO** — a different family member | **400 kHz only**; higher rates require I3C | would block it entirely |
+This was worth asking because the answer flips on the part number: an
+**LSM6DSO** is **400 kHz only**, with higher rates available solely over I3C,
+and it would have closed the 1 MHz question on its own.
 
-**So confirm which part is actually on the board before designing against this.**
-The two answers are opposite, and `docs/hardware/mcu-isp2454ll.md` records the
-fitted IMU as an LSM6DSV..BX while the question was asked about an LSM6DSO.
+The part has been **silent at 0x6B since 2026-09-10**, so it cannot currently be
+identified by WHO_AM_I — this rests on Victor and the schematic, which is
+sufficient. Whether it answers again is a separate problem and does not gate
+the bus speed.
 
-Note also that **the IMU has been silent at 0x6B since 2026-09-10**. A part that
-does not answer cannot be identified by WHO_AM_I, so this identification rests
-on the schematic rather than on the bus. Worth settling both at once.
-
-### 2. Pull-ups — **fit 1 kΩ. This is the real blocker.**
+### 2. Pull-ups — **VICTOR: FIT 1 kΩ. This is now the only blocker.**
 
 `t_r = 0.8473 · R · C`, and the rise-time limit is **300 ns at 400 kHz** and
 **120 ns at Fast-mode Plus**.
@@ -60,10 +57,21 @@ on the schematic rather than on the bus. Worth settling both at once.
 static and the controller samples late — not because the timing is legal. That
 is worth knowing on its own: the bus is being run outside spec today.
 
-**1 kΩ** meets Fm+ to ~140 pF and fixes 400 kHz as a side effect. At VDDIO =
-1.8 V that is 1.8 mA per line while held low, comfortably inside what either
-device sinks. 820 Ω if the traces are long; **1.5 kΩ is the most that is still
-safe for 1 MHz**, and only at low capacitance.
+**1 kΩ** meets Fm+ to ~140 pF and fixes 400 kHz as a side effect.
+
+| R | t_r @ 100 pF | Fm+ (120 ns)? | sink @ 1.8 V |
+|---|---|---|---|
+| 4.7 kΩ *(fitted today)* | 398 ns | **no — 3.3× over** | 0.4 mA |
+| 1.5 kΩ | 127 ns | marginal; only below ~90 pF | 1.2 mA |
+| **1 kΩ — recommended** | **85 ns** | **yes, to ~140 pF** | 1.8 mA |
+| 820 Ω | 69 ns | yes, to ~170 pF | 2.2 mA |
+
+Take 820 Ω if the traces are long or the bus carries more than two devices.
+Sink current is comfortably inside what both parts handle either way.
+
+**This is the last thing standing between the node and 6.2 fps**, and it fixes
+an out-of-spec 400 kHz bus whether or not Fast-mode Plus is adopted — so it is
+worth doing on its own merits.
 
 *Cost:* ~1.8 mA per line while low. Negligible at 0.1 Hz; ~0.6 mA average at
 2 fps. One more reason the track tier should run only during activity.
@@ -123,11 +131,10 @@ Then **measure, do not assume**:
 
 ## Order of work
 
-1. Confirm the fitted IMU part number from the schematic. **If it is an LSM6DSO,
-   stop** — the shared bus is capped at 400 kHz and the only routes are moving
-   the IMU to its own bus, to I3C, or accepting 2.5 fps.
-2. Fit 1 kΩ pull-ups. Victor's change, and it fixes an out-of-spec 400 kHz bus
-   whether or not Fm+ happens.
+1. ~~Confirm the fitted IMU part number.~~ **DONE 2026-09-11: LSM6DSV16BX,
+   1 MHz capable. Not the obstacle.**
+2. **VICTOR: fit 1 kΩ pull-ups.** The only remaining blocker, and it fixes an
+   out-of-spec 400 kHz bus whether or not Fast-mode Plus is adopted.
 3. Change `clock-frequency`, measure the four things above.
 4. Re-measure the energy per frame. Halving the bus time halves the CPU-awake,
    sensor-active window, which lands directly in the number the paper reports.

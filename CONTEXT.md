@@ -19,7 +19,7 @@ in the TODO below.
 | **AP_CLK** | **12 MHz, EXTERNAL CRYSTAL** (Victor, 2026-09-11). Not the SoC. The GRTC `clkout-fast` output is deleted in the application overlay |
 | I2C | 400 kHz, SCL P1.08 / SDA P1.13, 4.7 kOhm external pull-ups on the host board |
 | Other pins | INT P0.01 (active low), XSHUT P1.07, power enable P0.02, DVDD 1.2 V |
-| IMU | LSM6DSV..BX at 0x6B — **fitted, and silent since 2026-09-10. Unexplained** |
+| IMU | **LSM6DSV16BX** at 0x6B (confirmed 2026-09-11) — fitted, and **silent since 2026-09-10, unexplained**. Does I2C fast mode plus, so it does not cap the bus |
 
 Board files are Victor's: `firmware_test/boards/ethzurich/**` is hands-off unless he
 asks in that message. Everything the driver needs lives in the application overlay
@@ -56,9 +56,14 @@ asks in that message. Everything the driver needs lives in the application overl
    - The **9.6 m hard gate** (UM3683 2.6.1, fixed 64 ns ranging period) bounds corner
      tilt to >=~41 deg and coverage to ~10 m2.
    - Nothing in the counting algorithm splits merged people.
-7. **Pull-ups**: 4.7 kOhm is already out of spec at 400 kHz (t_r = 0.8473*R*C vs the
-   300 ns limit). 1 kOhm recommended. Victor's board change, and a precondition for
-   Fast-mode Plus — which would halve the 334 ms full-resolution read.
+7. **VICTOR — FIT 1 kOhm PULL-UPS.** Now the ONLY thing between this board and a
+   1 MHz bus: the IMU question closed on 2026-09-11 (LSM6DSV16BX, confirmed, does
+   fast mode plus), the nRF54L15 and the VL53L9CX were already cleared.
+   4.7 kOhm gives t_r ~398 ns against a 120 ns Fm+ limit — and ~1.3x over the
+   300 ns limit at the 400 kHz being used TODAY, so this bus has never been in
+   spec. 1 kOhm gives 85 ns at 100 pF; 820 Ohm if the traces are long.
+   Worth ~334 ms -> ~134 ms per full frame, 2.5 -> 6.2 fps, and a blob upload of
+   313 -> ~125 ms. See docs/plan/i2c-fast-mode-plus.md.
 
 ## Open questions for Victor
 - Ceiling height and room size of the test site. Sets the FoV footprint, and with the

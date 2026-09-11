@@ -139,14 +139,14 @@ One more reason the track tier runs only during activity.
 
 ### 3.2 ~~`VERIFY` — the IMU may cap the bus at 400 kHz~~ **ANSWERED 2026-09-11**
 
-**The LSM6DSV16BX supports fast mode AND fast mode plus (1 MHz), so it is not the
-obstacle.** An **LSM6DSO** would have been — that part is 400 kHz only, with higher rates
-available solely over I3C — which is why the question was worth asking and why the
-schematic should confirm which is actually fitted. `docs/hardware/mcu-isp2454ll.md`
-records an LSM6DSV..BX.
+**CONFIRMED BY VICTOR 2026-09-11: the fitted part is the LSM6DSV16BX**, which supports
+fast mode *and* fast mode plus (1 MHz). It is not the obstacle.
 
-Note the part has been **silent at 0x6B since 2026-09-10**, so this identification rests
-on the schematic rather than on a WHO_AM_I read. Worth settling both at once.
+An **LSM6DSO** would have been — 400 kHz only, higher rates solely over I3C — which is
+why the question was worth asking.
+
+**The only remaining blocker is the pull-ups: 1 kΩ, Victor's change.** 4.7 kΩ is fitted
+today and is out of spec even at 400 kHz.
 
 Full working: **[i2c-fast-mode-plus.md](i2c-fast-mode-plus.md)**.
 

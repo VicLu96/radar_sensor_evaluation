@@ -105,3 +105,16 @@ The VL53L9CX offers I²C and I3C on shared pins. **We use I²C.**
 - [ISP2454 datasheet](https://www.insightsip.com/fichiers_insightsip/pdf/ble/ISP2454/isp_ble_DS2454.pdf)
 - [Insight SiP variant announcement](https://www.insightsip.com/news/in-the-press/745-insight-sip-expands-its-isp2454-series-product-range-to-offer-more-flexible-options-for-customers)
 - [Nordic DevZone — nRF54L15 low-power domain](https://devzone.nordicsemi.com/f/nordic-q-a/120201/nrf54l15-low-power-domain)
+
+## The IMU — LSM6DSV16BX, confirmed 2026-09-11
+
+Victor confirmed the fitted part. It matters beyond identification: its I²C
+interface does **fast mode plus, 1 MHz**, so it does not cap the shared bus.
+An LSM6DSO would have — 400 kHz only, higher rates solely over I3C.
+
+With that settled, **the only thing standing between this board and a 1 MHz bus
+is the 4.7 kΩ pull-ups**, which are out of spec even at the 400 kHz being used
+today. 1 kΩ is the recommendation. See
+[../plan/i2c-fast-mode-plus.md](../plan/i2c-fast-mode-plus.md).
+
+Datasheet: https://www.st.com/resource/en/datasheet/lsm6dsv16bx.pdf
