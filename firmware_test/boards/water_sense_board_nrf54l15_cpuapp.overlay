@@ -207,58 +207,27 @@
  * between "the radio is silent" and "the radio has no clock".
  */
 /* ---------------------------------------------------------------------------
- * HFXO / LFXO LOAD CAPACITANCE — AN EXPERIMENT, AND THE VALUES ARE UNVERIFIED.
+ * HFXO / LFXO LOAD CAPACITANCE: NOT OURS TO SET. Settled 2026-09-11.
  *
- * *** THE NUMBERS BELOW ARE NORDIC'S, NOT INSIGHT SiP'S. They are 15000 and
- * *** 17000 femtofarad from zephyr/boards/nordic/nrf54l15dk/
- * *** nrf54l_05_10_15_cpuapp_common.dtsi:34-42, which describes the DK's
- * *** discrete crystals, NOT the ones integrated in the ISP2454-LX. The
- * *** correct figures are Insight SiP's to state and are still VERIFY. Do not
- * *** quote these anywhere, and do not let them become a fact by sitting here.
+ * A load-capacitors = "internal" block sat here for one build, carrying the
+ * nRF54L15 DK's 15000 / 17000 femtofarad. It has been REMOVED, and it must not
+ * come back: Victor confirms the ISP2454-LX carries its OWN load capacitors
+ * for both integrated crystals. Enabling the SoC's internal ones as well would
+ * ADD to them and pull both crystals off frequency — the opposite of the fix
+ * it was reaching for.
  *
- * WHY THIS IS WORTH TRYING ANYWAY. It is the only hypothesis that explains
- * every observation from 2026-09-11 at once:
+ * Recorded rather than silently deleted, because the reasoning that produced
+ * it was sound and someone will have it again. It went: receive works and
+ * transmit does not, through the same crystal and the same antenna; our
+ * receiver has AFC and pulls in an off-frequency carrier while a scanner will
+ * not; therefore suspect frequency; and this board declares no load
+ * capacitance where Nordic's own board does. Every step of that holds EXCEPT
+ * the last, which compared against a board whose crystals are discrete rather
+ * than integrated in a module. The DK was the wrong reference.
  *
- *   - HFXO STARTS. The boot check confirms it.
- *   - RECEIVE WORKS. 77-89 advertisements heard at -40 dBm.
- *   - TRANSMIT IS INVISIBLE. Chrome filtered, Chrome unfiltered, and nRF
- *     Connect on a phone at close range all see nothing, while the host
- *     reports -EALREADY and the controller reports 0 dBm TX power.
- *
- * The resolution is that RX and TX do NOT have the same frequency tolerance in
- * practice. Our receiver has automatic frequency control and pulls in a carrier
- * that is well off nominal; the advertising packets we TRANSMIT get no such
- * help, and a scanner simply will not demodulate a carrier far enough outside
- * the 1 MHz advertising channel. A crystal running with no load capacitance
- * sits high by a long way - hundreds of ppm is ordinary - which is exactly the
- * asymmetry observed.
- *
- * Zephyr leaves XOSC32MCAPS disabled when no load-capacitors property is
- * present, so today this board runs both crystals with no internal load at all.
- * Nordic's own board sets them; ours never has.
- *
- * HOW TO READ THE RESULT, and the boot self-test does the work:
- *
- *   TX now visible               -> this was it. Get the real numbers from
- *                                   Insight SiP and replace these.
- *   RX self-test gets WORSE      -> the module already has its own load
- *     (fewer packets, or none)      capacitors and this ADDS to them. Delete
- *                                   this block; the answer is elsewhere.
- *   nothing changes at all       -> load capacitance is not the variable.
- *                                   Delete this block and say so.
- *
- * Cheap to try, immediately self-checking, and trivially reversible - which is
- * the only reason unverified numbers are allowed anywhere near this repo.
+ * So the absence of these properties here is CORRECT and deliberate. The SoC's
+ * internal capacitors stay disabled because the module supplies its own.
  * -------------------------------------------------------------------------*/
-&hfxo {
-	load-capacitors = "internal";
-	load-capacitance-femtofarad = <15000>;
-};
-
-&lfxo {
-	load-capacitors = "internal";
-	load-capacitance-femtofarad = <17000>;
-};
 
 &clock {
 	status = "okay";
