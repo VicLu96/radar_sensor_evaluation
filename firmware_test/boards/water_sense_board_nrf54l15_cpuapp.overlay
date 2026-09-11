@@ -13,6 +13,7 @@
 
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+#include <zephyr/dt-bindings/i2c/i2c.h>
 #include <zephyr/dt-bindings/regulator/nrf5x.h>
 
 / {
@@ -49,6 +50,37 @@
 	 * because the sensor has never got far enough to attempt the upload, and
 	 * because device_boot() was discarding vl53l9_init()'s return code.
 	 */
+	/* ------------------------------------------------------------------
+	 * FAST-MODE PLUS, 1 MHz. Victor, 2026-09-11 — TESTING IT AT 4.7 kOhm.
+	 *
+	 * The bus is the frame-rate limit and nothing else is close: a full
+	 * 54x42 frame is 14,842 bytes, ~334 ms at 400 kHz, which caps the node
+	 * at ~2.5 fps. At 1 MHz that becomes ~134 ms and ~6.2 fps. See
+	 * docs/plan/i2c-fast-mode-plus.md.
+	 *
+	 * THE PULL-UPS ARE OUT OF SPEC FOR THIS AND WE ARE TRYING ANYWAY.
+	 * t_r = 0.8473 x R x C, and Fast-mode Plus allows 120 ns. At 4.7 kOhm
+	 * and ~100 pF the rise time is ~398 ns — more than three times over.
+	 * (It is already ~1.3x over the 300 ns limit at 400 kHz, so this bus has
+	 * never actually been in spec.) 1 kOhm is what meets Fm+ properly.
+	 *
+	 * Worth trying regardless, because the failure modes are cheap:
+	 *
+	 *   it does not boot         the blob upload is verified against
+	 *                            DEVICE_ID 0x53334C39 and the FSM, so a
+	 *                            corrupted upload fails LOUDLY rather than
+	 *                            silently. That is the good failure.
+	 *   it boots and ranges      check blob upload time and capture_ms
+	 *                            actually halved, then check zone validity
+	 *                            and amplitude are UNCHANGED. A marginal bus
+	 *                            corrupts data rather than failing cleanly,
+	 *                            and that is the one to watch for.
+	 *
+	 * TO REVERT: delete this property. The boot banner prints the frequency,
+	 * so which one is running is never in doubt.
+	 * ------------------------------------------------------------------ */
+	clock-frequency = <I2C_BITRATE_FAST_PLUS>;
+
 	zephyr,concat-buf-size = <1040>;
 	zephyr,flash-buf-max-size = <1040>;
 

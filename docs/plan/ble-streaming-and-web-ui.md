@@ -137,11 +137,18 @@ the leads are long; 1.5 kΩ is the most that is still safe for 1 MHz.
 *Cost:* 1.8 mA per line while held low — ~0.3 µA average at 0.1 Hz, but ~0.6 mA at 2 fps.
 One more reason the track tier runs only during activity.
 
-### 3.2 `VERIFY` — the IMU may cap the bus at 400 kHz
+### 3.2 ~~`VERIFY` — the IMU may cap the bus at 400 kHz~~ **ANSWERED 2026-09-11**
 
-Several ST parts in the LSM6DSV family are 400 kHz maximum over I²C, with higher rates only
-on I3C. The slowest device on a shared bus wins. **Check the datasheet before buying
-resistors** — it could close the 1 MHz question on its own.
+**The LSM6DSV16BX supports fast mode AND fast mode plus (1 MHz), so it is not the
+obstacle.** An **LSM6DSO** would have been — that part is 400 kHz only, with higher rates
+available solely over I3C — which is why the question was worth asking and why the
+schematic should confirm which is actually fitted. `docs/hardware/mcu-isp2454ll.md`
+records an LSM6DSV..BX.
+
+Note the part has been **silent at 0x6B since 2026-09-10**, so this identification rests
+on the schematic rather than on a WHO_AM_I read. Worth settling both at once.
+
+Full working: **[i2c-fast-mode-plus.md](i2c-fast-mode-plus.md)**.
 
 ### 3.3 Cleared
 
