@@ -1532,4 +1532,25 @@ Also added, at Victor's request: the firmware now prints its git version on RTT 
 stamped by CMake from git describe, alongside resolution, exposure and I2C speed. A bench log
 that cannot be matched to a commit cost most of this session.
 FLASH 76,852 B.
+## 2026-09-11 - THE IMU HAS STOPPED ANSWERING TOO. The board changed.
+What: the 2026-09-11 bench log opens with "WHO_AM_I read failed (-5) - nothing answered at
+0x6b". On 2026-09-10 the same IMU read WHO_AM_I = 0x71 and streamed accelerometer data with
+|a| steady at 995-996 mg across ten heartbeats. It is now silent.
+WHY THIS MATTERS MORE THAN THE LASER FAULT. The IMU was the bus control - the whole reason it
+was refitted. Its loss is not a second unrelated bug; it is independent evidence that
+SOMETHING ON THE BOARD CHANGED between 2026-09-10 and 2026-09-11, and the laser fault appeared
+in the same window.
+The bus itself is NOT the explanation. In the same log the VL53L9CX answers on the same bus:
+"sensor answered on attempt 1, device id 0x53334c39". So 0x29 ACKs and 0x6B NAKs on one bus at
+one moment - the bus, the pull-ups, the pinctrl and the bitrate all work, and the IMU
+specifically is unpowered, damaged, or disconnected.
+That makes the control run more important, not less, and it puts real weight on the branch I
+had ranked second: if legacy-config also fails, the firmware is exonerated and the board is
+the answer. Two independent devices degrading in the same window is not a coincidence worth
+explaining away.
+ALSO: the legacy-config snippet failed to apply TWICE in the nRF Connect extension, and both
+bench runs were wasted. The WRITES banner added earlier today caught it the second time - the
+log says "NOT the control - a snippet may not have applied" on line six. Rather than fight the
+build configuration a third time, the control now lives in prj.conf, so a plain Build IS the
+control. Marked TEMPORARY with the revert instruction, same as the AP_CLK hold on 2026-09-07.
 
