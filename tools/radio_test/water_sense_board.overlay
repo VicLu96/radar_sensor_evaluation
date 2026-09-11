@@ -1,0 +1,16 @@
+/*
+ * radio_test on water_sense_board.
+ *
+ * The SoC dtsi ships the clock-control node disabled and radio_test asserts at
+ * compile time without it ("No Clock Control driver") — it needs to request
+ * HFXO before keying the transmitter. firmware_test's own overlay enables it
+ * for the same underlying reason; this is the same one line, for a build that
+ * does not share that overlay.
+ *
+ * Nothing else is needed. radio_test drives the RADIO peripheral directly and
+ * does not touch I2C, the sensor, or any GPIO on this board — which is exactly
+ * why it is worth running.
+ */
+&clock {
+	status = "okay";
+};
