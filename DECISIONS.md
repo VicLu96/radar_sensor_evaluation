@@ -1826,3 +1826,30 @@ ALSO DONE: the staged flow Victor asked for. Advertise -> wait for a connection 
 and boot the sensor -> arm the stream. CONFIG_APP_BLE_AUTOSTREAM arms rather than forces:
 frames only leave once the client has SUBSCRIBED, so a central that connected to read
 configuration is not showered with 4.5 KB per frame it never asked for.
+
+## 2026-09-11 - CORRECTION: the supply hypothesis is wrong.
+Victor: the sensor and the MCU are on SEPARATE POWER RAILS, so the sensor cannot starve
+the radio. Retracted.
+It was weak on its own terms and I should have caught that before writing it down. The
+450-800 mW figure is the ACTIVE RANGING number (UM3683 Table 23); the sensor sat in
+STANDBY for every one of these tests, drawing a small fraction of it. A standby load on a
+separate rail was never a plausible explanation for a radio that could receive but not
+transmit.
+SO WHAT FIXED IT IS NOW UNKNOWN, and saying so is better than substituting a second
+guess for the first. What is established:
+  - Advertising was broken BEFORE the load-capacitance block was added, so removing that
+    block restored the previous state rather than fixing anything.
+  - The only other change between the last failing test and the first working one is
+    914e61a: CONFIG_VL53L9CX_DEFER_BOOT, which stops the driver powering and booting the
+    sensor at POST_KERNEL - before bt_enable() is ever called.
+  - With the sensor booted, RX worked (89 advertisements, -40 dBm) and TX did not. With
+    it not booted, both work.
+THE A/B THAT SETTLES IT is one Kconfig line: set CONFIG_APP_BLE_FIRST=n, which restores
+the sensor boot at POST_KERNEL ahead of BLE. If advertising breaks again, the cause is
+something the driver's init does to the radio - and with the supply ruled out, the
+candidates are interrupt priority (MPSL reserves the top priorities on nRF54L and an
+application ISR in the wrong band breaks radio timing), the GPIOTE instance the INT line
+uses, or TWIM. If advertising still works, the sensor was never involved and the cause is
+somewhere in the removed scan response or in something outside the firmware entirely.
+Worth running, because "we changed several things and it started working" is not a result
+and cannot go in a paper.
