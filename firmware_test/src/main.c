@@ -61,6 +61,15 @@
 
 LOG_MODULE_REGISTER(board_test, LOG_LEVEL_INF);
 
+/*
+ * Does the SoC generate AP_CLK, or does a crystal?
+ *
+ * The application overlay deletes clkout-fast-frequency-hz on this board, so
+ * this is false — and every GRTC check below is skipped rather than reporting a
+ * fault about a pin that is correctly idle.
+ */
+#define APCLK_FROM_GRTC DT_NODE_HAS_PROP(DT_NODELABEL(grtc), clkout_fast_frequency_hz)
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 /* The I2C controller the board file enables. Follows the board, so if the
  * instance is ever renumbered this is the one line that moves.
@@ -474,8 +483,19 @@ static void tof_report_config(void)
 	LOG_INF("  address   0x%02x (7-bit)", DT_REG_ADDR(TOF_NODE));
 	LOG_INF("  VDDA      %d uV", DT_PROP(TOF_NODE, vdda_microvolt));
 	LOG_INF("  VDDIO     %d uV", DT_PROP(TOF_NODE, vddio_microvolt));
-	LOG_INF("  AP_CLK    %d Hz on P0.00 (GRTC clkout-fast, always on)",
-		DT_PROP(TOF_NODE, ext_clock_frequency));
+	/*
+	 * AP_CLK: say WHERE it comes from, because since 2026-09-11 it is not
+	 * the SoC. The board carries a 12 MHz crystal and the application
+	 * overlay deletes clkout-fast-frequency-hz, so the GRTC output is
+	 * deliberately off — and the two checks below, written when the SoC
+	 * generated the clock, then report "firmware fault" about a pin nothing
+	 * is supposed to be driving. A diagnostic that fires on the correct
+	 * configuration is worse than none.
+	 */
+	LOG_INF("  AP_CLK    %d Hz on P0.00, sourced from %s",
+		DT_PROP(TOF_NODE, ext_clock_frequency),
+		APCLK_FROM_GRTC ? "the SoC (GRTC clkout-fast)"
+				: "an EXTERNAL CRYSTAL — the SoC does not drive it");
 	LOG_INF("  XSHUT     %s",
 		DT_NODE_HAS_PROP(TOF_NODE, xshut_gpios) ? "P1.07" : "NOT WIRED — no reset control");
 	LOG_INF("  INT       %s",
@@ -495,9 +515,18 @@ static void tof_report_config(void)
 	 * word. But if this reads DISABLED, the scope will show nothing and
 	 * there is no point looking.
 	 */
-	LOG_INF("  AP_CLK enable bit in the GRTC peripheral: %s",
-		nrfy_grtc_clkout_enable_check(NRF_GRTC, NRF_GRTC_CLKOUT_FAST)
-			? "ENABLED" : "DISABLED  <-- the clock is definitely not running");
+	if (APCLK_FROM_GRTC) {
+		LOG_INF("  AP_CLK enable bit in the GRTC peripheral: %s",
+			nrfy_grtc_clkout_enable_check(NRF_GRTC,
+						      NRF_GRTC_CLKOUT_FAST)
+				? "ENABLED"
+				: "DISABLED  <-- the clock is definitely not "
+				  "running");
+	} else {
+		LOG_INF("  GRTC clock output is OFF, as intended — the crystal "
+			"drives AP_CLK. Verify 12 MHz on the pad with a scope; "
+			"there is nothing further firmware can check.");
+	}
 
 	/*
 	 * And separately: is P0.00 actually handed to the GRTC?
@@ -511,7 +540,7 @@ static void tof_report_config(void)
 	 * GPIO means pinctrl never took it; GRTC means the routing is real and
 	 * anything still wrong is on the board rather than in the firmware.
 	 */
-	{
+	if (APCLK_FROM_GRTC) {
 		uint32_t cnf = NRF_P0->PIN_CNF[0];
 		uint32_t sel = (cnf & GPIO_PIN_CNF_CTRLSEL_Msk)
 			       >> GPIO_PIN_CNF_CTRLSEL_Pos;
@@ -519,7 +548,7 @@ static void tof_report_config(void)
 		LOG_INF("  P0.00 CTRLSEL = %u (%s)", sel,
 			sel == GPIO_PIN_CNF_CTRLSEL_GRTC
 				? "GRTC — pin routing is real, so if there is no "
-				  "8 MHz on the pad the fault is on the board"
+				  "clock on the pad the fault is on the board"
 				: "NOT GRTC — pinctrl did not take the pin, so "
 				  "nothing is driving it. This is a firmware "
 				  "fault, not a wiring one");
@@ -894,6 +923,35 @@ int main(void)
 		IS_ENABLED(CONFIG_APP_HOLD_SENSOR_POWER) ? ", power held" : "");
 	LOG_INF("========================================");
 
+#if defined(CONFIG_APP_BLE)
+	/*
+	 * BLE FIRST, before the sensor bring-up.
+	 *
+	 * It used to run last, on the reasoning that the ladder should not
+	 * compete with the controller for the log. That was backwards. The
+	 * sensor path takes ~900 ms and emits several kilobytes, and Zephyr's
+	 * RTT backend latches host_present=false once a write exhausts its
+	 * retries and then drops EVERYTHING in silence. On 2026-09-11 that ate
+	 * the whole driver ladder and, with BLE behind it, would have eaten the
+	 * one line that says whether the radio came up at all.
+	 *
+	 * The radio does not depend on the sensor. Bringing it up in the first
+	 * few milliseconds puts "advertising as ..." where the log is most
+	 * likely to still be flowing — and it means the node is discoverable
+	 * even when the sensor never boots, which is exactly when being able to
+	 * reach it remotely is worth the most.
+	 */
+	{
+		int bret = app_ble_init();
+
+		if (bret != 0) {
+			LOG_ERR("BLE DID NOT COME UP (%d) — nothing will find "
+				"this node. RTT still works; carry on with "
+				"that.", bret);
+		}
+	}
+#endif
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 	/* Stage 2 — the IMU. Failures here are reported and then ignored: the
 	 * heartbeat carries on either way, because "the MCU runs but the IMU
@@ -961,21 +1019,6 @@ int main(void)
 			vl53l9cx_last_boot_ms(tof));
 	}
 	app_capture_set_ready(tof_ok);
-
-#if defined(CONFIG_APP_BLE)
-	/*
-	 * BLE last, after the sensor has had its chance to boot, so the
-	 * bring-up ladder is not competing with the controller for the log.
-	 *
-	 * A failure here is reported and then ignored: RTT still works, the
-	 * sensor still ranges, and a board that boots without a radio is far
-	 * more useful to debug than one that does not boot.
-	 */
-	if (app_ble_init() != 0) {
-		LOG_ERR("BLE did not come up — the web interface will not find "
-			"this node. RTT still works; carry on with that.");
-	}
-#endif
 
 	while (true) {
 		if (tof_attempt > 0U) {
