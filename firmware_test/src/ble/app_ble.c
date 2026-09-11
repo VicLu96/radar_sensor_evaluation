@@ -293,6 +293,94 @@ static void check_hfxo(void)
 	(void)clock_control_off(hf, CLOCK_CONTROL_NRF_SUBSYS_HF);
 }
 
+#if defined(CONFIG_APP_BLE_RX_SELFTEST)
+/*
+ * Can this board HEAR other BLE devices?
+ *
+ * THE TEST THAT SPLITS THE REMAINING POSSIBILITIES, and it needs no scope and
+ * no second board. On 2026-09-11 the node reported "advertising ...
+ * discoverable now" every heartbeat while no scanner could see it, which leaves
+ * three candidates: the crystal is wrong, the RF path is broken, or the
+ * transmit configuration is.
+ *
+ * Receiving exercises the SAME crystal and the SAME antenna as transmitting.
+ * BLE needs the carrier within about +/-50 ppm, so a receiver simply cannot
+ * demodulate anything if HFXO is off frequency, and cannot hear anything if the
+ * antenna is not connected. Therefore:
+ *
+ *   PACKETS HEARD  -> crystal on frequency, RF path intact, radio works. The
+ *                     fault is on the transmit side or in the advertising
+ *                     configuration, which is a much smaller search.
+ *   NOTHING HEARD  -> the crystal or the antenna. Combined with the HFXO check
+ *                     above, that separates them: HFXO running plus nothing
+ *                     heard points at the antenna and RF matching.
+ *
+ * An office has BLE traffic in it constantly — phones, laptops, headphones,
+ * beacons. Three seconds of passive scanning finding ZERO advertisers is itself
+ * a strong result, not an inconclusive one. If in doubt, put a phone beside the
+ * board with Bluetooth on.
+ */
+static uint32_t rx_seen;
+static int8_t rx_best_rssi = -128;
+
+static void rx_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t type,
+		  struct net_buf_simple *ad)
+{
+	ARG_UNUSED(addr);
+	ARG_UNUSED(type);
+	ARG_UNUSED(ad);
+
+	rx_seen++;
+	if (rssi > rx_best_rssi) {
+		rx_best_rssi = rssi;
+	}
+}
+
+static void radio_rx_selftest(void)
+{
+	struct bt_le_scan_param param = {
+		.type = BT_LE_SCAN_TYPE_PASSIVE,
+		.options = BT_LE_SCAN_OPT_NONE,
+		.interval = BT_GAP_SCAN_FAST_INTERVAL,
+		.window = BT_GAP_SCAN_FAST_WINDOW,
+	};
+	int ret;
+
+	LOG_INF("radio RX self-test: listening for %u ms ...",
+		CONFIG_APP_BLE_RX_SELFTEST_MS);
+
+	ret = bt_le_scan_start(&param, rx_cb);
+	if (ret) {
+		LOG_ERR("scan failed to start (%d) — cannot run the RX test", ret);
+		return;
+	}
+
+	k_sleep(K_MSEC(CONFIG_APP_BLE_RX_SELFTEST_MS));
+	(void)bt_le_scan_stop();
+
+	if (rx_seen > 0U) {
+		LOG_INF("*** RADIO RX OK: heard %u advertisements, strongest "
+			"%d dBm.", rx_seen, rx_best_rssi);
+		LOG_INF("    The crystal is on frequency and the antenna works "
+			"— you cannot demodulate BLE otherwise. So if nothing "
+			"can see this node, the fault is on the TRANSMIT side "
+			"or in the advertising configuration, not the RF "
+			"front end.");
+	} else {
+		LOG_ERR("*** RADIO HEARD NOTHING in %u ms. An office has BLE "
+			"traffic in it constantly, so zero is a result rather "
+			"than a non-result.",
+			CONFIG_APP_BLE_RX_SELFTEST_MS);
+		LOG_ERR("    Combined with the HFXO line above: crystal running "
+			"and nothing heard points at the ANTENNA and RF "
+			"matching. Crystal not running points at the crystal "
+			"and its load capacitors.");
+		LOG_ERR("    If unsure there was anything to hear, put a phone "
+			"with Bluetooth on beside the board and reset.");
+	}
+}
+#endif /* CONFIG_APP_BLE_RX_SELFTEST */
+
 int app_ble_init(void)
 {
 	int ret;
@@ -307,6 +395,10 @@ int app_ble_init(void)
 	LOG_INF("BLE controller up");
 
 	bt_gatt_cb_register(&gatt_callbacks);
+
+#if defined(CONFIG_APP_BLE_RX_SELFTEST)
+	radio_rx_selftest();
+#endif
 
 	ret = app_svc_config_init();
 	if (ret) {

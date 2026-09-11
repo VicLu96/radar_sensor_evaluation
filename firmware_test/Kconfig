@@ -85,6 +85,40 @@ config APP_BLE_FRAME_SERVICE
 	  scored against real frames. Off for anything deployed, and off for any
 	  claim made in the paper.
 
+config APP_BLE_RX_SELFTEST
+	bool "Listen for other BLE devices at boot, to prove the radio works"
+	default y
+	depends on APP_BLE
+	select BT_OBSERVER
+	help
+	  Answers the question that "advertising started" cannot.
+
+	  On 2026-09-11 this node reported itself discoverable on every heartbeat
+	  while nothing could see it, which leaves three candidates: the crystal,
+	  the RF path, or the transmit configuration.
+
+	  Receiving uses the SAME crystal and the SAME antenna as transmitting,
+	  and BLE cannot be demodulated with the carrier more than about 50 ppm
+	  out. So hearing ANY advertisement proves the crystal is on frequency
+	  and the antenna is connected, and moves the search to the transmit
+	  side. Hearing nothing, in a room that always has BLE traffic in it,
+	  points at the crystal or the antenna - and the HFXO check separates
+	  those two.
+
+	  Costs CONFIG_APP_BLE_RX_SELFTEST_MS of boot time and the observer role
+	  in flash. Turn it off once the radio is proven; it is a bring-up gate,
+	  not a feature.
+
+config APP_BLE_RX_SELFTEST_MS
+	int "How long to listen, milliseconds"
+	default 3000
+	range 200 10000
+	depends on APP_BLE_RX_SELFTEST
+	help
+	  Three seconds is comfortably longer than the ~100 ms advertising
+	  interval of anything nearby, so a quiet result means quiet rather than
+	  unlucky.
+
 config APP_BLE_INSTANCE_ID
 	int "Node instance id"
 	default 1
