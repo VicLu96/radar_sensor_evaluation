@@ -696,9 +696,24 @@ static void tof_capture_and_log(void)
 		if (err_code != 0U || err_bits != 0U) {
 			LOG_WRN("  device health: ERROR_CODE 0x%04x, "
 				"ERROR_STATUS 0x%02x", err_code, err_bits);
-			if ((err_bits & 0x20U) == 0U) {
-				LOG_WRN("    PLL NOT LOCKED — AP_CLK is not "
-					"good enough for the device");
+			/*
+			 * ERROR_STATUS is a register of ERROR bits (UM3683
+			 * Table 16): a SET bit means that error OCCURRED. Bit
+			 * 5 is PLL lock.
+			 *
+			 * This test was inverted until 2026-09-11 and printed
+			 * "PLL NOT LOCKED" whenever bit 5 read 0 - which is
+			 * exactly when the clock is fine. The same inversion
+			 * existed in the driver and sent a day of debugging at
+			 * a clock that had nothing wrong with it.
+			 */
+			if (err_bits & 0x20U) {
+				LOG_ERR("    PLL LOCK ERROR — the device could "
+					"not lock to AP_CLK");
+			}
+			if (err_bits & 0x0FU) {
+				LOG_ERR("    SUPPLY ERROR (bits 0-3): VHV or "
+					"the SPAD supply could not hold");
 			}
 		} else {
 			LOG_INF("  device health: all clear (ERROR_CODE 0, "
