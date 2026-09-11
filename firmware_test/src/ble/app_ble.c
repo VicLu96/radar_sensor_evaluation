@@ -12,6 +12,8 @@
 #include "ble_uuid.h"
 
 #include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/hci.h>
@@ -222,9 +224,80 @@ static void mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
 
 static struct bt_gatt_cb gatt_callbacks = { .att_mtu_updated = mtu_updated };
 
+/*
+ * Does the 32 MHz crystal start at all?
+ *
+ * THE CLASS OF FAULT THAT EXPLAINS "advertising started, nothing on air". BLE
+ * needs HFXO; nothing else on this board does, because the CPU runs from
+ * internal oscillators. So the radio can be completely silent while the
+ * firmware runs perfectly, bt_enable() succeeds and bt_le_adv_start() returns
+ * 0 - which is precisely the state observed on 2026-09-11.
+ *
+ * WHAT THIS CHECK CAN AND CANNOT SAY. It proves the crystal STARTS. It does not
+ * prove it is on FREQUENCY, and BLE needs +/-50 ppm. The nRF54L15 has no
+ * CLOCKQUALITY indicator (NRF_OSCILLATORS_HAS_CLOCK_QUALITY_IND is 0 on this
+ * part - checked, it does not compile), so the frequency half of the question
+ * needs a scope or a spectrum analyser and cannot be answered in firmware.
+ *
+ * Relevant either way: water_sense_board declares no load-capacitors property
+ * on &hfxo or &lfxo, while Nordic's own nRF54L15 DK sets
+ * load-capacitors = "internal" with 15000 fF (HFXO) and 17000 fF (LFXO) -
+ * zephyr/boards/nordic/nrf54l15dk/nrf54l_05_10_15_cpuapp_common.dtsi:34-42.
+ * Wrong load capacitance pulls a crystal off frequency; absent capacitance can
+ * stop it starting. The correct figure for the ISP2454-LX is Insight SiP's to
+ * state - the DK's is NOT it, and must not be copied as if it were.
+ */
+static void check_hfxo(void)
+{
+	const struct device *hf = DEVICE_DT_GET(DT_NODELABEL(clock));
+	enum clock_control_status st;
+	int ret;
+
+	if (!device_is_ready(hf)) {
+		LOG_WRN("clock-control device not ready — cannot check HFXO");
+		return;
+	}
+
+	ret = clock_control_on(hf, CLOCK_CONTROL_NRF_SUBSYS_HF);
+	if (ret != 0 && ret != -EALREADY) {
+		LOG_ERR("*** HFXO REQUEST FAILED (%d). The radio cannot "
+			"transmit without it.", ret);
+		return;
+	}
+
+	/* Datasheet startup is ~1.65 ms (hfxo startup-time-us = 1650 in the SoC
+	 * devicetree). Allow an order of magnitude before concluding anything.
+	 */
+	for (int i = 0; i < 20; i++) {
+		st = clock_control_get_status(hf, CLOCK_CONTROL_NRF_SUBSYS_HF);
+		if (st == CLOCK_CONTROL_STATUS_ON) {
+			break;
+		}
+		k_sleep(K_MSEC(1));
+	}
+
+	if (st == CLOCK_CONTROL_STATUS_ON) {
+		LOG_INF("HFXO: running. The crystal starts, so the radio has a "
+			"clock — note this does NOT prove it is on FREQUENCY, "
+			"which is the other half of the question.");
+	} else {
+		LOG_ERR("*** HFXO DID NOT START within 20 ms (status %d). The "
+			"radio cannot transmit, which is exactly the observed "
+			"'advertising started, nothing on air'.", (int)st);
+		LOG_ERR("    Check that the 32 MHz crystal is fitted, and note "
+			"that &hfxo on this board declares no load-capacitors "
+			"property while Nordic's own nRF54L15 DK sets "
+			"load-capacitors = \"internal\".");
+	}
+
+	(void)clock_control_off(hf, CLOCK_CONTROL_NRF_SUBSYS_HF);
+}
+
 int app_ble_init(void)
 {
 	int ret;
+
+	check_hfxo();
 
 	ret = bt_enable(NULL);
 	if (ret) {
