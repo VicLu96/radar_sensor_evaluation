@@ -165,100 +165,59 @@
 	};
 };
 
-/*
- * AP_CLK drive strength — overriding the board's pinctrl from the application.
+/* ---------------------------------------------------------------------------
+ * AP_CLK IS NOT THE MCU'S JOB ANY MORE. Victor, 2026-09-11.
  *
- * The 8 MHz on P0.00 measures as a poor square wave. The likely reason is drive
- * strength: nRF pins default to NRF_DRIVE_S0S1 (standard both edges), and
- * standard drive is roughly 0.5 mA.
+ * The board carries its own 12 MHz oscillator, so every trace of the SoC
+ * driving P0.00 is gone: the clock output, the pin routing, and the high-drive
+ * pinctrl groups that existed to square up its edges.
  *
- * The arithmetic says that is not enough. To slew 1.8 V across even 15 pF of
- * pad, trace and load in 10 ns — a twelfth of the 125 ns period, so still a
- * visibly rounded edge — needs
+ * TWO REASONS, and the second is the one that matters today.
  *
- *     I = C dV/dt = 15 pF x 1.8 V / 10 ns = 2.7 mA
+ * ELECTRICAL. An external oscillator and a GRTC output on the same net is two
+ * drivers fighting over P0.00. Nothing in software reports that; it shows up as
+ * a clock that is neither one frequency nor the other, or as a dead pin.
  *
- * which is several times what standard drive delivers.
+ * THE RADIO. The GRTC is not merely a clock output — it is this SoC's system
+ * timer, and MPSL uses it for radio event timing. Keeping the fast-clock output
+ * alive meant holding the SYSCOUNTER ACTIVE permanently, and with
+ * VL53L9CX_HOLD_HFCLK the high-frequency domain along with it. Both are
+ * resources the Bluetooth controller manages for itself. For a clock the board
+ * already supplies, that is contention bought for nothing.
  *
- * Raised again 2026-09-10 (Victor), from NRF_DRIVE_H0H1 to NRF_DRIVE_E0E1 —
- * EXTRA high drive on both edges, which is the strongest setting the nRF54L15
- * GPIO offers. Confirmed available on this die: GPIO_PIN_CNF_DRIVE0_E0 is
- * defined in nrf54l15_types.h, so NRF_GPIO_HAS_DRIVE_EXTRA is 1 and
- * pinctrl_nrf.c:32 maps NRF_DRIVE_E0E1 through to it. On parts without it the
- * drive_modes[] table stops at H0D1 and this would not compile.
+ * P0.00 is left UNCONFIGURED, which on this SoC means input with no pull —
+ * high-impedance, so the oscillator drives its net alone.
  *
- * Worth knowing what this can and cannot fix. It attacks slew rate: a stronger
- * driver charges the trace and pad capacitance faster, so the edges square up
- * and the waveform reaches full IOVDD swing sooner. It does NOT fix a clock
- * that is absent, gated, or routed to the wrong pin, and it does not change the
- * frequency. If the 8 MHz is still not clean at the sensor ball after this, the
- * trace, the connector and the probe ground are the remaining suspects — not
- * the SoC.
- *
- * This is defined here rather than in the board file so water_sense_board stays
- * Victor's: the group below simply replaces the board's grtc_default at the
- * &grtc node. Same pin, same function, more drive.
- *
- * If this does not fix the waveform, the next suspects are the trace itself and
- * the measurement — see the note in docs/hardware/radar-shield-review.md.
- */
-&pinctrl {
-	grtc_apclk_hidrive: grtc_apclk_hidrive {
-		group1 {
-			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
-			nordic,drive-mode = <NRF_DRIVE_E0E1>;
-		};
-	};
-
-	/*
-	 * The SLEEP state deliberately KEEPS DRIVING.
-	 *
-	 * The board's grtc_sleep group carries `low-power-enable`, which
-	 * disconnects the pin. For an ordinary peripheral that is right; for a
-	 * clock the sensor needs continuously it is a way to stop the clock
-	 * without anything in software appearing to do so. Both states here are
-	 * identical and both drive.
-	 */
-	grtc_apclk_hidrive_sleep: grtc_apclk_hidrive_sleep {
-		group1 {
-			psels = <NRF_PSEL(GRTC_CLKOUT_FAST, 0, 0)>;
-			nordic,drive-mode = <NRF_DRIVE_E0E1>;
-		};
-	};
-};
-
-&grtc {
-	pinctrl-0 = <&grtc_apclk_hidrive>;
-	pinctrl-1 = <&grtc_apclk_hidrive_sleep>;
-	pinctrl-names = "default", "sleep";
-};
+ * TO PUT IT BACK, if AP_CLK is ever sourced from the SoC again: restore
+ * clkout-fast-frequency-hz and the pinctrl properties. Note that GRTC cannot
+ * produce 12 MHz at all — it divides the 16 MHz pclk and 8 MHz is its maximum,
+ * at divider 1 — so the sensor's ext-clock-frequency would have to change too.
+ * -------------------------------------------------------------------------*/
 
 /*
  * The clock-control device, which the SoC dtsi ships disabled.
  *
- * Needed so the driver can hold the high-frequency clock on. The GRTC clock
- * output divides that clock, so when the HF domain stops — which it does every
- * time the application sleeps — AP_CLK stops with it. That is the most likely
- * explanation for an 8 MHz that measures as intermittent rather than absent.
+ * It was enabled so the driver could hold the high-frequency clock on for the
+ * GRTC output. That output is gone and the driver no longer touches the HF
+ * domain at all.
+ *
+ * It stays enabled for one reason: app_ble_init() uses it to ask whether the
+ * 32 MHz crystal starts. BLE is the only thing on this board that needs HFXO —
+ * the CPU runs from internal oscillators — so that check is the difference
+ * between "the radio is silent" and "the radio has no clock".
  */
 &clock {
 	status = "okay";
 };
 
-/*
- * Stop the SoC driving AP_CLK, now that the board supplies 12 MHz itself.
- *
- * The GRTC fast clock output cannot produce 12 MHz anyway — it divides the
- * 16 MHz pclk and 8 MHz is its maximum, at divider 1. So an external 12 MHz
- * source and a GRTC output on the same pin is two drivers fighting over P0.00.
- *
- * Deleting the property also compiles out the SYSCOUNTER keep-alive, via
- * VL53L9CX_APCLK_FROM_GRTC in the driver.
- *
- * If the 12 MHz is NOT external and P0.00 should still be driven, delete this
- * block — but then the 12 MHz cannot be coming from GRTC either, and where it
- * comes from needs settling first.
- */
 &grtc {
 	/delete-property/ clkout-fast-frequency-hz;
+
+	/* Remove the ROUTING as well as the clock. The board file points
+	 * P0.00 at GRTC_CLKOUT_FAST; leaving that in place would hand the pad
+	 * back to the GRTC the moment anything re-enabled the output.
+	 */
+	/delete-property/ pinctrl-0;
+	/delete-property/ pinctrl-1;
+	/delete-property/ pinctrl-names;
 };

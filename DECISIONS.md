@@ -1729,3 +1729,33 @@ STILL NOT MEASURED: nothing from 54x42 is recorded, and now the frame line that 
 have recorded it is known to have been printing shifted fields. The web interface
 reports zone validity and the amplitude split directly from the frame data, so the next
 bench run gets those numbers from a path that has never had this bug.
+
+## 2026-09-11 - AP_CLK removed from the MCU entirely.
+Victor: the board has an external 12 MHz oscillator, so the SoC should not be generating
+AP_CLK at all - and it should not be contending with BLE for the GRTC.
+Removed from the application overlay: clkout-fast-frequency-hz (already gone), the GRTC
+pinctrl-0/-1/-names properties the board file sets, and the grtc_apclk_hidrive /
+_hidrive_sleep high-drive pinctrl groups that existed to square up the 8 MHz edges.
+Verified in the generated devicetree: no clkout-fast-frequency-hz, no pinctrl on &grtc,
+and ZERO occurrences of GRTC_CLKOUT anywhere in zephyr.dts. P0.00 is unclaimed, which on
+this SoC means input with no pull - high impedance, so the oscillator drives its net
+alone.
+TWO REASONS, and the second is what prompted it.
+ELECTRICAL: an external oscillator and a GRTC output on the same net is two drivers
+fighting over P0.00. Nothing in software reports that.
+THE RADIO: the GRTC is this SoC's system timer and MPSL uses it for radio event timing.
+Keeping the fast-clock output alive meant holding SYSCOUNTER ACTIVE permanently, and with
+VL53L9CX_HOLD_HFCLK the high-frequency domain with it. Both are resources the Bluetooth
+controller manages for itself.
+CONFIG_VL53L9CX_HOLD_HFCLK removed from prj.conf. It was already dead - the driver's
+request sits inside #if VL53L9CX_APCLK_FROM_GRTC, false since the overlay deleted the
+clock output - but a Kconfig symbol claiming the firmware holds the radio's clock, when
+it does not, is worse than no symbol. The option remains in the driver's Kconfig for a
+board that genuinely sources AP_CLK from the SoC.
+It also clears one of the two TEMPORARY switches that had to come off before any energy
+measurement. EXPOSURE_BACKOFF is the other and is still on.
+HONEST ABOUT WHAT THIS DOES NOT FIX: the node was already advertising with the GRTC
+output deleted, so this is very unlikely to be why nothing appears in a scan. It removes
+a real contention and a real electrical conflict, and it makes the remaining question
+cleaner - but the open item is still whether HFXO starts, and whether the RF path works
+at all. That is what the check_hfxo() line reports on the next flash.
