@@ -1,8 +1,19 @@
 # ble_beacon
 
-Zephyr's stock `beacon` sample — `src/main.c` copied verbatim — as a first-class
-application in this repo, so it builds and flashes from the **nRF Connect
-sidebar** like any other.
+**The simplest BLE advertiser that can exist, restarted in a loop.** A
+first-class application in this repo, so it builds and flashes from the **nRF
+Connect sidebar** like any other.
+
+Enable the stack. Advertise a flags byte and a name. Tear it down and start it
+again every 5 s, forever, printing what the host says each time. That is the
+whole program.
+
+It started as Zephyr's stock `beacon` sample, which turned out not to be simple
+at all: Eddystone service data, a 16-bit service UUID list, the name pushed into
+a scan response, and a non-connectable identity-address advertiser. Every one of
+those is a thing that could be wrong, which is the opposite of what this build
+is for. What is left is two AD elements, connectable, default parameters, no
+scan response, no service data.
 
 ## In VS Code
 
@@ -11,7 +22,8 @@ sidebar** like any other.
 2. Add a build configuration: board **`water_sense_board/nrf54l15/cpuapp`**,
    everything else default.
 3. **Build**, then **Flash**.
-4. Scan with nRF Connect on a phone for **"Test beacon"**.
+4. Scan with nRF Connect on a phone for **"Test beacon"**, or for the address
+   the log prints at startup.
 5. When you are done, switch back to `firmware_test` and flash that.
 
 Board discovery works because `CMakeLists.txt` appends `../firmware_test` to
@@ -35,7 +47,29 @@ no sensor driver, no staged bring-up.
 | **"Test beacon" visible** | The fault is in **our application**, and that is a tractable search through code we control. |
 | **"Test beacon" invisible** | Our code is exonerated. Nothing we write will fix this, and the question is the controller, the board, or the module. |
 
-91,680 B against `firmware_test`'s 190,928.
+91,996 B against `firmware_test`'s 190,928.
+
+## Why it loops
+
+The node was seen **once**, on 2026-09-11, and never again — not from the same
+commit rebuilt, not from that commit rebuilt a second way, not across several
+resets. A single boot-time `bt_le_adv_start()` gives a rare success exactly one
+chance to happen.
+
+This tears the advertiser down and rebuilds it every 5 s, so the start path is
+exercised repeatedly rather than once. If advertising works one time in fifty,
+this finds it, and the log says which cycle:
+
+```
+cycle 1 (5 s): already advertising
+cycle 2 (10 s): already advertising
+...
+```
+
+`0`, `-EALREADY` and an errno mean three different things, so all three are
+printed rather than collapsed into a status flag — a mistake already made once
+in the real firmware, where an "advertising" line turned out to mean only
+"nobody is connected".
 
 ## What is deliberately NOT changed
 
