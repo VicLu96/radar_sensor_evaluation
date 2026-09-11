@@ -1,0 +1,6 @@
+/* The SoC dtsi ships clock-control disabled; BLE needs HFXO. Same one line
+ * firmware_test's overlay carries, for a build that does not share it.
+ */
+&clock {
+	status = "okay";
+};
