@@ -1,0 +1,9 @@
+# Bisect step 3: the legacy configuration PLUS switchover 650 and
+# rtn_short_offset 2.
+#
+# Least likely of the four - these are distance-computation parameters, not
+# drive parameters - but they are a change since the working build and this
+# costs one flash to eliminate.
+name: bisect-3-profile
+append:
+  EXTRA_CONF_FILE: bisect-3-profile.conf

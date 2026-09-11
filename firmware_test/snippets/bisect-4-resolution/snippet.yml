@@ -1,0 +1,10 @@
+# Bisect step 4: the legacy register configuration, but at 24x20 instead of
+# 12x10.
+#
+# The fifth change, and the one easiest to forget: the working captures were
+# 12x10 (binning 8). 24x20 is binning 4 and a SQUARE format that transmits 24x24.
+# Fewer SPADs summed per zone, more zones, different DSS work per frame. All
+# register writes stay at their legacy values so resolution is the only variable.
+name: bisect-4-resolution
+append:
+  EXTRA_CONF_FILE: bisect-4-resolution.conf

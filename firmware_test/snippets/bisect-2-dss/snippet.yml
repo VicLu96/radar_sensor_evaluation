@@ -1,0 +1,9 @@
+# Bisect step 2: the legacy configuration PLUS DSS_DEFAULT_INIT_LUT = 3.
+#
+# Second suspect, and not an obviously innocent one: DSS is dynamic SPAD
+# selection, so this changes which SPADs are enabled - and 'SPAD supply
+# overload' is one of the device's own error bits. Exposure stays OFF, so the
+# VCSEL is still barely firing and cannot confound the result.
+name: bisect-2-dss
+append:
+  EXTRA_CONF_FILE: bisect-2-dss.conf

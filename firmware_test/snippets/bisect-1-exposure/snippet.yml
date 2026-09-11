@@ -1,0 +1,14 @@
+# Bisect step 1: the legacy configuration PLUS exposure, nothing else.
+#
+# Run this after legacy-config works. Exposure is the prime suspect: it is the
+# only one of the five changes that directly controls how hard the VCSEL fires,
+# and the fault is an LDD fault. UM3683 Table 23 puts the 16 ms ambient profile
+# at 450-800 mW, which is 136-242 mA average at 3.3 V with pulse current 20-60x
+# higher again, against a board that folded back at 100 mA.
+#
+# FAULTS   -> the VCSEL supply cannot deliver shot current. The backoff will walk
+#             down to the threshold, and that number is the result.
+# WORKS    -> exposure is exonerated and the cause is one of the other three.
+name: bisect-1-exposure
+append:
+  EXTRA_CONF_FILE: bisect-1-exposure.conf
