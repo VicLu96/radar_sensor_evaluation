@@ -33,4 +33,18 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(firmware_test)
 
-target_sources(app PRIVATE src/main.c)
+target_sources(app PRIVATE
+  src/main.c
+  src/app_capture.c
+)
+
+# BLE. The frame service is compiled out of the deployed profile entirely —
+# see CONFIG_APP_BLE_FRAME_SERVICE — so svc_frame.c is listed unconditionally
+# and guards itself internally, which keeps app_stream_kick() available to
+# callers in both profiles.
+target_sources_ifdef(CONFIG_APP_BLE app PRIVATE
+  src/ble/app_ble.c
+  src/ble/svc_config.c
+  src/ble/svc_frame.c
+  src/ble/svc_telemetry.c
+)

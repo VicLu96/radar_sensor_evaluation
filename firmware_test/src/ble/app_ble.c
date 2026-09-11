@@ -1,0 +1,204 @@
+/*
+ * BLE bring-up: controller, advertising, connection lifecycle.
+ *
+ * Deliberately boring. Everything interesting is in the service files; this
+ * one exists so that when BLE does not work, there is a single place that says
+ * how far it got.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#include "app_ble.h"
+#include "ble_uuid.h"
+
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(app_ble, LOG_LEVEL_INF);
+
+static struct bt_conn *current_conn;
+
+bool app_ble_connected(void)
+{
+	return current_conn != NULL;
+}
+
+/*
+ * The live connection, for callers that need the connection ITSELF rather than
+ * just its existence.
+ *
+ * bt_gatt_notify() accepts NULL and means "every subscriber", which is why the
+ * rest of this firmware passes NULL. bt_gatt_get_mtu() does NOT: it
+ * dereferences its argument, so the streaming path needs the real pointer or it
+ * faults on the first frame.
+ */
+struct bt_conn *app_ble_conn(void)
+{
+	return current_conn;
+}
+
+/*
+ * Advertising data.
+ *
+ * The name goes in the advertisement and the 128-bit service UUID in the SCAN
+ * RESPONSE, because a 128-bit UUID is an 18-byte AD element and the budget is
+ * 31: flags (3) + an 18-byte UUID + a name of any useful length does not fit.
+ * This is the single most common reason a device advertises and then cannot be
+ * filtered for.
+ *
+ * The web interface filters on the name prefix and lists every service in
+ * optionalServices, so it does not depend on the UUID being advertised at all —
+ * but a scanner like nRF Connect shows it, which is worth the scan response.
+ */
+static const struct bt_data ad[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, CONFIG_BT_DEVICE_NAME,
+		sizeof(CONFIG_BT_DEVICE_NAME) - 1),
+};
+
+static const struct bt_data sd[] = {
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UUID_SVC_CONFIG_VAL),
+};
+
+static void connected(struct bt_conn *conn, uint8_t err)
+{
+	struct bt_conn_info info;
+
+	if (err) {
+		LOG_ERR("connection failed (0x%02x)", err);
+		return;
+	}
+
+	current_conn = bt_conn_ref(conn);
+	LOG_INF("=== BLE CONNECTED ===");
+
+	if (bt_conn_get_info(conn, &info) == 0) {
+		LOG_INF("  interval %u units (%u.%02u ms), latency %u, "
+			"timeout %u ms",
+			info.le.interval,
+			(info.le.interval * 125U) / 100U,
+			((info.le.interval * 125U) % 100U),
+			info.le.latency, info.le.timeout * 10U);
+	}
+
+	/*
+	 * Ask for 2M PHY. Doubles the on-air rate, and the frame service is the
+	 * only thing on this node that can saturate a link. If the central
+	 * refuses, the link stays on 1M and everything still works — slower,
+	 * which the UI will show as a lower kB/s rather than as a failure.
+	 */
+	{
+		const struct bt_conn_le_phy_param phy = {
+			.options = BT_CONN_LE_PHY_OPT_NONE,
+			.pref_tx_phy = BT_GAP_LE_PHY_2M,
+			.pref_rx_phy = BT_GAP_LE_PHY_2M,
+		};
+		int ret = bt_conn_le_phy_update(conn, &phy);
+
+		if (ret) {
+			LOG_WRN("  2M PHY request failed (%d) — staying on 1M", ret);
+		}
+	}
+
+	app_stream_kick();
+}
+
+static void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+	LOG_INF("=== BLE DISCONNECTED (reason 0x%02x) ===", reason);
+
+	if (current_conn) {
+		bt_conn_unref(current_conn);
+		current_conn = NULL;
+	}
+
+	/*
+	 * Streaming stops with the link. Not a safety measure — a stated
+	 * policy: the sensor is the expensive component on this board, and
+	 * leaving it ranging at 2.5 fps into a link nobody is listening to is
+	 * how a bench session quietly burns 450-800 mW.
+	 */
+	app_stream_kick();
+}
+
+static void le_param_updated(struct bt_conn *conn, uint16_t interval,
+			     uint16_t latency, uint16_t timeout)
+{
+	LOG_INF("BLE params updated: interval %u.%02u ms, latency %u, "
+		"timeout %u ms",
+		(interval * 125U) / 100U, (interval * 125U) % 100U,
+		latency, timeout * 10U);
+}
+
+static void le_phy_updated(struct bt_conn *conn,
+			   struct bt_conn_le_phy_info *param)
+{
+	LOG_INF("BLE PHY now tx %s rx %s",
+		param->tx_phy == BT_GAP_LE_PHY_2M ? "2M" :
+		param->tx_phy == BT_GAP_LE_PHY_CODED ? "coded" : "1M",
+		param->rx_phy == BT_GAP_LE_PHY_2M ? "2M" :
+		param->rx_phy == BT_GAP_LE_PHY_CODED ? "coded" : "1M");
+}
+
+static void le_data_len_updated(struct bt_conn *conn,
+				struct bt_conn_le_data_len_info *info)
+{
+	LOG_INF("BLE data length now tx %u B / %u us, rx %u B",
+		info->tx_max_len, info->tx_max_time, info->rx_max_len);
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+	.connected = connected,
+	.disconnected = disconnected,
+	.le_param_updated = le_param_updated,
+	.le_phy_updated = le_phy_updated,
+	.le_data_len_updated = le_data_len_updated,
+};
+
+static void mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
+{
+	/*
+	 * This number decides the fragment count for every frame, so it is
+	 * logged rather than assumed. Chrome on desktop negotiates 247, which
+	 * gives a 244-byte ATT payload and 240 bytes of frame data per
+	 * notification. A central that stays at the 23-byte default turns a
+	 * 4,536-byte frame into 227 notifications instead of 19.
+	 */
+	LOG_INF("BLE MTU updated: tx %u, rx %u  -> %u bytes of frame data per "
+		"notification", tx, rx, MIN(tx, rx) - 3U - 4U);
+}
+
+static struct bt_gatt_cb gatt_callbacks = { .att_mtu_updated = mtu_updated };
+
+int app_ble_init(void)
+{
+	int ret;
+
+	ret = bt_enable(NULL);
+	if (ret) {
+		LOG_ERR("bt_enable failed (%d) — no radio, no web interface", ret);
+		return ret;
+	}
+	LOG_INF("BLE controller up");
+
+	bt_gatt_cb_register(&gatt_callbacks);
+
+	ret = app_svc_config_init();
+	if (ret) {
+		LOG_ERR("config service init failed (%d)", ret);
+		return ret;
+	}
+
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
+			      sd, ARRAY_SIZE(sd));
+	if (ret) {
+		LOG_ERR("advertising failed to start (%d)", ret);
+		return ret;
+	}
+
+	LOG_INF("advertising as \"%s\" — connectable", CONFIG_BT_DEVICE_NAME);
+	return 0;
+}

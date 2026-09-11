@@ -29,6 +29,28 @@ implemented.** This is the document to build against.
 > therefore coverage), our profile draws **450–800 mW and not 150 mW**, and full-resolution
 > SNR may not exist at all. Sections below are **not yet updated** for those.
 
+### Built 2026-09-11 — phases 1-5
+
+Scope confirmed with Victor: the streaming instrument now, detection (phases 6-9)
+after. Chrome. Mount ~2.5 m at 41-50 deg tilt, which is the shallow end of what the
+9.6 m range gate allows.
+
+| Phase | State |
+|---|---|
+| 1 GATT skeleton: config + telemetry | **done** — `firmware_test/src/ble/` |
+| 2 Advertising | **done** for connections. Count-in-advert is phase 7 |
+| 3 Next.js shell: connect, config, health | **done** — `webinterface/` |
+| 4 Frame streaming, fragmentation, drop counting | **done** |
+| 5 Canvas heatmap + stats | **done** |
+| 0 Throughput spike | **folded into phase 5** rather than run separately: the stats bar measures kB/s, fps and drop rate against real frames, so the number arrives from the instrument itself |
+
+Cost: FLASH 77,484 -> 188,496 B (12.9% of 1428 KB), RAM 77,376 -> 111,328 B (57.8%
+of 188 KB). The plan predicted +30-40 KB RAM and it is +34 KB.
+
+**UUIDs are now FROZEN** in `firmware_test/src/ble/ble_uuid.h` and mirrored in
+`webinterface/lib/protocol.ts`. Nothing checks that the two agree; `PROTOCOL_VERSION`
+is the only guard, and both sides refuse to work across a mismatch.
+
 ### Blocking
 
 1. **The sensor does not yet range reliably.** It boots, uploads its blob and enters

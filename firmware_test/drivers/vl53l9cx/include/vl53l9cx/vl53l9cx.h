@@ -231,6 +231,21 @@ int vl53l9cx_retry_boot(const struct device *dev);
  * Exposure is also the most direct energy term on the device, so a frame whose
  * exposure is unknown is not a usable measurement.
  */
+/**
+ * @brief Set the exposure for subsequent captures, in milliseconds.
+ *
+ * Exists because exposure is the axis the web interface tunes and the paper
+ * sweeps, and a build option cannot be swept from a browser.
+ *
+ * Invalidates the driver's resolution cache, so the STANDBY-only registers are
+ * rewritten on the next capture. Without that the write would be accepted and
+ * silently ignored - which is precisely the bug that left reset values in place
+ * after a recovery on 2026-09-10.
+ *
+ * Takes effect on the NEXT capture, not the one in flight. Range 1-100 ms.
+ */
+int vl53l9cx_set_exposure_ms(const struct device *dev, uint16_t ms);
+
 uint16_t vl53l9cx_exposure_ms(const struct device *dev);
 
 uint32_t vl53l9cx_last_boot_ms(const struct device *dev);

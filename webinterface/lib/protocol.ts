@@ -1,0 +1,398 @@
+/**
+ * The wire format, mirrored from firmware_test/src/ble/app_ble.h.
+ *
+ * CHANGE ONE AND YOU MUST CHANGE THE OTHER. Nothing checks this at build time;
+ * the only guard is PROTOCOL_VERSION, which the firmware refuses to accept a
+ * mismatch on and this file refuses to decode.
+ *
+ * Everything is little-endian and explicitly so: `true` as the last argument to
+ * every DataView getter. The default is big-endian, and a forgotten flag here
+ * produces distances in the tens of metres rather than an error.
+ */
+
+export const PROTOCOL_VERSION = 1;
+
+/* --- Frozen UUIDs. Mirror of firmware_test/src/ble/ble_uuid.h ------------- */
+
+const base = (n: string) => `53f9${n}-1e2d-11ef-9262-0242ac120002`;
+
+export const UUID = {
+  frameService: base('0001'),
+  frameData: base('0002'),
+  frameInfo: base('0003'),
+
+  configService: base('1001'),
+  config: base('1002'),
+  command: base('1003'),
+  configResult: base('1004'),
+
+  telemetryService: base('2001'),
+  health: base('2002'),
+  energy: base('2003'),
+} as const;
+
+/* --- Resolutions ---------------------------------------------------------- *
+ *
+ * The enum order IS the wire value, matching enum vl53l9cx_res.
+ *
+ * The two FAMILIES are not interchangeable. Wide formats merge zones and keep
+ * the full field of view; square formats transmit a larger array and crop it
+ * on-device with a y-offset, so they see something DIFFERENT. An energy-versus-
+ * zones curve that mixes families is comparing two fields of view.
+ */
+export interface ResolutionInfo {
+  value: number;
+  label: string;
+  cols: number;
+  rows: number;
+  zones: number;
+  family: 'wide' | 'square';
+}
+
+export const RESOLUTIONS: ResolutionInfo[] = [
+  { value: 0, label: '4x4', cols: 4, rows: 4, zones: 16, family: 'square' },
+  { value: 1, label: '8x6', cols: 8, rows: 6, zones: 48, family: 'square' },
+  { value: 2, label: '12x10', cols: 12, rows: 10, zones: 120, family: 'wide' },
+  { value: 3, label: '18x14', cols: 18, rows: 14, zones: 252, family: 'wide' },
+  { value: 4, label: '24x20', cols: 24, rows: 20, zones: 480, family: 'square' },
+  { value: 5, label: '54x42', cols: 54, rows: 42, zones: 2268, family: 'wide' },
+];
+
+export const PLANE = {
+  distance: 1 << 0,
+  amplitude: 1 << 1,
+  ambient: 1 << 2,
+} as const;
+
+export const MODE = { idle: 0, streaming: 1 } as const;
+
+export const OPCODE = {
+  none: 0,
+  start: 1,
+  stop: 2,
+  singleShot: 3,
+  rebootSensor: 4,
+  calibrate: 5,
+  clearCalibration: 6,
+} as const;
+
+/* --- Config, 16 bytes ----------------------------------------------------- */
+
+export interface Config {
+  protocolVersion: number;
+  resolution: number;
+  planes: number;
+  instanceId: number;
+  exposureMs: number;
+  framePeriodMs: number;
+  advIntervalMs: number;
+  mode: number;
+  flags: number;
+}
+
+export function decodeConfig(dv: DataView): Config {
+  return {
+    protocolVersion: dv.getUint8(0),
+    resolution: dv.getUint8(1),
+    planes: dv.getUint8(2),
+    instanceId: dv.getUint8(3),
+    exposureMs: dv.getUint16(4, true),
+    framePeriodMs: dv.getUint16(6, true),
+    advIntervalMs: dv.getUint16(8, true),
+    mode: dv.getUint8(10),
+    flags: dv.getUint8(11),
+  };
+}
+
+export function encodeConfig(c: Config): ArrayBuffer {
+  const buf = new ArrayBuffer(16);
+  const dv = new DataView(buf);
+  dv.setUint8(0, PROTOCOL_VERSION);
+  dv.setUint8(1, c.resolution);
+  dv.setUint8(2, c.planes);
+  dv.setUint8(3, c.instanceId);
+  dv.setUint16(4, c.exposureMs, true);
+  dv.setUint16(6, c.framePeriodMs, true);
+  dv.setUint16(8, c.advIntervalMs, true);
+  dv.setUint8(10, c.mode);
+  dv.setUint8(11, c.flags);
+  /* bytes 12-15 reserved, left zero */
+  return buf;
+}
+
+export function encodeCommand(opcode: number, args: number[] = []): ArrayBuffer {
+  const buf = new ArrayBuffer(4);
+  const dv = new DataView(buf);
+  dv.setUint8(0, opcode);
+  for (let i = 0; i < 3; i++) dv.setUint8(1 + i, args[i] ?? 0);
+  return buf;
+}
+
+/* --- Config Result, 4 bytes ----------------------------------------------- */
+
+export interface CfgResult {
+  opcode: number;
+  detail: number;
+  status: number;
+}
+
+export function decodeCfgResult(dv: DataView): CfgResult {
+  return {
+    opcode: dv.getUint8(0),
+    detail: dv.getUint8(1),
+    status: dv.getInt16(2, true),
+  };
+}
+
+/* --- Telemetry ------------------------------------------------------------ */
+
+export interface Health {
+  sensorReady: boolean;
+  streaming: boolean;
+  errorStatus: number;
+  errorCode: number;
+  lastErrno: number;
+  captureOk: number;
+  captureFailed: number;
+}
+
+export function decodeHealth(dv: DataView): Health {
+  const flags = dv.getUint8(0);
+  return {
+    sensorReady: (flags & 1) !== 0,
+    streaming: (flags & 2) !== 0,
+    errorStatus: dv.getUint8(1),
+    errorCode: dv.getUint16(2, true),
+    lastErrno: dv.getInt8(4),
+    captureOk: dv.getUint32(8, true),
+    captureFailed: dv.getUint32(12, true),
+  };
+}
+
+export interface Energy {
+  lastCaptureMs: number;
+  blobUploadMs: number;
+  exposureMs: number;
+  resolution: number;
+  framesSent: number;
+  uptimeS: number;
+}
+
+export function decodeEnergy(dv: DataView): Energy {
+  return {
+    lastCaptureMs: dv.getUint16(0, true),
+    blobUploadMs: dv.getUint16(2, true),
+    exposureMs: dv.getUint16(4, true),
+    resolution: dv.getUint8(6),
+    framesSent: dv.getUint32(8, true),
+    uptimeS: dv.getUint32(12, true),
+  };
+}
+
+/**
+ * The device's own verdict on itself.
+ *
+ * ERROR_STATUS (UM3683 Table 16) is a register of ERROR bits: a SET bit means
+ * that error OCCURRED. This was inverted in the firmware twice, in two separate
+ * files, and each time it announced "PLL NOT LOCKED" precisely when the clock
+ * was fine — sending a day of debugging at the wrong subsystem. Stated
+ * positively here so the same mistake cannot be made a third time.
+ */
+export const ERROR_STATUS_BITS = [
+  'VHV overvoltage',
+  'VHV undervoltage',
+  'SPAD supply overload',
+  'HV boost current limit',
+  'SOF outside blanking',
+  'PLL lock failed',
+  'Reference array check',
+  'Internal firmware error (see ERROR_CODE)',
+];
+
+/** UM3683 Table 17, the codes that actually occur on this path. */
+export function errorCodeText(code: number): string {
+  switch (code) {
+    case 0x0000: return 'no error';
+    case 0x0002: return 'streaming';
+    case 0x0003: return 'DSS timeout';
+    case 0x0004: return 'system fault';
+    case 0x0008: return 'LDD timeout — the laser driver stopped responding';
+    case 0x000a: return 'LDD SPI — the link to the laser driver failed';
+    case 0x000d: return 'LDD safety — the laser driver tripped its interlock';
+    case 0x0f00: return 'CABDT LDD FAULT — check the VCSEL supply (VBAT_LDD)';
+    case 0x0f05: return 'CABDT VHV timeout';
+    case 0x0f06: return 'CABDT DSS timeout';
+    case 0x1004: return 'PHYPLL ext clock — AP_CLK is wrong or absent';
+    case 0x1009: return 'invalid external clock frequency';
+    default: return `unknown (UM3683 Table 17)`;
+  }
+}
+
+/* --- Frames --------------------------------------------------------------- */
+
+export interface FrameInfo {
+  instanceId: number;
+  protocolVersion: number;
+  seq: number;
+  deviceFrame: number;
+  cols: number;
+  rows: number;
+  planes: number;
+  flags: number;
+  totalFragments: number;
+  payloadBytes: number;
+  temperatureRaw: number;
+  captureMs: number;
+}
+
+export function decodeFrameInfo(dv: DataView): FrameInfo {
+  return {
+    instanceId: dv.getUint8(0),
+    protocolVersion: dv.getUint8(1),
+    seq: dv.getUint16(2, true),
+    deviceFrame: dv.getUint16(4, true),
+    cols: dv.getUint8(6),
+    rows: dv.getUint8(7),
+    planes: dv.getUint8(8),
+    flags: dv.getUint8(9),
+    totalFragments: dv.getUint16(10, true),
+    payloadBytes: dv.getUint16(12, true),
+    temperatureRaw: dv.getUint16(14, true),
+    captureMs: dv.getUint16(16, true),
+  };
+}
+
+export interface Frame {
+  info: FrameInfo;
+  /** Millimetres, bit 15 already stripped. */
+  distance: Uint16Array;
+  /** True where the device says the measurement is real. */
+  valid: Uint8Array;
+  amplitude: Uint16Array | null;
+  ambient: Uint16Array | null;
+  /** Host clock at completion — the device has no clock, by decision. */
+  receivedAt: number;
+}
+
+/**
+ * Reassembles fragments into frames, and counts what it loses.
+ *
+ * There is no retransmission in this protocol: at ~2.5 fps a lost frame is
+ * cheaper than a stall. That makes the DROP RATE the honest measure of whether
+ * the link is keeping up, so it is counted here and displayed, rather than
+ * quietly papered over.
+ */
+export class FrameAssembler {
+  private info: FrameInfo | null = null;
+  private buf: Uint8Array = new Uint8Array(0);
+  private fragSize = 0;
+  private nextIndex = 0;
+  private filled = 0;
+
+  framesCompleted = 0;
+  framesDropped = 0;
+  fragmentsDropped = 0;
+  bytesReceived = 0;
+
+  onFrame: ((f: Frame) => void) | null = null;
+
+  /** A Frame Info notification: the start of a new frame. */
+  begin(info: FrameInfo): void {
+    if (this.info && this.filled < this.info.payloadBytes) {
+      /* The previous frame never completed. */
+      this.framesDropped++;
+    }
+    this.info = info;
+    this.buf = new Uint8Array(info.payloadBytes);
+    this.fragSize = 0;
+    this.nextIndex = 0;
+    this.filled = 0;
+  }
+
+  /** A Frame Data notification. */
+  fragment(dv: DataView): void {
+    const seq = dv.getUint16(0, true);
+    const index = dv.getUint16(2, true);
+    const payload = new Uint8Array(dv.buffer, dv.byteOffset + 4, dv.byteLength - 4);
+
+    this.bytesReceived += dv.byteLength;
+
+    if (!this.info || seq !== this.info.seq) {
+      /* A fragment for a frame we have no header for. Nothing useful can be
+       * done with it — the header is what says how big the frame is. */
+      this.fragmentsDropped++;
+      return;
+    }
+
+    if (this.fragSize === 0) this.fragSize = payload.length;
+
+    if (index !== this.nextIndex) {
+      /* A gap. Count it and carry on: placing the fragment at its own index
+       * keeps the rest of the frame correct rather than smearing it. */
+      this.fragmentsDropped += Math.max(0, index - this.nextIndex);
+    }
+
+    const offset = index * this.fragSize;
+    if (offset + payload.length <= this.buf.length) {
+      this.buf.set(payload, offset);
+      this.filled += payload.length;
+    }
+    this.nextIndex = index + 1;
+
+    if (this.nextIndex >= this.info.totalFragments) {
+      this.complete();
+    }
+  }
+
+  private complete(): void {
+    const info = this.info;
+    if (!info) return;
+
+    const zones = info.cols * info.rows;
+    const dv = new DataView(this.buf.buffer, this.buf.byteOffset, this.buf.byteLength);
+
+    const distance = new Uint16Array(zones);
+    const valid = new Uint8Array(zones);
+    let amplitude: Uint16Array | null = null;
+    let ambient: Uint16Array | null = null;
+
+    /* Planes arrive in ascending bit order, only the enabled ones present. */
+    let plane = 0;
+    const readPlane = (): Uint16Array => {
+      const out = new Uint16Array(zones);
+      const base = plane * zones * 2;
+      for (let i = 0; i < zones; i++) {
+        const o = base + i * 2;
+        out[i] = o + 1 < dv.byteLength ? dv.getUint16(o, true) : 0;
+      }
+      plane++;
+      return out;
+    };
+
+    if (info.planes & PLANE.distance) {
+      const raw = readPlane();
+      for (let i = 0; i < zones; i++) {
+        /* Millimetres in bits 14:0, validity in bit 15. Forgetting the mask
+         * yields readings around 32 m and a person with a hole in the middle. */
+        distance[i] = raw[i] & 0x7fff;
+        valid[i] = raw[i] & 0x8000 ? 1 : 0;
+      }
+    }
+    if (info.planes & PLANE.amplitude) amplitude = readPlane();
+    if (info.planes & PLANE.ambient) ambient = readPlane();
+
+    this.framesCompleted++;
+    this.info = null;
+
+    this.onFrame?.({ info, distance, valid, amplitude, ambient, receivedAt: Date.now() });
+  }
+
+  reset(): void {
+    this.info = null;
+    this.filled = 0;
+    this.framesCompleted = 0;
+    this.framesDropped = 0;
+    this.fragmentsDropped = 0;
+    this.bytesReceived = 0;
+  }
+}

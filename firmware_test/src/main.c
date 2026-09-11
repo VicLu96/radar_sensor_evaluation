@@ -48,6 +48,11 @@
 
 #include <vl53l9cx/vl53l9cx.h>
 
+#include "app_capture.h"
+#if defined(CONFIG_APP_BLE)
+#include "ble/app_ble.h"
+#endif
+
 /* For the AP_CLK check below: read back what the GRTC peripheral thinks it is
  * doing, rather than trusting devicetree to have been applied.
  */
@@ -261,7 +266,11 @@ static void log_sensor_power(void)
 #endif /* CONFIG_APP_HOLD_SENSOR_POWER && power_gpios */
 
 /* ~18 KB. Static: one of these is more than the whole main stack. */
-static struct vl53l9cx_frame frame;
+/*
+ * The frame buffer moved to app_capture.c when BLE arrived: two things now
+ * want to range - this RTT path and the BLE streaming thread - and 18 KB each
+ * is 36 KB of 188 KB for no reason. One buffer, one mutex, one entry point.
+ */
 
 /* File scope so tof_capture_and_log() can mark the device as needing recovery
  * and main()'s retry loop will pick it up on the next pass.
@@ -588,14 +597,18 @@ static void tof_report_config(void)
  */
 static void tof_capture_and_log(void)
 {
+	struct vl53l9cx_frame *fp = app_capture_frame();
 	uint32_t valid = 0, sum = 0, min = UINT32_MAX, max = 0;
 	int64_t t0 = k_uptime_get();
 	int64_t took;
 	int ret;
 
 	tof_attempt++;
-	ret = vl53l9cx_capture(tof, TOF_RES, &frame, K_SECONDS(5));
+	ret = app_capture_once(TOF_RES, K_SECONDS(5));
 	took = k_uptime_get() - t0;
+
+	/* Everything below reads the shared frame, so hold the lock across it. */
+	app_capture_lock();
 
 	if (ret < 0) {
 		/*
@@ -634,6 +647,8 @@ static void tof_capture_and_log(void)
 		 * forever against a part that has stopped answering.
 		 */
 		tof_ok = false;
+		app_capture_set_ready(false);
+		app_capture_unlock();
 		return;
 	}
 
@@ -645,24 +660,25 @@ static void tof_capture_and_log(void)
 		tof_repeat = 0;
 	}
 
-	for (uint16_t i = 0; i < (uint16_t)frame.cols * frame.rows; i++) {
-		if (!frame.zone[i].valid) {
+	for (uint16_t i = 0; i < (uint16_t)fp->cols * fp->rows; i++) {
+		if (!fp->zone[i].valid) {
 			continue;
 		}
 		valid++;
-		sum += frame.zone[i].distance_mm;
-		min = MIN(min, frame.zone[i].distance_mm);
-		max = MAX(max, frame.zone[i].distance_mm);
+		sum += fp->zone[i].distance_mm;
+		min = MIN(min, fp->zone[i].distance_mm);
+		max = MAX(max, fp->zone[i].distance_mm);
 	}
 
 	LOG_INF("ToF %ux%u in %lld ms @ %u ms exposure — %u/%u zones valid",
-		frame.cols, frame.rows, took, valid,
-		(unsigned)frame.cols * frame.rows);
+		fp->cols, fp->rows, took, vl53l9cx_exposure_ms(tof), valid,
+		(unsigned)fp->cols * fp->rows);
 
 	if (valid == 0) {
 		LOG_WRN("  no valid zones at all. Either nothing is within "
 			"range, or the depth word is being read wrong — check "
 			"byte order before blaming the scene.");
+		app_capture_unlock();
 		return;
 	}
 
@@ -674,7 +690,7 @@ static void tof_capture_and_log(void)
 	 * Nothing else makes that visible.
 	 */
 	LOG_INF("  device frame %u (seq %u), temperature raw %u",
-		frame.frame_counter, frame.seq, frame.temperature);
+		fp->frame_counter, fp->seq, fp->temperature);
 
 	/* The grid: centimetres per zone, '.' where there is no target.
 	 * Centimetres rather than millimetres purely so the columns line up in
@@ -689,9 +705,9 @@ static void tof_capture_and_log(void)
 	 * what says whether AP_CLK is genuinely good rather than merely present.
 	 */
 	{
-		uint16_t err_code = (uint16_t)frame.status_line[60] |
-				    ((uint16_t)frame.status_line[61] << 8);
-		uint8_t  err_bits = frame.status_line[62];
+		uint16_t err_code = (uint16_t)fp->status_line[60] |
+				    ((uint16_t)fp->status_line[61] << 8);
+		uint8_t  err_bits = fp->status_line[62];
 
 		if (err_code != 0U || err_bits != 0U) {
 			LOG_WRN("  device health: ERROR_CODE 0x%04x, "
@@ -742,10 +758,10 @@ static void tof_capture_and_log(void)
 	{
 		uint32_t amp_v = 0, amp_i = 0, amb_sum = 0;
 		uint16_t nv = 0, ni = 0;
-		uint16_t total = (uint16_t)frame.cols * frame.rows;
+		uint16_t total = (uint16_t)fp->cols * fp->rows;
 
 		for (uint16_t i = 0; i < total; i++) {
-			const struct vl53l9cx_zone *z = &frame.zone[i];
+			const struct vl53l9cx_zone *z = &fp->zone[i];
 
 			amb_sum += z->ambient;
 			if (z->valid) {
@@ -807,20 +823,21 @@ static void tof_capture_and_log(void)
 	if (!IS_ENABLED(CONFIG_APP_LOG_FULL_GRID)) {
 		LOG_INF("  grid not printed (CONFIG_APP_LOG_FULL_GRID=n). At "
 			"%ux%u it is %u lines and about %u KB per capture.",
-			frame.cols, frame.rows, frame.rows,
-			(unsigned int)((frame.rows * (frame.cols * 4 + 6)) / 1024));
+			fp->cols, fp->rows, fp->rows,
+			(unsigned int)((fp->rows * (fp->cols * 4 + 6)) / 1024));
+		app_capture_unlock();
 		return;
 	}
 
 	LOG_INF("  distances in cm (\'   .\' = no target):");
 
-	for (uint8_t r = 0; r < frame.rows; r++) {
+	for (uint8_t r = 0; r < fp->rows; r++) {
 		char line[VL53L9CX_COLS_FULL * 4 + 1];
 		int n = 0;
 
-		for (uint8_t c = 0; c < frame.cols; c++) {
+		for (uint8_t c = 0; c < fp->cols; c++) {
 			const struct vl53l9cx_zone *z =
-				&frame.zone[vl53l9cx_idx(&frame, c, r)];
+				&fp->zone[vl53l9cx_idx(fp, c, r)];
 
 			if (z->valid) {
 				n += snprintf(&line[n], sizeof(line) - n, "%4u",
@@ -831,6 +848,8 @@ static void tof_capture_and_log(void)
 		}
 		LOG_INF("   %s", line);
 	}
+
+	app_capture_unlock();
 }
 
 int main(void)
@@ -941,6 +960,22 @@ int main(void)
 		LOG_INF("VL53L9CX ready. Firmware blob upload took %u ms.",
 			vl53l9cx_last_boot_ms(tof));
 	}
+	app_capture_set_ready(tof_ok);
+
+#if defined(CONFIG_APP_BLE)
+	/*
+	 * BLE last, after the sensor has had its chance to boot, so the
+	 * bring-up ladder is not competing with the controller for the log.
+	 *
+	 * A failure here is reported and then ignored: RTT still works, the
+	 * sensor still ranges, and a board that boots without a radio is far
+	 * more useful to debug than one that does not boot.
+	 */
+	if (app_ble_init() != 0) {
+		LOG_ERR("BLE did not come up — the web interface will not find "
+			"this node. RTT still works; carry on with that.");
+	}
+#endif
 
 	while (true) {
 		if (tof_attempt > 0U) {
@@ -990,6 +1025,7 @@ int main(void)
 		if (!tof_ok && (beat % 10U) == 9U) {
 			if (vl53l9cx_retry_boot(tof) == 0) {
 				tof_ok = true;
+				app_capture_set_ready(true);
 				LOG_INF("sensor came up on a retry — the boot "
 					"failure was transient, which is worth "
 					"explaining rather than moving past");
@@ -1023,6 +1059,26 @@ int main(void)
 		/* Ranging every fifth beat. A 12x10 capture is cheap, but a
 		 * ten-row grid once a second buries everything else.
 		 */
+#if defined(CONFIG_APP_BLE)
+		/*
+		 * While BLE is streaming, the streaming thread owns the sensor
+		 * and this path stays out of the way entirely.
+		 *
+		 * Not just to avoid two threads driving one device: at 54x42
+		 * the grid below is ~9 KB per capture, CONFIG_LOG_MODE_IMMEDIATE
+		 * formats it on this thread, and the RTT backend BLOCKS. Print
+		 * that during streaming and the RTT viewer, not the radio,
+		 * becomes the frame-rate limit — and the throughput number the
+		 * web interface reports would be measuring the wrong thing.
+		 */
+		if (app_ble_streaming()) {
+			if ((beat % 10U) == 0U) {
+				LOG_INF("  (BLE is streaming — RTT frame grid "
+					"suppressed so it does not throttle the "
+					"link)");
+			}
+		} else
+#endif
 		if (tof_ok && (beat % 5 == 0)) {
 			tof_capture_and_log();
 		}

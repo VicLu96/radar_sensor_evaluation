@@ -45,6 +45,83 @@ config APP_TOF_RES_54X42
 
 endchoice
 
+menu "BLE and the web interface"
+
+config APP_BLE
+	bool "Bluetooth Low Energy: GATT services and frame streaming"
+	default y
+	select BT
+	select BT_PERIPHERAL
+	select BT_GATT_DYNAMIC_DB
+	help
+	  Brings up the radio and registers the config, telemetry and (if
+	  enabled) frame services. The mirror of this protocol is
+	  webinterface/lib/protocol.ts.
+
+	  RTT stays on regardless. It is the only channel that still works when
+	  BLE itself is what is being debugged, which is the situation this
+	  option creates.
+
+config APP_BLE_FRAME_SERVICE
+	bool "Stream raw frames over BLE (the dev-stream profile)"
+	default y
+	depends on APP_BLE
+	help
+	  THIS IS THE SWITCH THE PRIVACY CLAIM RESTS ON.
+
+	  CLAUDE.md: "counts leave the device, frames never do." With this set
+	  to n the frame service, the streaming thread and the serialisation
+	  code are all absent from the binary - a frame physically cannot leave
+	  the build, and that is checkable rather than merely stated:
+
+	      grep APP_BLE_FRAME_SERVICE build/firmware_test/zephyr/.config
+	      nm build/firmware_test/zephyr/zephyr.elf | grep frame_svc
+
+	  Do NOT try to check it with `strings | grep <uuid>`. BT_UUID_128_ENCODE
+	  emits a 16-byte binary initialiser, not ASCII, so that grep can never
+	  match - it would "pass" on a build that streams frames happily.
+
+	  On y while the instrument is being built and the detection algorithm
+	  scored against real frames. Off for anything deployed, and off for any
+	  claim made in the paper.
+
+config APP_BLE_INSTANCE_ID
+	int "Node instance id"
+	default 1
+	range 0 255
+	help
+	  Identifies this node when several are deployed. Present from the start
+	  because retrofitting an identifier into a wire format means reflashing
+	  every node that already has one.
+
+	  It identifies a NODE. It does not de-duplicate a person seen by two
+	  nodes - that is a separate design problem (plan section 12).
+
+config APP_BLE_NOTIFY_SLOTS
+	int "In-flight frame fragments"
+	default 4
+	range 1 16
+	help
+	  How many notifications may be outstanding at once. Each slot costs
+	  ~248 bytes of RAM and the streaming thread blocks when they are all
+	  in use, which is the backpressure that keeps it from spinning on
+	  -ENOMEM.
+
+	  Raise it if the measured throughput sits below the link capacity;
+	  there is no point exceeding CONFIG_BT_ATT_TX_COUNT.
+
+config APP_BLE_STREAM_STACK_SIZE
+	int "Streaming thread stack"
+	default 3072
+	help
+	  The capture runs on this thread, and CONFIG_LOG_MODE_IMMEDIATE formats
+	  every log message on the CALLING thread's stack. The driver's messages
+	  are long - several are 150-250 characters. 1024 is what overflowed the
+	  main thread on 2026-09-07 and surfaced as a garbage PC in the idle
+	  thread, because the MPU is off and an overflow is silent.
+
+endmenu
+
 config APP_LOG_FULL_GRID
 	bool "Print the full distance grid for every capture"
 	default y

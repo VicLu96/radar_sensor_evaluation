@@ -1684,3 +1684,48 @@ resolution axis is a real axis or a demonstration that the top of it is unusable
 CONTEXT.md rewritten. It had been stale since 2026-09-01, still describing the firmware as
 "never compiled, never run" and still declaring AP_CLK as 8 MHz from GRTC - which is the
 exact stale fact that cost this project several days.
+
+## 2026-09-11 - BLE and the web interface: phases 1-5 built.
+Scope, agreed with Victor before writing anything: the streaming INSTRUMENT now
+(phases 1-5), detection and counting (6-9) after. Chrome. Mount ~2.5 m at 41-50 deg,
+the shallow end of what the 9.6 m range gate allows.
+Firmware: four new files under firmware_test/src/ble/ - the frozen UUIDs, the radio and
+connection lifecycle, the config/command service, the frame service and its streaming
+thread, and telemetry. Plus src/app_capture.c, which exists because two things now want
+to range and a struct vl53l9cx_frame is 18 KB; one buffer, one mutex, one entry point.
+Web: webinterface/, Next.js 16 + React 19 + TypeScript, no CSS framework. Runs with
+npm run dev, verified serving and rendering with no console errors.
+Cost: FLASH 77,484 -> 188,496 B (12.9%), RAM 77,376 -> 111,328 B (57.8%). The plan
+predicted +30-40 KB of RAM for BLE; it is +34 KB.
+PHASE 0 WAS FOLDED IN rather than run separately. The plan called the throughput spike
+"not optional" because every later phase assumes a number nobody has - but a stats bar
+measuring kB/s, fps and drop rate against REAL frames produces that number from the
+instrument itself, which is strictly better than a counter notifying flat out. If the
+number comes back too low, the streaming design changes shape exactly as the plan said.
+THREE DECISIONS WORTH RECORDING:
+1. The sensor starts IDLE and does not range until the web interface asks. At 450-800 mW
+   this is the most expensive thing the board can do, and leaving it streaming into a
+   link nobody is watching is how a bench session burns power for nothing.
+2. Frames never enter React state. The newest frame sits in a ref the BLE callbacks
+   overwrite; the canvas draws it on requestAnimationFrame and only summary numbers,
+   sampled 4 Hz, reach React. Rendering decouples from arrival, so a slow frame is a
+   number rather than a stutter.
+3. No retransmission, and the DROP RATE is displayed. At ~2.5 fps a lost frame is
+   cheaper than a stall, so drops are expected - and a throughput claim nobody can check
+   is not a measurement.
+TWO BUGS THE COMPILER AND A RE-READ CAUGHT, BOTH BEFORE FLASHING:
+- bt_gatt_get_mtu(NULL) dereferences its argument. bt_gatt_notify() accepts NULL and
+  means "all subscribers", which is why the rest of the firmware passes NULL - so the
+  streaming path would have faulted on its first frame. app_ble_conn() now hands over
+  the real pointer.
+- int8_t cannot hold -ENOTSUP (134): it silently becomes +122, an error that reads as
+  SUCCESS. The config-result status is int16_t.
+AND ONE BUG THAT SHIPPED. The frame summary line in main.c had SIX format specifiers and
+FIVE arguments - the exposure I added on 2026-09-11 was never actually inserted into the
+argument list, so every field after it printed shifted. That means the valid-zone counts
+in the 54x42 build Victor flashed were WRONG, not merely mislabelled. Fixed. The
+compiler had been warning about it and the warning was not read.
+STILL NOT MEASURED: nothing from 54x42 is recorded, and now the frame line that would
+have recorded it is known to have been printing shifted fields. The web interface
+reports zone validity and the amplitude split directly from the frame data, so the next
+bench run gets those numbers from a path that has never had this bug.

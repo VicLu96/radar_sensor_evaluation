@@ -1743,6 +1743,27 @@ int vl53l9cx_retry_boot(const struct device *dev)
 	return ret;
 }
 
+int vl53l9cx_set_exposure_ms(const struct device *dev, uint16_t ms)
+{
+	struct vl53l9cx_data *data = dev->data;
+
+	if (ms < 1U || ms > 100U) {
+		return -EINVAL;
+	}
+	if (!IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE)) {
+		return -ENOTSUP;
+	}
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	exposure_ms = ms;
+	/* Force apply_resolution() to rewrite the STANDBY-only registers. */
+	data->binning = 0;
+	k_mutex_unlock(&data->lock);
+
+	LOG_INF("exposure set to %u ms - takes effect on the next capture", ms);
+	return 0;
+}
+
 uint16_t vl53l9cx_exposure_ms(const struct device *dev)
 {
 	ARG_UNUSED(dev);
