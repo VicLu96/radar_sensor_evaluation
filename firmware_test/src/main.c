@@ -1033,6 +1033,24 @@ int main(void)
 		log_sensor_power();
 #endif
 
+#if defined(CONFIG_APP_BLE)
+		/*
+		 * Whether the node is findable RIGHT NOW, every tenth beat.
+		 *
+		 * "advertising started" at boot is not the same claim: the set
+		 * stops on connect, and before 2026-09-11 nothing restarted it
+		 * on disconnect. A line that keeps saying "discoverable" is the
+		 * difference between "the radio came up once" and "a scanner
+		 * should be seeing this".
+		 */
+		if ((beat % 10U) == 0U) {
+			LOG_INF("BLE: %s", app_ble_connected()
+				? "CONNECTED"
+				: "advertising as \"" CONFIG_BT_DEVICE_NAME
+				  "\" — discoverable now");
+		}
+#endif
+
 		/*
 		 * Retry the sensor bring-up until it works, roughly every ten
 		 * heartbeats.

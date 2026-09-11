@@ -68,8 +68,22 @@ export class Node {
     this.cb.onLog?.(line);
   }
 
-  /** Must be called from a click handler. */
-  async connect(): Promise<void> {
+  /**
+   * Must be called from a click handler.
+   *
+   * @param showAll skip the name filter and list every device in range.
+   *
+   * The filtered path is the normal one. The unfiltered path exists because a
+   * chooser that comes up EMPTY is ambiguous — it means either the node is not
+   * advertising, or Chrome is not surfacing its name — and those need opposite
+   * responses. Listing everything separates them in one click: if the node
+   * appears here but not under the filter, the radio is fine and the name is
+   * the problem; if it appears in neither, the radio is.
+   *
+   * Windows in particular can surface a device under a cached name from an
+   * earlier pairing, which no namePrefix will match.
+   */
+  async connect(showAll = false): Promise<void> {
     if (!bluetoothAvailable()) {
       throw new Error(
         'Web Bluetooth is not available. Use Chrome or Edge over localhost or HTTPS.',
@@ -77,7 +91,9 @@ export class Node {
     }
 
     this.device = await navigator.bluetooth.requestDevice({
-      filters: [{ namePrefix: 'water-sense' }],
+      ...(showAll
+        ? { acceptAllDevices: true }
+        : { filters: [{ namePrefix: 'water-sense' }] }),
       /* Without these, getPrimaryService throws after a successful connect. */
       optionalServices: [UUID.configService, UUID.telemetryService, UUID.frameService],
     });

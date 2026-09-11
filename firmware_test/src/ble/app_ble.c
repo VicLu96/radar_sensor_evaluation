@@ -63,6 +63,52 @@ static const struct bt_data sd[] = {
 	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UUID_SVC_CONFIG_VAL),
 };
 
+/*
+ * Advertising restart, on a work item rather than inline.
+ *
+ * THIS IS A REAL BUG THAT WAS HERE. With a single legacy advertising set,
+ * Zephyr STOPS advertising the moment a connection is established and does not
+ * resume on disconnect. Nothing restarted it, so the node was discoverable
+ * exactly once per boot: connect, disconnect, and it vanishes until a reset.
+ *
+ * On a work item because the disconnected callback runs in the host's own
+ * context, and bt_le_adv_start() from there is asking the stack to reconfigure
+ * itself from inside its own teardown.
+ */
+static void adv_start(struct k_work *work);
+static K_WORK_DEFINE(adv_work, adv_start);
+
+static int advertising_start(void)
+{
+	int ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
+				  sd, ARRAY_SIZE(sd));
+
+	if (ret == -EALREADY) {
+		return 0;
+	}
+	if (ret) {
+		LOG_ERR("advertising failed to start (%d)", ret);
+		return ret;
+	}
+
+	LOG_INF("advertising as \"%s\" — connectable", CONFIG_BT_DEVICE_NAME);
+	return 0;
+}
+
+static void adv_start(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	(void)advertising_start();
+}
+
+bool app_ble_advertising(void)
+{
+	/* Zephyr stops the set on connect, so "connected" and "advertising"
+	 * are mutually exclusive here by construction.
+	 */
+	return !app_ble_connected();
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
 	struct bt_conn_info info;
@@ -122,6 +168,9 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	 * how a bench session quietly burns 450-800 mW.
 	 */
 	app_stream_kick();
+
+	/* And become findable again. See advertising_start(). */
+	k_work_submit(&adv_work);
 }
 
 static void le_param_updated(struct bt_conn *conn, uint16_t interval,
@@ -192,13 +241,29 @@ int app_ble_init(void)
 		return ret;
 	}
 
-	ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
-			      sd, ARRAY_SIZE(sd));
+	ret = advertising_start();
 	if (ret) {
-		LOG_ERR("advertising failed to start (%d)", ret);
 		return ret;
 	}
 
-	LOG_INF("advertising as \"%s\" — connectable", CONFIG_BT_DEVICE_NAME);
+	/*
+	 * The identity address, printed because it is what a scanner shows when
+	 * the name does not come through. On Windows in particular a cached
+	 * pairing can surface a device under an old name, and then the only way
+	 * to recognise it is the address.
+	 */
+	{
+		bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
+		size_t count = ARRAY_SIZE(addrs);
+		char str[BT_ADDR_LE_STR_LEN];
+
+		bt_id_get(addrs, &count);
+		if (count > 0) {
+			bt_addr_le_to_str(&addrs[0], str, sizeof(str));
+			LOG_INF("  identity %s — this is what a scanner shows "
+				"if the name does not come through", str);
+		}
+	}
+
 	return 0;
 }

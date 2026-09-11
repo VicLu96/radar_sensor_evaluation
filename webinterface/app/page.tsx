@@ -124,7 +124,7 @@ export default function Page() {
   }, []);
 
   /* --- connect ----------------------------------------------------------- */
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (showAll = false) => {
     setError(null);
     const node = new Node({
       onFrame: (f) => {
@@ -153,7 +153,7 @@ export default function Page() {
     nodeRef.current = node;
     setBusy(true);
     try {
-      await node.connect();
+      await node.connect(showAll);
       setConnected(true);
       setHasFrames(node.hasFrameService);
       node.assembler.reset();
@@ -218,9 +218,22 @@ export default function Page() {
             {connected ? nodeRef.current?.device?.name ?? 'connected' : 'not connected'}
           </span>
           {!connected ? (
-            <button className="primary" onClick={connect} disabled={busy || !supported}>
-              Connect
-            </button>
+            <>
+              <button
+                className="primary"
+                onClick={() => connect(false)}
+                disabled={busy || !supported}
+              >
+                Connect
+              </button>
+              <button
+                onClick={() => connect(true)}
+                disabled={busy || !supported}
+                title="List every BLE device in range, ignoring the name filter"
+              >
+                Show all devices
+              </button>
+            </>
           ) : (
             <button className="danger" onClick={() => nodeRef.current?.disconnect()}>
               Disconnect
@@ -304,6 +317,14 @@ export default function Page() {
 
           <div className="panel">
             <h2>Notes</h2>
+            <p className="note">
+              <strong>Cannot see the node?</strong> Press <em>Show all
+              devices</em>. If it appears there but not under <em>Connect</em>,
+              the radio is fine and the name is not reaching Chrome. If it
+              appears in neither, check RTT &mdash; the heartbeat says
+              &ldquo;advertising &hellip; discoverable now&rdquo; every ten
+              beats while it is findable.
+            </p>
             <p className="note">
               The sensor starts <strong>idle</strong> and does not range until
               asked. At 450&ndash;800&nbsp;mW for this profile (UM3683 Table 23)

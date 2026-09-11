@@ -148,6 +148,9 @@ int app_ble_init(void);
 /** True while a central is connected. */
 bool app_ble_connected(void);
 
+/** True while the node is discoverable. Mutually exclusive with connected. */
+bool app_ble_advertising(void);
+
 /** The live connection, or NULL. Needed wherever the pointer itself is. */
 struct bt_conn *app_ble_conn(void);
 
