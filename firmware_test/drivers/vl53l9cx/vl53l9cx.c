@@ -547,6 +547,33 @@ static bool try_inverted_polarity(const struct device *dev)
  * `+ i`), so elements 1-4 are uninitialised. ST's file is vendored unmodified
  * on purpose, so the bug is worked around here rather than patched there.
  */
+/*
+ * UM3683 Table 17, the codes that actually occur on this path. The 0x0Fxx
+ * family is CABDT (the custom analogue block), and 0x0F00 says in as many
+ * words: check the laser driver.
+ */
+static const char *vl53l9_errcode_str(uint16_t code)
+{
+	switch (code) {
+	case 0x0000: return "no error";
+	case 0x0002: return "STREAMING";
+	case 0x0003: return "DSS timeout";
+	case 0x0004: return "SYSTEM FAULT";
+	case 0x0008: return "LDD TIMEOUT — the laser driver stopped responding";
+	case 0x000A: return "LDD SPI — the link to the laser driver failed";
+	case 0x000D: return "LDD SAFETY — the laser driver tripped its own "
+			    "safety interlock";
+	case 0x0F00: return "CABDT LDD FAULT — the analogue block saw a laser "
+			    "driver fault. THE VCSEL SUPPLY IS THE FIRST THING "
+			    "TO CHECK: VBAT_LDD, straight off the load switch";
+	case 0x0F05: return "CABDT VHV timeout";
+	case 0x0F06: return "CABDT DSS timeout";
+	case 0x1004: return "PHYPLL ext clock — AP_CLK is wrong or absent";
+	case 0x1009: return "invalid external clock frequency";
+	default:     return "see UM3683 Table 17";
+	}
+}
+
 /* Set by log_device_status() when the device reports a laser safety fault, so
  * the caller can act on UM3683 2.4 rather than only printing it.
  */
@@ -567,9 +594,39 @@ static void log_device_status(const struct device *dev)
 	LOG_ERR("  device status: fsm 0x%02x, command error 0x%02x, "
 		"firmware error 0x%04x", st.fsm, st.command, st.firmware);
 
-	if (!st.error.pll_lock) {
-		LOG_ERR("  *** PLL NOT LOCKED — this is AP_CLK. The device "
-			"cannot lock to the external clock it is being given.");
+	/*
+	 * UM3683 Table 16: ERROR_STATUS 0x0066 is a register of ERROR bits, and
+	 * a SET bit means that error occurred.
+	 *
+	 *   0 VHV overvoltage   1 VHV undervoltage   2 SPAD supply overload
+	 *   3 Current limit     4 SOF outside blanking   5 PLL lock
+	 *   6 Ref array check   7 Internal firmware error
+	 *
+	 * I had bit 5 inverted and printed "PLL NOT LOCKED — this is AP_CLK"
+	 * whenever it read 0 — which is precisely when the clock is FINE. On
+	 * 2026-09-11 that sent the reader back to a clock that had nothing wrong
+	 * with it. A diagnostic that fires on the healthy case is worse than no
+	 * diagnostic.
+	 */
+	if (st.error.pll_lock) {
+		LOG_ERR("  *** PLL LOCK ERROR — the device could not lock to "
+			"AP_CLK.");
+	}
+	if (st.error.vhv_overvoltage || st.error.vhv_undervoltage ||
+	    st.error.spad_supply_overload || st.error.hvboost_limit) {
+		LOG_ERR("  *** SUPPLY ERROR reported by the device — VHV or the "
+			"SPAD supply could not hold.");
+	}
+
+	/*
+	 * Bit 7 is not an error in itself. UM3683 section 2.4.1: "If bit 7 of
+	 * ERROR_STATUS is set, the error code provides additional information
+	 * about the most recent error encountered by the firmware." So it is a
+	 * pointer to ERROR_CODE, and ERROR_CODE is where the answer lives.
+	 */
+	if (st.error.internal_fw) {
+		LOG_ERR("  bit 7 set: ERROR_CODE 0x%04x carries the detail — %s",
+			st.firmware, vl53l9_errcode_str(st.firmware));
 	}
 	if (st.error.vhv_undervoltage || st.error.spad_supply_overload ||
 	    st.error.hvboost_limit) {
@@ -609,15 +666,29 @@ static void log_device_status(const struct device *dev)
 			}
 		}
 
-		LOG_ERR("  laser driver status: %02x %02x %02x %02x %02x%s",
-			ldd[0], ldd[1], ldd[2], ldd[3], ldd[4],
-			any ? "  <-- NON-ZERO: a laser safety fault stopped the "
-			      "streaming (UM3683 2.4). The VCSEL rail is the "
-			      "first thing to check — it is VBAT_LDD, straight "
-			      "off the load switch."
-			    : "  (all clear)");
+		/*
+		 * ONLY ldd[0] IS REAL. ST's vl53l9_get_status() reads all five
+		 * LDD_ERROR_STATUS bytes into element 0 — st/vl53l9.c:820-823
+		 * passes `status->laser_driver` with no `+ i` — so elements 1
+		 * to 4 are whatever was on the stack. On 2026-09-11 this printed
+		 * "00 02 00 00 00" and the 02 was garbage, which is why the
+		 * verdict must key off ERROR_CODE and ldd[0] alone.
+		 */
+		LOG_ERR("  laser driver status[0] = 0x%02x%s  (UM3683 Table 18)",
+			ldd[0],
+			ldd[0] ? "  <-- NON-ZERO" : "  (clear)");
+		LOG_ERR("  raw ldd[] = %02x %02x %02x %02x %02x — ONLY [0] is "
+			"valid; ST reads all five into index 0, so the rest is "
+			"stack residue",
+			ldd[0], ldd[1], ldd[2], ldd[3], ldd[4]);
 
-		last_status_was_laser_fault = any;
+		/* Key off what is trustworthy: ERROR_CODE naming an LDD fault,
+		 * or ldd[0] itself. Not the uninitialised tail.
+		 */
+		last_status_was_laser_fault =
+			(ldd[0] != 0U) ||
+			(st.firmware == 0x0F00U) || (st.firmware == 0x000DU) ||
+			(st.firmware == 0x0008U) || (st.firmware == 0x000AU);
 	}
 }
 

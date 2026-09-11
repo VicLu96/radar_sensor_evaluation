@@ -1499,4 +1499,37 @@ Largest unactioned algorithmic finding: nothing in the design splits merged peop
 people, then 8-connectivity merges them, and segmentation runs on a binary mask that has
 already discarded the 20-60 cm depth step between them. Needs open-only despeckle,
 4-connectivity, a depth-similarity join, and an explicit split stage.
+## 2026-09-11 - The laser fault is real, but my diagnostic named the wrong cause
+What: the first log with full device diagnostics. ERROR_CODE 0x0F00, ERROR_STATUS bit 7 set,
+all other bits clear, LDD status reading 00 02 00 00 00.
+THE VERDICT MY CODE PRINTED WAS WRONG AND WOULD HAVE COST A DAY. It said "*** PLL NOT LOCKED
+- this is AP_CLK. The device cannot lock to the external clock it is being given." UM3683
+Table 16 shows ERROR_STATUS 0x0066 is a register of ERROR bits - bit 5 SET means a PLL lock
+error. It read 0, which means the clock is FINE. I had the sense inverted, so the message
+fired on precisely the healthy case and pointed at a subsystem with nothing wrong with it.
+THE REAL ANSWER is ERROR_CODE 0x0F00 = CABDT_ERROR_LDD_FAULT, which UM3683 Table 17 glosses
+as "CABDT LDD fault (check laser driver error)". And section 2.4.1 explains bit 7: "If bit 7
+of ERROR_STATUS is set, the error code provides additional information" - so internal_fw=1 is
+not an internal firmware error, it is a pointer to ERROR_CODE. Every supply bit - VHV
+over/under-voltage, SPAD supply overload, current limit - is CLEAR. So the sensor did not see
+its own rails collapse; the laser driver reported a fault to it.
+The "00 02 00 00 00" is also not trustworthy. ST's vl53l9_get_status() reads all five
+LDD_ERROR_STATUS bytes into element 0 (st/vl53l9.c:820-823, missing the + i), so elements 1-4
+are stack residue. ldd[0] read 0x00. The verdict now keys off ERROR_CODE and ldd[0] only.
+WHAT CHANGED SINCE IT LAST WORKED, and it is almost certainly the cause. Victor is right that
+frames came out before. The working captures predate commit 6e33a18, which was the first to
+call vl53l9_set_exposure(). Until then NB_SHOT_STEP_n sat at its RESET OF ZERO - zero shots
+per step - so the VCSEL barely fired. That explains both halves of the old behaviour: frames
+arrived, and amplitude was 9 against ambient 13 with 73 of 120 zones valid. Now exposure is
+16 ms, the VCSEL fires for real, and the laser driver faults.
+That lines up with everything else found this week: UM3683 Table 23 puts the 16 ms ambient
+profile at 450-800 mW against the 150 mW precision profile every document assumed, and the
+board has a history of a 100 mA supply fold-back. The hypothesis is that VBAT_LDD cannot
+deliver the VCSEL current once the shots are real.
+Testable in one build: sweep CONFIG_VL53L9CX_EXPOSURE_MS down. If the fault rate falls
+monotonically with exposure, it is the supply.
+Also added, at Victor's request: the firmware now prints its git version on RTT at boot,
+stamped by CMake from git describe, alongside resolution, exposure and I2C speed. A bench log
+that cannot be matched to a commit cost most of this session.
+FLASH 76,852 B.
 

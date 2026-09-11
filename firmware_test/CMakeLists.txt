@@ -12,6 +12,23 @@ list(APPEND EXTRA_ZEPHYR_MODULES ${CMAKE_CURRENT_SOURCE_DIR}/drivers/vl53l9cx)
 # arguments are an easy thing to set once and then forget you set.
 list(APPEND BOARD_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
+# Firmware version, stamped from git at every build.
+#
+# Exists because on 2026-09-11 a bench log could not be matched to a commit, and
+# the whole session turned on which build was flashed. A version the board
+# prints itself is the only kind that cannot be wrong.
+execute_process(
+  COMMAND git describe --tags --always --dirty
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  OUTPUT_VARIABLE APP_GIT_DESCRIBE
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+if(NOT APP_GIT_DESCRIBE)
+  set(APP_GIT_DESCRIBE "unknown")
+endif()
+add_compile_definitions(APP_GIT_VERSION="${APP_GIT_DESCRIBE}")
+message(STATUS "Firmware version: ${APP_GIT_DESCRIBE}")
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(firmware_test)

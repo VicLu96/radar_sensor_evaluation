@@ -159,6 +159,26 @@ static const struct axis_layout *layout;
  * quotes I2C reads implying ~1 MHz, which would cut this to ~134 ms.
  */
 #if defined(CONFIG_APP_TOF_RES_4X4)
+#define TOF_COLS_FOR_RES 4
+#define TOF_ROWS_FOR_RES 4
+#elif defined(CONFIG_APP_TOF_RES_8X6)
+#define TOF_COLS_FOR_RES 8
+#define TOF_ROWS_FOR_RES 6
+#elif defined(CONFIG_APP_TOF_RES_12X10)
+#define TOF_COLS_FOR_RES 12
+#define TOF_ROWS_FOR_RES 10
+#elif defined(CONFIG_APP_TOF_RES_18X14)
+#define TOF_COLS_FOR_RES 18
+#define TOF_ROWS_FOR_RES 14
+#elif defined(CONFIG_APP_TOF_RES_24X20)
+#define TOF_COLS_FOR_RES 24
+#define TOF_ROWS_FOR_RES 20
+#else
+#define TOF_COLS_FOR_RES 54
+#define TOF_ROWS_FOR_RES 42
+#endif
+
+#if defined(CONFIG_APP_TOF_RES_4X4)
 #define TOF_RES  VL53L9CX_RES_4X4
 #elif defined(CONFIG_APP_TOF_RES_8X6)
 #define TOF_RES  VL53L9CX_RES_8X6
@@ -789,6 +809,16 @@ int main(void)
 	LOG_INF(" board  : %s", CONFIG_BOARD_TARGET);
 	LOG_INF(" zephyr : %s", KERNEL_VERSION_STRING);
 	LOG_INF(" built  : " __DATE__ " " __TIME__);
+#ifdef APP_GIT_VERSION
+	LOG_INF(" VERSION: %s", APP_GIT_VERSION);
+#else
+	LOG_INF(" VERSION: unknown (not a git checkout)");
+#endif
+	LOG_INF(" config : %ux%u, exposure %u ms, I2C %u kHz%s",
+		TOF_COLS_FOR_RES, TOF_ROWS_FOR_RES,
+		CONFIG_VL53L9CX_EXPOSURE_MS,
+		DT_PROP(DT_NODELABEL(i2c21), clock_frequency) / 1000U,
+		IS_ENABLED(CONFIG_APP_HOLD_SENSOR_POWER) ? ", power held" : "");
 	LOG_INF("========================================");
 
 #if defined(CONFIG_APP_ENABLE_IMU)
