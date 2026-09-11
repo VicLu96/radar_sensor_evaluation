@@ -22,6 +22,13 @@ implemented.** This is the document to build against.
 | Multi-node | Plan for several now — `instance_id` from the start | 2026-09-10 |
 | Ground truth | **Live observer log**, not frame logging | 2026-09-10 |
 
+> **⚠ REVIEWED 2026-09-11 — read [expert-review-2026-09-11.md](expert-review-2026-09-11.md)
+> before building anything from this document.** Three specialist reviews found three
+> findings that change the project rather than the plan, two of them verified against
+> UM3683: the sensor **cannot range beyond 9.6 m** (a 64 ns gate, which bounds tilt and
+> therefore coverage), our profile draws **450–800 mW and not 150 mW**, and full-resolution
+> SNR may not exist at all. Sections below are **not yet updated** for those.
+
 ### Blocking
 
 1. **The sensor does not yet range reliably.** It boots, uploads its blob and enters
@@ -61,8 +68,10 @@ implemented.** This is the document to build against.
 
 `CLAUDE.md` says *"counts leave the device, frames never do"*. Tier 4 **is** that
 architecture; streaming is the instrument used to build and score it. Make it checkable, not
-merely stated: **`strings zephyr.elf | grep 53l90002` must return nothing** in the deployed
-build. Update `CLAUDE.md` to say this before writing code, so the rule and the build agree.
+merely stated. **But not with `strings`** — corrected 2026-09-11: `BT_UUID_128_ENCODE` emits
+a 16-byte binary initialiser, not ASCII, so a `strings | grep` gate can never fail and would
+have been cited as architectural proof in a paper. Gate on the generated `.config` (the frame
+service's Kconfig symbol unset) **and** `nm zephyr.elf` showing the service symbol absent. Update `CLAUDE.md` to say this before writing code, so the rule and the build agree.
 
 ---
 
@@ -150,7 +159,10 @@ u16 report_seq
 u8  battery_pct
 ```
 
-**10 bytes**, well inside the 31-byte legacy advertising budget.
+**8 bytes** (1+1+1+1+1+2+1 — corrected 2026-09-11; this said 10). The 31-byte budget is
+tighter than it looks: Flags (3) + manufacturer element (4 + 8) = 15, plus a short name ~9
+= 24. A 128-bit service UUID is an 18-byte element and **does not fit** — put it in the
+**scan response**, or filter on `manufacturerData` instead.
 
 `report_seq` is not decoration: advertising is stateless and repeats the same payload until
 it changes, so without it a listener cannot tell *"still 3 people"* from *"the node has
@@ -161,10 +173,21 @@ command and drift, and is more honest than a device clock set once and drifting 
 
 ### 4.2 Why connectionless
 
-An advertising event is three channels at ~0.4 ms ≈ **1.2 ms of radio**; at 1 s that is
-~0.12% duty, at 10 s ~0.012%. A maintained connection costs a comparable event **plus**
-supervision, reconnection logic, and a scheduling constraint that keeps the SoC out of its
-deepest sleep between events. At 0.05–0.2 Hz the radio stops being a term in the budget.
+> **Corrected 2026-09-11. The energy argument I gave here was wrong.** Per `CLAUDE.md`'s own
+> rule the sensor dominates: the watch tier is milliwatts, advertising is tens of microwatts.
+> **BLE is under 1% of the budget either way**, and per event a connection is *cheaper* than
+> connectable advertising (one RX window versus three TX plus three RX). What makes streaming
+> expensive is that 2.5 fps keeps the **sensor** active essentially continuously — a sensor
+> duty-cycle cost, not a radio cost.
+
+The real reasons connectionless is right, and they are sufficient: **N nodes to one listener**
+with no connection limit, no central required in range, no supervision-timeout blackouts, no
+reconnection state machine, and no per-node pairing.
+
+One consequence to design around: **with a single advertising set, Zephyr stops advertising
+while a device is connected** — so counts stop reaching the bridge, and with no pairing anyone
+can connect and hold the link. Advertise the count **non-connectable** and make connectability
+a bounded window.
 
 ---
 
@@ -308,7 +331,7 @@ used of 188 KB.
 
 **Why on the MCU**: two passes over 2268 zones on a 128 MHz M33 is well under a millisecond
 against a **404 ms** I²C read. The computation is free; the transmission is not. Counting
-on-device turns 14,842 bytes per frame into **10 bytes per advertisement**.
+on-device turns 14,842 bytes per frame into **8 bytes per advertisement**.
 
 ### 6.6 What the plan still has to answer
 
@@ -328,14 +351,14 @@ on-device turns 14,842 bytes per frame into **10 bytes per advertisement**.
 
 ## 7. GATT design
 
-Base `53l9XXXX-1e2d-11ef-9262-0242ac120002`. **Freeze these before both sides are written.**
+Base `53f9XXXX-1e2d-11ef-9262-0242ac120002`. **Freeze these before both sides are written.**
 
-### 7.1 Frame service `53l90001` *(dev-stream only)*
+### 7.1 Frame service `53f90001` *(dev-stream only)*
 
 | Char | UUID | Props |
 |---|---|---|
-| Frame Data | `53l90002` | Notify — fragment, ≤244 B |
-| Frame Info | `53l90003` | Read, Notify — 18-byte header, sent **before** its fragments |
+| Frame Data | `53f90002` | Notify — fragment, ≤244 B |
+| Frame Info | `53f90003` | Read, Notify — 18-byte header, sent **before** its fragments |
 
 **Frame Info (18 B, LE)**
 
@@ -358,25 +381,25 @@ incomplete previous frame and counts a drop. No retransmission — at 2.5 fps a 
 cheaper than a stall. **Report the drop rate in the UI**; it is the honest measure of whether
 BLE keeps up.
 
-### 7.2 Config service `53l91001`
+### 7.2 Config service `53f91001`
 
 | Char | UUID | Props |
 |---|---|---|
-| Config | `53l91002` | Read, Write — 16-byte packed struct |
-| Command | `53l91003` | Write — `u8 opcode, u8 arg[3]` |
-| Config Result | `53l91004` | Notify — `u8 opcode, i8 status, u8 detail[2]` |
+| Config | `53f91002` | Read, Write — 16-byte packed struct |
+| Command | `53f91003` | Write — `u8 opcode, u8 arg[3]` |
+| Config Result | `53f91004` | Notify — `u8 opcode, i8 status, u8 detail[2]` |
 
 **Writes are transactional**: validate everything, then apply, then notify. Never partially
 apply — half a profile is how you get plausible rubbish.
 
-### 7.3 Counting service `53l93001` *(both builds)*
+### 7.3 Counting service `53f93001` *(both builds)*
 
 | Char | UUID | Props |
 |---|---|---|
-| Count | `53l93002` | Read, Notify — the advertisement payload |
-| Detection Config | `53l93003` | Read, Write |
-| Calibration Control | `53l93004` | Write, Notify — progress then a quality summary |
-| Background Model | `53l93005` | Read — *dev-stream only*, so the UI can show why a zone never fires |
+| Count | `53f93002` | Read, Notify — the advertisement payload |
+| Detection Config | `53f93003` | Read, Write |
+| Calibration Control | `53f93004` | Write, Notify — progress then a quality summary |
+| Background Model | `53f93005` | **Notify, paged** — *dev-stream only*. Cannot be a `Read`: GATT attributes cap at **512 bytes** and the model is 4.8 KB (corrected 2026-09-11). Reuse the fragmentation machinery. |
 
 **Detection Config**
 
@@ -404,7 +427,7 @@ u16 mean_bg_mm
 u16 temperature_raw
 ```
 
-### 7.4 Telemetry service `53l92001`
+### 7.4 Telemetry service `53f92001`
 
 Health (FSM, `ERROR_CODE`, `ERROR_STATUS`, 5× `LDD_STATUS`, capture ok/fail) and Energy
 (last capture ms, boot ms, frames, reboots). The bring-up diagnostics made remote. Push on
@@ -520,7 +543,7 @@ already arrive in `dev-stream`.
 | 6 | Calibration: capture, model, quality report | An empty room produces a background and a percentage |
 | 7 | Detection on the MCU; count sent with a matching `seq` | The UI shows a count **and** the blobs it came from |
 | 8 | Two-tier duty cycling + energy panel | Duty scales with activity; the crossover is measurable |
-| 9 | Deployed profile: counting only, frame service absent | `strings zephyr.elf \| grep 53l90002` returns nothing |
+| 9 | Deployed profile: counting only, frame service absent | `nm zephyr.elf` shows no frame-service symbol and its Kconfig is unset |
 
 Phases 6–9 are the paper. 0–5 are the instrument that makes them measurable.
 

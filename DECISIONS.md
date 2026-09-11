@@ -1453,4 +1453,50 @@ patch firmware sets it during boot or the table describes the pre-patch reset va
 Next: read the log line. A non-zero ERROR_STATUS or LDD_STATUS confirms the laser fault and
 moves this to the supply. All zeros means something else stops the streaming and the search
 reopens.
+## 2026-09-11 - Expert review: two verified findings change the project, not the plan
+Three specialist reviews (BLE, people detection/tracking, dToF physics) read the BLE and
+counting plan adversarially. Full record in docs/plan/expert-review-2026-09-11.md. I verified
+the severe claims against UM3683 Rev 3 before recording them.
+VERIFIED 1 - THE SENSOR CANNOT RANGE BEYOND 9.6 m. UM3683 2.6.1 verbatim: "a fixed ranging
+period of 64 ns (which corresponds to a maximum ranging distance of 9.6 m)". 64 ns x c/2 =
+9.6 m. It is a GATE, not a link budget - a photon arriving later is never counted, and it
+explains the bench exactly: valid returns spanned 0.9-9.5 m. Consequence: the floor is inside
+the window only where sin(depression) > h/9.6, so at 2.7 m that is above 16.3 deg. At 30 deg
+tilt about 17% of rows are permanently blind. Tilt is bounded from below by physics, roughly
+41 deg minimum for margin, giving about 10 m2 of floor - only 1.6x the overhead footprint that
+room-occupancy.md already called insufficient. The 30 deg option is deleted from the design
+space.
+VERIFIED 2 - 150 mW IS THE WRONG PROFILE. UM3683 Table 23 gives two: "VR headset / precision
+mode", 5 ms exposure, 150 mW; and "Outdoor lidar / ambient mode", 16 ms exposure, 450-800 mW.
+We run 16 ms. Every energy figure in this repo, and CLAUDE.md's hard rule, is anchored to the
+precision profile, so the battery claim is 3-5x optimistic. ST gives a RANGE because DSS opens
+the array under ambient light, which means power draw is a function of how sunlit the room is.
+GOOD NEWS, also verified: our firmware implements the ambient profile correctly and completely
+- exposure 16 ms, context LONG, switchover 650, rtn_short_offset 2, DSS_LONG, step number 6,
+power mode Regular, cal_prog_offset -8/-1 via set_context(LONG). Nothing is misconfigured, so
+amplitude 9 against ambient 13 is the physics at that range and not a setup error. That closes
+a question the reviewer raised.
+NOT YET VERIFIED, and the highest-value measurement available: the amplitude 9 / ambient 13
+reading was taken at 12x10 BINNING, which sums about 19 native zones and therefore carries
+sqrt(19) = 4.4x the SNR of 54x42. If that scaling holds, per-zone amplitude at full resolution
+is below 1 LSB and the project's central premise - 2268 zones - does not survive. One hour to
+settle: the same static scene at both resolutions.
+Also verified from Table 22: DSS computation at full resolution costs 13.5 ms per frame in
+parallel with exposure, so there is a fixed floor at 54x42 that no exposure reduction beats.
+And LP exit is 3.5 ms, so duty cycling has three rungs rather than two - the reviewer estimates
+standby beats full power-down by about 6x at 0.1 Hz, inverting a decision room-occupancy.md
+called "clearly correct".
+MY OWN ERRORS, corrected in the plan: the UUID base contained the letter l, which is not a hex
+digit, so nothing would have compiled. The phase-9 privacy gate (strings | grep for a UUID)
+could NEVER have worked because BT_UUID_128_ENCODE emits binary, and I was going to cite it as
+architectural proof in a paper. The advertisement payload is 8 bytes and I wrote 10. The
+Background Model characteristic cannot be a GATT Read because attributes cap at 512 bytes and
+it is 4.8 KB. And my energy justification for connectionless advertising was simply wrong -
+BLE is under 1% of the budget either way, and what makes streaming expensive is the SENSOR
+duty cycle, not the radio.
+Largest unactioned algorithmic finding: nothing in the design splits merged people, and with
+3-5 people merging is the normal case. The 3x3 despeckle FILLS the gap between two adjacent
+people, then 8-connectivity merges them, and segmentation runs on a binary mask that has
+already discarded the 20-60 cm depth step between them. Needs open-only despeckle,
+4-connectivity, a depth-similarity join, and an explicit split stage.
 
