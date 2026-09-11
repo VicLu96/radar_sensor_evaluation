@@ -1553,4 +1553,36 @@ bench runs were wasted. The WRITES banner added earlier today caught it the seco
 log says "NOT the control - a snippet may not have applied" on line six. Rather than fight the
 build configuration a third time, the control now lives in prj.conf, so a plain Build IS the
 control. Marked TEMPORARY with the revert instruction, same as the AP_CLK hold on 2026-09-07.
+## 2026-09-11 - Both devices stopped in the SAME session, and it is the session the VCSEL first fired
+What: Victor asked why it worked and then did not. Reconstructing the timeline from git and the
+bench logs makes the correlation sharp enough to lead with.
+  09-10 09:05  IMU re-enabled            IMU WORKS - WHO_AM_I 0x71, |a| 995-996 mg
+  09-10 16:49  working-2026-09-10        ToF WORKS - 12x10 frames, 73/120 zones valid
+  09-10 17:33  commit 6e33a18            set_exposure() CALLED FOR THE FIRST TIME
+  09-10 eve    next bench log            ToF fails AND no IMU output across 22 heartbeats
+  09-11        today                     ToF LDD-faults, IMU NAKs at 0x6b
+Before 6e33a18 the driver never called set_exposure, so NB_SHOT_STEP_n sat at its reset of ZERO
+shots per step and the VCSEL barely fired. After it, 16 ms of real shots. BOTH DEVICES STOPPED
+WORKING IN THAT SESSION. I had been treating the IMU as an unrelated loose end and noting it as
+"still open"; it is not unrelated, and the timestamps say so.
+THE MECHANISM THAT FITS, stated as inference and not fact. The sensor drawing what UM3683
+Table 23 specifies for this profile - 450-800 mW, i.e. 136-242 mA average at 3.3 V, with pulse
+current 20-60x higher during emission given Table 21's 1.6-4.4% VCSEL duty - against a supply
+Victor reported folding back at 100 mA ON 2026-09-06, WITH EXPOSURE STILL AT ZERO. The first
+real firing would pull the bench supply into current limit and brown out the whole board,
+taking the IMU down with it. Repeated over an evening of laser faults and automatic reboots.
+WHAT THAT WOULD MEAN, and it is the uncomfortable part. If a brownout was severe enough to
+leave the IMU permanently non-responsive rather than merely interrupted, it was severe enough
+to damage silicon - and the VL53L9CX sat in the same event. So the control run is now also a
+DAMAGE TEST: the board did exactly this on 2026-09-10 with that configuration, so if
+legacy-config fails today, the most likely reading is that the part or the board no longer is
+what it was, not that a register is wrong.
+ALTERNATIVES NOT EXCLUDED: coincidence; the IMU rework degrading over hours (it was refitted
+that morning); progressive IO overvoltage damage from the missing level shifters, which has
+been an open risk since 2026-09-06 and would explain a part degrading over days rather than
+instantly. None of these are ruled out and none of them are cheap to distinguish from the
+firmware side.
+NEXT MEASUREMENT, and it outranks the bisect: meter the IMU's supply rail. If it is down, that
+is a board-level supply fault and it explains both devices at once. If it is up and the IMU
+still NAKs, the IMU is damaged and the brownout hypothesis gains a lot of weight.
 
