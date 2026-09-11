@@ -95,6 +95,28 @@ config VL53L9CX_EXPOSURE_MS
 	  the paper is about. Sweep it against valid-zone count before settling
 	  on a number, and record both.
 
+config VL53L9CX_EXPOSURE_BACKOFF
+	bool "Halve the exposure on each laser fault, to find the threshold"
+	default y
+	help
+	  Turns a one-flash-per-data-point experiment into a single run.
+
+	  On 2026-09-11 the device reported ERROR_CODE 0x0F00 (CABDT LDD fault)
+	  and stopped streaming, while every supply bit it can report stayed
+	  clear and the laser driver's own status read 0x00. The one behavioural
+	  change since frames last worked is that the driver started setting
+	  exposure at all - before that NB_SHOT_STEP_n was at its reset of ZERO
+	  and the VCSEL barely fired.
+
+	  So: step 16 -> 8 -> 4 -> 2 -> 1 ms, one halving per fault, logging each
+	  one. A threshold below which the fault stops says the VCSEL supply
+	  cannot deliver the shot current, and the threshold itself is the number
+	  worth reporting. Still faulting at 1 ms says exposure is not the
+	  variable at all.
+
+	  Turn this off once the question is settled - a sensor that quietly
+	  reduces its own exposure is not what you want in a measurement.
+
 config VL53L9CX_LOG_BOOT_TIME
 	bool "Log firmware blob upload duration at init"
 	default y

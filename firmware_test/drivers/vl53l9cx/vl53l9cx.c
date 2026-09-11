@@ -579,6 +579,25 @@ static const char *vl53l9_errcode_str(uint16_t code)
  */
 static bool last_status_was_laser_fault;
 
+/*
+ * Exposure, live rather than fixed, so a laser fault can be bisected in ONE
+ * flash instead of one flash per data point.
+ *
+ * The evidence pointing here: frames arrived before 2026-09-10 and stopped
+ * after, and the only behavioural change in between was that the driver started
+ * calling vl53l9_set_exposure() at all. Until then NB_SHOT_STEP_n sat at its
+ * reset of ZERO shots per step - the VCSEL barely fired, which explains both
+ * that frames arrived AND that amplitude was 9 against ambient 13.
+ *
+ * If the fault is the VCSEL supply failing to deliver real shot current, the
+ * fault rate must fall monotonically as exposure falls, and there will be a
+ * threshold. If it faults at 1 ms too, exposure is not the variable and the
+ * search moves to the laser driver itself.
+ *
+ * Either answer is worth having, and this gets it in one run.
+ */
+static uint16_t exposure_ms = CONFIG_VL53L9CX_EXPOSURE_MS;
+
 static void log_device_status(const struct device *dev)
 {
 	vl53l9_status_t st;
@@ -891,6 +910,13 @@ probed:
 		LOG_INF("sensor answered on attempt %u, device id 0x%08x "
 			"(\"S3L9\") — bus, power, clock and address are all "
 			"good", tries, probe);
+
+		if (exposure_ms != CONFIG_VL53L9CX_EXPOSURE_MS) {
+			LOG_WRN("exposure has been backed off to %u ms from %u "
+				"— every capture from here uses the lower "
+				"value", exposure_ms,
+				(unsigned int)CONFIG_VL53L9CX_EXPOSURE_MS);
+		}
 
 		/*
 		 * Where the device thinks it is. UM3683 Table 8.
@@ -1281,15 +1307,14 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 		}
 	}
 
-	ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG,
-				  CONFIG_VL53L9CX_EXPOSURE_MS);
+	ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG, exposure_ms);
 	if (ret != VL53L9_ERROR_NONE) {
 		LOG_ERR("set_exposure(%u ms) failed (%s) — zones with a weak "
 			"return will come back invalid",
-			CONFIG_VL53L9CX_EXPOSURE_MS, vl53l9_errstr(ret));
+			exposure_ms, vl53l9_errstr(ret));
 		return -EIO;
 	}
-	LOG_INF("exposure %u ms per frame", CONFIG_VL53L9CX_EXPOSURE_MS);
+	LOG_INF("exposure %u ms per frame", exposure_ms);
 
 	data->binning = g->binning;
 	data->cols = g->cols;
@@ -1509,6 +1534,35 @@ int vl53l9cx_get_frame(const struct device *dev, struct vl53l9cx_frame *out,
 			 * application's ten-heartbeat retry.
 			 */
 			if (last_status_was_laser_fault) {
+#if defined(CONFIG_VL53L9CX_EXPOSURE_BACKOFF)
+				/*
+				 * Halve the exposure before rebooting, and say
+				 * so. This is the experiment: if the fault is
+				 * the VCSEL supply, there is a threshold below
+				 * which it stops, and this walks down to it.
+				 */
+				if (exposure_ms > 1U) {
+					uint16_t was = exposure_ms;
+
+					exposure_ms /= 2U;
+					data->binning = 0; /* force re-apply */
+					LOG_WRN("  EXPOSURE BACKOFF: %u ms -> "
+						"%u ms. If the fault stops at "
+						"some exposure, the VCSEL "
+						"supply cannot deliver the "
+						"shot current — that is the "
+						"answer, and the threshold is "
+						"the number to report.",
+						was, exposure_ms);
+				} else {
+					LOG_ERR("  EXPOSURE IS ALREADY 1 ms AND "
+						"IT STILL FAULTS. Exposure is "
+						"not the variable: the laser "
+						"driver or its own supply is, "
+						"and no firmware setting "
+						"reaches it.");
+				}
+#endif
 				LOG_WRN("  laser safe mode: rebooting now, as "
 					"UM3683 2.4 requires. Nothing works "
 					"until this happens.");
