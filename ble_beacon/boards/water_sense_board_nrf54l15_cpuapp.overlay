@@ -1,0 +1,9 @@
+/*
+ * The SoC dtsi ships the clock-control node disabled, and BLE needs HFXO.
+ * firmware_test's overlay carries the same one line.
+ *
+ * Nothing else here. No I2C, no sensor, no GPIO - that is the point.
+ */
+&clock {
+	status = "okay";
+};

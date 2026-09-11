@@ -8,6 +8,9 @@
 
   "//applications": "Makes firmware_test show up under Applications in the nRF Connect side bar when the repo root is the open folder.",
   "nrf-connect.applications": [
-    "${workspaceFolder}/firmware_test"
-  ]
+    "${workspaceFolder}/firmware_test",
+    "${workspaceFolder}/ble_beacon"
+  ],
+
+  "//ble_beacon": "Zephyr's stock beacon sample, ~40 lines, sharing none of firmware_test's code. It exists to answer one question: when the real firmware says it is advertising and nothing can see it, is the fault ours or below us? Build and flash it from the nRF Connect sidebar like any other application, scan for 'Test beacon', then switch back to firmware_test."
 }
