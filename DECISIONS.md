@@ -1759,3 +1759,39 @@ output deleted, so this is very unlikely to be why nothing appears in a scan. It
 a real contention and a real electrical conflict, and it makes the remaining question
 cleaner - but the open item is still whether HFXO starts, and whether the RF path works
 at all. That is what the check_hfxo() line reports on the next flash.
+
+## 2026-09-11 - The BLE transmit problem, and the only hypothesis that fits.
+State: the node advertises according to the host (bt_le_adv_start -> -EALREADY on every
+heartbeat), the controller reports 0 dBm TX power with BROADCASTER and PERIPHERAL both
+set, and NOTHING sees it - Chrome filtered, Chrome with acceptAllDevices, and nRF Connect
+on a phone at close range.
+WHAT IS PROVEN, and it removes most of the search space. A receive self-test at boot
+heard 77-89 advertisements at -40 dBm. Receiving BLE uses the same crystal and the same
+antenna as transmitting, so the crystal starts, the RF path conducts, the antenna is
+connected and MPSL schedules radio events. The HFXO check confirms the crystal starts
+separately.
+THE ASYMMETRY IS THE CLUE. RX works and TX does not, through the same hardware. The
+resolution is that they do NOT have the same frequency tolerance in practice: our
+receiver has automatic frequency control and pulls in a carrier well off nominal, while
+the packets we transmit get no such help - a scanner will not demodulate a carrier far
+enough outside the 1 MHz advertising channel.
+FOUND BY DIFFING AGAINST NORDIC'S OWN BOARD. water_sense_board declares NO load-capacitors
+on &hfxo or &lfxo, so Zephyr leaves XOSC32MCAPS disabled and both crystals run with no
+internal load at all. The nRF54L15 DK sets load-capacitors = "internal" with 15000 fF
+(HFXO) and 17000 fF (LFXO) - nrf54l_05_10_15_cpuapp_common.dtsi:34-42. A crystal with no
+load capacitance sits high by hundreds of ppm, which is exactly the asymmetry observed.
+ADDED AS AN EXPERIMENT, WITH THE VALUES MARKED UNVERIFIED. The numbers in the overlay are
+NORDIC'S, describing the DK's discrete crystals, not the ones integrated in the
+ISP2454-LX. The correct figures are Insight SiP's and remain VERIFY. They are allowed in
+the tree only because the experiment is immediately self-checking and trivially
+reversible - the RX self-test says within three seconds whether they made things better,
+worse or no different.
+ALSO DIFFERENT FROM THE DK AND DELIBERATELY NOT CHANGED: &regulators and &vregmain are
+disabled here, where the DK enables them with regulator-initial-mode = DCDC. The module
+integrates DC-DC per docs/hardware/mcu-isp2454ll.md, but enabling DCDC mode when the
+inductor is not actually connected browns the SoC out. That is a question for Insight SiP
+before it is a devicetree change, and it affects efficiency rather than function.
+STILL VERIFY, AND IT IS NOW THE QUESTION THAT MATTERS: what distinguishes ISP2454-LX from
+-LL. docs/hardware/mcu-isp2454ll.md has carried "antenna? RF path? pinout?" as an open
+question since 2026-09-04. If -LX brings the RF out to a pin rather than an integrated
+antenna, that changes this entire diagnosis.
