@@ -1654,3 +1654,33 @@ finds a working point, which is consistent with a supply that is marginal at hig
 current - the original hypothesis, now stripped of the clock confound. The threshold exposure
 is the number to record. Also still open: the IMU at 0x6b, silent since 2026-09-10.
 
+
+## 2026-09-11 - Full resolution works. Stage 1 is done.
+What: 54x42, the whole 2268-zone array, ranging on the custom board. Confirmed by Victor
+on the bench. Tagged `working-54x42-2026-09-11` (d83ad03).
+Why it went straight in: nothing needed resizing. struct vl53l9cx_frame and the driver's
+raw buffer were both already sized for VL53L9CX_ZONES_FULL, the 14,842-byte read sits at
+17% of the 2000 ms I2C timeout, and the ~9 KB grid goes into a 32 KB RTT buffer once every
+five seconds. FLASH 77,484 B, RAM 77,376 B (40%). The work that made this a one-line change
+was done during bring-up, when each of those limits was hit the hard way.
+The 2026-09-10 attempt at 54x42 timed out waiting for frame-ready and that was read at the
+time as the fault scaling with frame size. IT DID NOT. It was the 8 MHz declaration against
+a 12 MHz crystal, the same cause as everything else that week. Frame size was never the
+variable, and the earlier Kconfig comment saying it might be is now wrong.
+Set in prj.conf rather than as a build configuration, so a plain Build from the nRF Connect
+extension produces it - Victor asked for that on 2026-09-10 after two bench runs were wasted
+by a snippet that had silently not applied.
+Exposure deliberately held at 4 ms across the resolution change. One variable at a time.
+Also fixed: the inverted PLL-lock test in main.c, the same inversion already corrected in
+the driver on 2026-09-11. ERROR_STATUS bit 5 SET means the lock FAILED; the test fired on
+zero, so it announced "PLL NOT LOCKED" precisely when the clock was fine. It would have
+fired on the first full-resolution fault and sent the reader back to the clock for a third
+time. A diagnostic that fires on the healthy case is worse than no diagnostic.
+NOT YET MEASURED, and this is the next thing to do: no numbers from 54x42 are recorded.
+The one that matters is per-zone amplitude at binning 2 against the 126 measured at 24x20.
+A quarter as many SPADs per zone predicts ~32. That is the expert review's question -
+whether full resolution carries any SNR at all - and it decides whether the paper's
+resolution axis is a real axis or a demonstration that the top of it is unusable.
+CONTEXT.md rewritten. It had been stale since 2026-09-01, still describing the firmware as
+"never compiled, never run" and still declaring AP_CLK as 8 MHz from GRTC - which is the
+exact stale fact that cost this project several days.
