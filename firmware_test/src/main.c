@@ -1060,8 +1060,38 @@ int main(void)
 	 * call that actually brings the sensor up.
 	 */
 	if (tof_ok) {
+		/*
+		 * *** THE MOMENT THAT MATTERS, and it is an experiment. ***
+		 *
+		 * Advertising was invisible for this entire session until the
+		 * sensor stopped being powered at boot (2026-09-11). The only
+		 * other change in between was a load-capacitance block that was
+		 * added AFTER the failure and removed again, so the sensor rail
+		 * is the remaining candidate — and the VL53L9CX draws
+		 * 450-800 mW, against a radio that needs its supply to hold up
+		 * during a transmit burst.
+		 *
+		 * That would also explain the asymmetry that made this so hard
+		 * to place: receiving costs far less current than transmitting,
+		 * so a sagging rail kills TX while RX carries on. This board
+		 * heard 89 advertisements at -40 dBm while nothing could see it.
+		 *
+		 * So: if the BLE link drops within a second or two of the line
+		 * below, powering the sensor is what kills the radio, and that
+		 * is a supply problem on the board rather than anything in
+		 * firmware. Watch for it.
+		 */
+		LOG_WRN("=== POWERING THE SENSOR NOW. If the BLE link drops "
+			"within a second or two, the sensor rail is what stops "
+			"the radio transmitting — watch for it. ===");
 		LOG_INF("sensor boot was deferred — running it now");
 		tof_ok = (vl53l9cx_retry_boot(tof) == 0);
+
+#if defined(CONFIG_APP_BLE)
+		LOG_INF("BLE link after powering the sensor: %s",
+			app_ble_connected() ? "STILL UP" :
+			"*** DROPPED — that is the answer ***");
+#endif
 	}
 #endif
 
@@ -1085,6 +1115,23 @@ int main(void)
 			vl53l9cx_last_boot_ms(tof));
 	}
 	app_capture_set_ready(tof_ok);
+
+#if defined(CONFIG_APP_BLE_AUTOSTREAM)
+	/*
+	 * Arm the capture loop the moment the sensor is up.
+	 *
+	 * "Arm", not "force": frames only leave once the client has SUBSCRIBED
+	 * to the frame data characteristic, so a central that connected only to
+	 * read configuration is not showered with 4.5 KB per frame it never
+	 * asked for. The web interface subscribes on connect, so from its point
+	 * of view streaming simply starts.
+	 */
+	if (tof_ok && app_ble_connected()) {
+		LOG_INF("auto-starting the stream — frames flow as soon as the "
+			"client subscribes to the frame data characteristic");
+		app_ble_set_streaming(true);
+	}
+#endif
 
 	while (true) {
 		if (tof_attempt > 0U) {

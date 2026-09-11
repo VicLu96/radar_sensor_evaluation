@@ -69,6 +69,14 @@ const struct app_config *app_ble_config(void)
 	return &cfg;
 }
 
+void app_ble_set_streaming(bool on)
+{
+	cfg.mode = on ? APP_MODE_STREAMING : APP_MODE_IDLE;
+	LOG_INF("mode -> %s (set by the application, not by a write)",
+		on ? "STREAMING" : "idle");
+	app_stream_kick();
+}
+
 bool app_ble_streaming(void)
 {
 	return cfg.mode == APP_MODE_STREAMING && app_ble_connected() &&

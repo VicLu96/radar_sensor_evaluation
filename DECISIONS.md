@@ -1795,3 +1795,34 @@ STILL VERIFY, AND IT IS NOW THE QUESTION THAT MATTERS: what distinguishes ISP245
 -LL. docs/hardware/mcu-isp2454ll.md has carried "antenna? RF path? pinout?" as an open
 question since 2026-09-04. If -LX brings the RF out to a pin rather than an integrated
 antenna, that changes this entire diagnosis.
+
+## 2026-09-11 - BLE WORKS. And what fixed it is probably not what we thought.
+The node is visible and connectable. Confirmed by Victor.
+WHAT DID NOT FIX IT: the crystal load capacitance. That block existed for exactly one
+build and was removed once Victor confirmed the ISP2454-LX carries its own load
+capacitors - enabling the SoC's internal ones as well would ADD to them. Advertising was
+already broken BEFORE it was added, so removing it restored the previous state rather
+than fixing anything.
+THE ONLY OTHER CHANGE BETWEEN THE LAST FAILING TEST AND THE FIRST WORKING ONE IS 914e61a:
+THE SENSOR IS NO LONGER POWERED AT BOOT. CONFIG_VL53L9CX_DEFER_BOOT leaves the rail down
+until the application asks.
+LEADING HYPOTHESIS, and it is a HARDWARE finding rather than a firmware one: powering the
+VL53L9CX stops the radio transmitting. The sensor draws 450-800 mW and the radio needs
+its supply to hold during a transmit burst. That also explains the asymmetry that made
+this so hard to place - receiving costs far less current than transmitting, so a sagging
+rail kills TX while RX carries on, and this board heard 89 advertisements at -40 dBm
+while nothing could see it.
+NOT YET CONFIRMED. The test is now automatic: main() advertises, waits for a connection,
+then powers the sensor, and logs the link state immediately afterwards. If the link drops
+within a second or two of "POWERING THE SENSOR NOW", that is the answer. If it survives,
+the hypothesis is wrong and the real cause is still open - in which case the candidates
+are the removed scan response and the driver's POST_KERNEL activity generally.
+IF CONFIRMED IT CHANGES THE PROJECT. A board that cannot power the sensor and transmit at
+the same time cannot stream frames over BLE at all, and the counting architecture - where
+only 8 bytes leave, between captures - stops being merely a privacy argument and becomes
+the only thing that works. Measure the rail with a scope during a transmit burst before
+concluding anything.
+ALSO DONE: the staged flow Victor asked for. Advertise -> wait for a connection -> power
+and boot the sensor -> arm the stream. CONFIG_APP_BLE_AUTOSTREAM arms rather than forces:
+frames only leave once the client has SUBSCRIBED, so a central that connected to read
+configuration is not showered with 4.5 KB per frame it never asked for.

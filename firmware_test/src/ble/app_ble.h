@@ -157,6 +157,15 @@ struct bt_conn *app_ble_conn(void);
 /** True while the streaming thread should be capturing. */
 bool app_ble_streaming(void);
 
+/**
+ * Start or stop streaming from the application, without a GATT write.
+ *
+ * Frames still only go out once the client has SUBSCRIBED to the frame data
+ * characteristic, so this arms the capture loop rather than forcing traffic at
+ * a central that has not asked for it.
+ */
+void app_ble_set_streaming(bool on);
+
 /** The live configuration. Read-only for callers outside the config service. */
 const struct app_config *app_ble_config(void);
 

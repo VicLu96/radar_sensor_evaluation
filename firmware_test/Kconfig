@@ -85,6 +85,24 @@ config APP_BLE_FRAME_SERVICE
 	  scored against real frames. Off for anything deployed, and off for any
 	  claim made in the paper.
 
+config APP_BLE_AUTOSTREAM
+	bool "Start streaming as soon as the sensor is up and a client is connected"
+	default y
+	depends on APP_BLE && APP_BLE_FRAME_SERVICE
+	help
+	  Completes the staged flow: advertise, wait for a connection, bring the
+	  sensor up, and arm the capture loop - so a client that connects and
+	  subscribes gets frames without sending a START command first.
+
+	  ARMS rather than forces. Frames only leave once the client has
+	  subscribed to the frame data characteristic, so a central that
+	  connected only to read configuration is not showered with 4.5 KB per
+	  frame it never asked for. The web interface subscribes on connect, so
+	  from its point of view streaming simply starts.
+
+	  Turn it off to go back to an explicit START, which is what you want
+	  when measuring the cost of a single capture rather than a stream.
+
 config APP_BLE_FIRST
 	bool "Wait for a BLE connection before touching the sensor"
 	default n
