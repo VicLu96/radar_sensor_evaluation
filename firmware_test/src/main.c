@@ -814,6 +814,24 @@ int main(void)
 #else
 	LOG_INF(" VERSION: unknown (not a git checkout)");
 #endif
+	/*
+	 * The device-configuration switches, printed at boot.
+	 *
+	 * On 2026-09-11 a bisect run was invalidated because the snippet had not
+	 * applied and nothing said so until three driver lines deep. One line at
+	 * the top that names the arm of the experiment is cheaper than a wasted
+	 * bench session.
+	 */
+	LOG_INF(" WRITES : exposure=%s  dss_lut=%s  profile=%s   <-- %s",
+		IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE) ? "ON " : "off",
+		IS_ENABLED(CONFIG_VL53L9CX_WRITE_DSS_LUT) ? "ON " : "off",
+		IS_ENABLED(CONFIG_VL53L9CX_WRITE_PROFILE) ? "ON " : "off",
+		(!IS_ENABLED(CONFIG_VL53L9CX_SET_EXPOSURE) &&
+		 !IS_ENABLED(CONFIG_VL53L9CX_WRITE_DSS_LUT) &&
+		 !IS_ENABLED(CONFIG_VL53L9CX_WRITE_PROFILE))
+			? "legacy-config (the CONTROL)"
+			: "NOT the control — a snippet may not have applied");
+
 	LOG_INF(" config : %ux%u, exposure %u ms, I2C %u kHz%s",
 		TOF_COLS_FOR_RES, TOF_ROWS_FOR_RES,
 		CONFIG_VL53L9CX_EXPOSURE_MS,
