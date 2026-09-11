@@ -1,9 +1,31 @@
 /*
  * The SoC dtsi ships the clock-control node disabled, and BLE needs HFXO.
- * firmware_test's overlay carries the same one line.
- *
- * Nothing else here. No I2C, no sensor, no GPIO - that is the point.
+ * firmware_test's overlay carries the same line.
  */
 &clock {
 	status = "okay";
+};
+
+/*
+ * AND THE CRYSTAL LOAD CAPACITANCE, which is what makes this radio transmit
+ * at all — see firmware_test's overlay for the evidence.
+ *
+ * Without these the board receives normally and nothing can see it advertise:
+ * a crystal with the wrong load runs off frequency, our receiver's AFC pulls an
+ * off-frequency carrier in, and a scanner's does not.
+ *
+ * This build exists to separate our firmware from everything below it, so it
+ * MUST carry the same clock configuration. Without it, "the beacon is also
+ * invisible" would prove nothing at all.
+ *
+ * Values are Nordic's DK figures and still unverified for the ISP2454-LX.
+ */
+&hfxo {
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <15000>;
+};
+
+&lfxo {
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <17000>;
 };

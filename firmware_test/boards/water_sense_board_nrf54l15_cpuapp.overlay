@@ -208,60 +208,47 @@
  * between "the radio is silent" and "the radio has no clock".
  */
 /* ---------------------------------------------------------------------------
- * HFXO / LFXO LOAD CAPACITANCE: NOT OURS TO SET. Settled 2026-09-11.
+ * HFXO / LFXO LOAD CAPACITANCE. THESE ARE WHAT MAKE THE RADIO TRANSMIT.
  *
- * A load-capacitors = "internal" block sat here for one build, carrying the
- * nRF54L15 DK's 15000 / 17000 femtofarad. It has been REMOVED, and it must not
- * come back: Victor confirms the ISP2454-LX carries its OWN load capacitors
- * for both integrated crystals. Enabling the SoC's internal ones as well would
- * ADD to them and pull both crystals off frequency — the opposite of the fix
- * it was reaching for.
+ * RESTORED 2026-09-11 after being removed for several hours, during which BLE
+ * did not work at all. The evidence is now direct rather than theoretical:
  *
- * Recorded rather than silently deleted, because the reasoning that produced
- * it was sound and someone will have it again. It went: receive works and
- * transmit does not, through the same crystal and the same antenna; our
- * receiver has AFC and pulls in an off-frequency carrier while a scanner will
- * not; therefore suspect frequency; and this board declares no load
- * capacitance where Nordic's own board does. Every step of that holds EXCEPT
- * the last, which compared against a board whose crystals are discrete rather
- * than integrated in a module. The DK was the wrong reference.
+ *   914e61a  has this block   -> the node advertised and was seen
+ *   ecdc09d  removed it       -> invisible, and stayed invisible across every
+ *                               later build, several resets, four advertising
+ *                               configurations and +8 dBm
  *
- * So the absence of these properties here is CORRECT and deliberate. The SoC's
- * internal capacitors stay disabled because the module supplies its own.
+ * WHY IT WAS REMOVED, so the mistake is legible. Victor said the ISP2454-LX
+ * carries its own load capacitors, and I took that to mean the SoC's internal
+ * ones must therefore stay off. That does not follow. Whatever the module
+ * provides, the measured behaviour is unambiguous: with these properties the
+ * radio transmits, without them it does not.
+ *
+ * AND THE MECHANISM WAS RIGHT ALL ALONG. A crystal with the wrong load runs off
+ * frequency. Our receiver has automatic frequency control and pulls in an
+ * off-frequency carrier, which is why this board happily heard 61-89
+ * advertisements at -40 dBm throughout. The packets we TRANSMIT get no such
+ * help: a scanner will not demodulate a carrier far enough outside the 1 MHz
+ * advertising channel. That is exactly the RX-works/TX-invisible asymmetry
+ * observed, and it was the first explanation offered - then dropped.
+ *
+ * *** THE VALUES ARE STILL NORDIC'S AND STILL UNVERIFIED FOR THIS MODULE. ***
+ * 15000 and 17000 femtofarad come from the nRF54L15 DK
+ * (zephyr/boards/nordic/nrf54l15dk/nrf54l_05_10_15_cpuapp_common.dtsi:34-42),
+ * which describes discrete crystals, not the ones integrated in the
+ * ISP2454-LX. They WORK, which is not the same as being correct. Insight SiP's
+ * figures are the ones that belong here, and getting them is worth an email:
+ * a load that is close enough to advertise may still be tens of ppm out, which
+ * shows up as reduced range and marginal links rather than as a clean failure.
  * -------------------------------------------------------------------------*/
-
-/* ---------------------------------------------------------------------------
- * VREGMAIN IN DC/DC MODE — the last untested difference from Nordic's board.
- *
- * LOW CONFIDENCE, and stated as such. I have no mechanism for why LDO mode
- * would stop the radio TRANSMITTING while leaving it able to receive; LDO is a
- * supported mode and the radio is meant to work in it. This is here because it
- * is the only configuration difference from the nRF54L15 DK that has not been
- * tried, and because three confident explanations have already been wrong.
- *
- * The SoC dtsi ships both nodes disabled with VREGMAIN defaulting to LDO
- * (nrf54l_05_10_15.dtsi:736-749). Nordic's DK enables them and selects DC/DC
- * (nrf54l_05_10_15_cpuapp_common.dtsi:38-42). This board has done neither.
- *
- * SAFE TO TRY HERE because the ISP2454-LX integrates the DC-DC, inductor
- * included - docs/hardware/mcu-isp2454ll.md, "Integrated: RF matching, antenna,
- * 32 MHz + 32 kHz crystals, DC-DC". Selecting DC/DC mode with no inductor
- * fitted is what would be dangerous, and that is not this board.
- *
- * IF THE BOARD DOES NOT BOOT AT ALL after this, that is the answer: delete
- * this block. A dead board and a working one are easy to tell apart, which is
- * what makes this cheap to test rather than risky.
- *
- * It is also worth having regardless of the radio: DC/DC mode is materially
- * more efficient than LDO, and this project has to report energy numbers.
- * -------------------------------------------------------------------------*/
-&regulators {
-	status = "okay";
+&hfxo {
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <15000>;
 };
 
-&vregmain {
-	status = "okay";
-	regulator-initial-mode = <NRF5X_REG_MODE_DCDC>;
+&lfxo {
+	load-capacitors = "internal";
+	load-capacitance-femtofarad = <17000>;
 };
 
 &clock {

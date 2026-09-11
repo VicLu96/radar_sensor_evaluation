@@ -1914,3 +1914,41 @@ Advertising Enable) status from the HCI debug log that already exists, and a BLE
 a second nRF board running nRF Sniffer shows whether ANYTHING is on channels 37/38/39
 from that address. Nothing in Zephyr can see into the gap between "the controller says it
 is advertising" and "packets exist".
+
+## 2026-09-11 - THE LOAD CAPACITORS WERE THE FIX. I removed them and lost hours.
+The build that worked was 914e61a, NOT ecdc09d. Victor's RTT log carried the version
+string and settled it: working-54x42-2026-09-11-13-g914e61a.
+914e61a CONTAINS the load-capacitance block. ecdc09d is the commit that REMOVED it - and
+that is the commit I twice told Victor to flash while calling it "the commit that
+worked". Both times it failed, and both times that was taken as evidence the working
+observation had been unreproducible. It was reproducible. It was being tested against the
+wrong build.
+THE EVIDENCE IS NOW DIRECT:
+  914e61a  has the block  -> advertised, seen on a scanner
+  ecdc09d  removed it     -> invisible, and stayed invisible across every later build,
+                             several resets, four advertising configurations and +8 dBm
+WHY IT WAS REMOVED: Victor said the ISP2454-LX carries its own load capacitors, and I
+took that to mean the SoC's internal ones must therefore stay off. THAT DOES NOT FOLLOW.
+Whatever the module provides, the measured behaviour is unambiguous.
+AND THE MECHANISM WAS RIGHT THE FIRST TIME. A crystal with the wrong load runs off
+frequency. Our receiver has AFC and pulls an off-frequency carrier in, which is why the
+board heard 61-89 advertisements at -40 dBm throughout. The packets we TRANSMIT get no
+such help: a scanner will not demodulate a carrier far outside the 1 MHz advertising
+channel. That is exactly the RX-works/TX-invisible asymmetry, it was the first
+explanation offered, and it was abandoned on a misreading rather than on evidence.
+WHAT THIS COST: most of an evening, four wrong hypotheses (supply rail, load capacitance
+"ruled out", blocking RTT logging, hardware TX path), a four-way advertising sweep, a
+radio_test build, a beacon build, and two flashes of the wrong commit.
+THE LESSON, and it is not subtle: VERIFY WHICH BUILD IS ON THE BOARD BEFORE INTERPRETING
+ITS BEHAVIOUR. The version string exists precisely for this - it was added on 2026-09-11
+after a bench log could not be matched to a commit - and I did not check it against the
+commit I believed I was testing. A hardware statement from Victor was also allowed to
+override a measurement, which is backwards.
+STILL VERIFY AND NOW WORTH AN EMAIL: 15000 and 17000 fF are Nordic's DK figures for
+DISCRETE crystals, not the ones integrated in the ISP2454-LX. They WORK, which is not the
+same as being correct. A load close enough to advertise may still be tens of ppm out,
+which shows up as reduced range and marginal links rather than as a clean failure. Ask
+Insight SiP for the real numbers.
+ble_beacon carries the same properties now. Without them that build would have been
+invisible too, and "even the stock sample cannot advertise" would have been read as
+exonerating our code when it only reflected the same missing clock configuration.
