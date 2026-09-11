@@ -16,7 +16,7 @@ with RF matching, embedded antenna and both crystals integrated. 8 × 8 × 1 mm 
 | Notable | TrustZone, Channel Sounding, AoA direction finding |
 | Integrated | RF matching, antenna, 32 MHz + 32 kHz crystals, DC-DC |
 | Temperature | to +105 °C |
-| Variants | -LL, -LX, -LP share the footprint. **RESOLVED 2026-09-04: the fitted part is the -LX.** What distinguishes it from -LL is still **VERIFY** — check whether it changes RF front end, antenna, or available pins before designing against either |
+| Variants | -LL, -LX, -LP share the footprint. **RESOLVED 2026-09-04: the fitted part is the -LX.** **RESOLVED 2026-09-11 (Victor): the -LX needs pin 20 strapped to pin 22 — the RF output to the antenna feed — and that link is present on this board.** So the RF path is a board-level strap on this variant, not an internal connection |
 
 ## Why the memory numbers are comfortable here
 
@@ -81,7 +81,16 @@ The VL53L9CX offers I²C and I3C on shared pins. **We use I²C.**
 
 ## Open questions — **VERIFY**
 
-1. What distinguishes ISP2454-**LL** from -LX and -LP (antenna? RF path? pinout?).
+1. ~~What distinguishes ISP2454-**LL** from -LX and -LP (antenna? RF path? pinout?).~~
+   **ANSWERED 2026-09-11 (Victor): on the -LX, pin 20 must be connected to pin 22 to
+   route the radio to the antenna. It is connected on this board.** This is why the
+   variant question mattered: an unstrapped -LX has the radio driving nothing, which
+   would look exactly like the transmit fault being chased on 2026-09-11 — and would
+   still receive strong nearby signals through the unterminated pin, which is the
+   asymmetry that made that fault hard to place.
+   **Record whether this strap was present from the first build or added later.** If it
+   was added on 2026-09-11 it is a change to the hardware under test, and any BLE result
+   before and after it are not comparable.
 2. Which pins the module brings out, and whether a low-power-domain TWIM instance can
    reach them.
 3. Maximum I²C clock supported by the nRF54L15 TWIM on this part.
