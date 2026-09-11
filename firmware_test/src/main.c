@@ -952,6 +952,59 @@ int main(void)
 	}
 #endif
 
+#if defined(CONFIG_APP_BLE_FIRST)
+	/*
+	 * STAGE THE BRING-UP: radio first, sensor second, and do not touch the
+	 * sensor at all until something connects.
+	 *
+	 * Victor, 2026-09-11. Two things this buys.
+	 *
+	 * It makes the radio debuggable. The sensor's bring-up runs at
+	 * POST_KERNEL, costs ~900 ms and emits several kilobytes, and Zephyr's
+	 * RTT backend latches host_present=false once a write exhausts its
+	 * retries and silently drops everything after. That has buried the BLE
+	 * output repeatedly. With CONFIG_VL53L9CX_DEFER_BOOT the sensor is not
+	 * even powered while this loop runs, so a log that goes quiet here is
+	 * the radio's fault and nothing else's.
+	 *
+	 * And it is the honest shape for the product: a sensor drawing
+	 * 450-800 mW should not power up before anything has asked for a
+	 * measurement.
+	 */
+	{
+		uint32_t waited = 0;
+
+		LOG_INF("==================================================");
+		LOG_INF(" WAITING FOR A BLE CONNECTION before touching the "
+			"sensor.");
+		LOG_INF(" Connect with the web interface, or with nRF Connect "
+			"on a phone.");
+		LOG_INF(" Nothing below this runs until then — the sensor is "
+			"powered DOWN.");
+		LOG_INF("==================================================");
+
+		while (!app_ble_connected()) {
+			k_sleep(K_SECONDS(1));
+			waited++;
+
+			if ((waited % 5U) == 0U) {
+				/* Re-assert and report what the HOST says:
+				 * -EALREADY means it really is advertising.
+				 */
+				bool adv = app_ble_advertising();
+
+				LOG_INF(" waiting %u s — %s", waited,
+					adv ? "advertising as \""
+					      CONFIG_BT_DEVICE_NAME "\""
+					    : "NOT ADVERTISING (errno above)");
+			}
+		}
+
+		LOG_INF("=== CONNECTED after %u s — bringing the sensor up ===",
+			waited);
+	}
+#endif /* CONFIG_APP_BLE_FIRST */
+
 #if defined(CONFIG_APP_ENABLE_IMU)
 	/* Stage 2 — the IMU. Failures here are reported and then ignored: the
 	 * heartbeat carries on either way, because "the MCU runs but the IMU
@@ -999,6 +1052,19 @@ int main(void)
 	tof_report_config();
 
 	tof_ok = device_is_ready(tof);
+
+#if defined(CONFIG_VL53L9CX_DEFER_BOOT)
+	/*
+	 * The driver registered but deliberately did not power or boot the
+	 * part, so device_is_ready() is true and means nothing yet. This is the
+	 * call that actually brings the sensor up.
+	 */
+	if (tof_ok) {
+		LOG_INF("sensor boot was deferred — running it now");
+		tof_ok = (vl53l9cx_retry_boot(tof) == 0);
+	}
+#endif
+
 	if (!tof_ok) {
 		LOG_ERR("VL53L9CX not ready — its init failed, which means the "
 			"firmware blob upload did not complete.");

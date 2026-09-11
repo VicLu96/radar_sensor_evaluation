@@ -1995,11 +1995,28 @@ static int vl53l9cx_init(const struct device *dev)
 	 * upload it twice and double-count boot_ms, which is a measurement the
 	 * power model depends on.
 	 */
+#if defined(CONFIG_VL53L9CX_DEFER_BOOT)
+	/*
+	 * Stop here. The rail stays down, the blob is not uploaded, and no I2C
+	 * transaction happens until the application calls vl53l9cx_retry_boot().
+	 *
+	 * This exists to take the sensor entirely out of the picture while
+	 * something else is being debugged - on 2026-09-11, the radio. The
+	 * device still registers and device_is_ready() still succeeds, so
+	 * nothing downstream has to special-case it.
+	 */
+	LOG_WRN("init: DEFERRED (CONFIG_VL53L9CX_DEFER_BOOT). The sensor is "
+		"left powered DOWN and untouched — no rail, no blob upload, no "
+		"I2C. The application must call vl53l9cx_retry_boot().");
+	LOG_INF("init: complete (deferred)");
+	return 0;
+#else
 	ret = pm_device_driver_init(dev, pm_action);
 	if (ret < 0) {
 		LOG_ERR("init: FAILED (%d)", ret);
 		return ret;
 	}
+#endif
 
 	LOG_INF("init: complete");
 	return 0;

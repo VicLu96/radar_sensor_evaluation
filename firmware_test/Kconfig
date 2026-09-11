@@ -85,6 +85,33 @@ config APP_BLE_FRAME_SERVICE
 	  scored against real frames. Off for anything deployed, and off for any
 	  claim made in the paper.
 
+config APP_BLE_FIRST
+	bool "Wait for a BLE connection before touching the sensor"
+	default n
+	depends on APP_BLE
+	select VL53L9CX_DEFER_BOOT
+	help
+	  Stages the bring-up: the radio comes up and advertises, and main()
+	  blocks until something connects. The IMU and the ToF sensor are not
+	  touched until then, and with VL53L9CX_DEFER_BOOT the sensor is not
+	  even powered.
+
+	  TWO REASONS.
+
+	  It makes the radio debuggable. Driver init runs at POST_KERNEL, costs
+	  ~900 ms and emits several kilobytes, and Zephyr's RTT backend latches
+	  host_present=false once a write exhausts its retries and then drops
+	  everything silently. That buried the BLE output repeatedly on
+	  2026-09-11. With this on, a log that goes quiet during the wait is the
+	  radio's fault and nothing else's.
+
+	  And it is the honest shape for the product: a sensor drawing
+	  450-800 mW has no business powering up before anything has asked for
+	  a measurement.
+
+	  Turn it OFF for unattended runs - a node that will not range until
+	  someone connects is a bring-up tool, not a sensor.
+
 config APP_BLE_RX_SELFTEST
 	bool "Listen for other BLE devices at boot, to prove the radio works"
 	default y

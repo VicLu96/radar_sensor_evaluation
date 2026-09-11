@@ -64,6 +64,26 @@ config VL53L9CX_XSHUT_SETTLE_MS
 	  a fault — the driver's probe retries against a deadline for exactly
 	  this reason, so this value being slightly short is recoverable.
 
+config VL53L9CX_DEFER_BOOT
+	bool "Do not power or boot the sensor at init"
+	default n
+	help
+	  Leaves the sensor powered DOWN and untouched at driver init: no rail,
+	  no firmware blob upload, no I2C transaction. The device still
+	  registers and device_is_ready() still succeeds, so nothing downstream
+	  needs to special-case it; the application calls vl53l9cx_retry_boot()
+	  when it actually wants ranging.
+
+	  The point is to take the sensor completely out of the picture while
+	  something else is being debugged. Driver init runs at POST_KERNEL,
+	  before main(), and costs ~900 ms and several kilobytes of log before
+	  anything else gets a turn - which on 2026-09-11 repeatedly buried the
+	  BLE output that was the actual subject.
+
+	  It is also the honest shape for a duty-cycled node: a sensor that
+	  costs 450-800 mW while active has no business powering up before
+	  anything has asked for a measurement.
+
 config VL53L9CX_SET_EXPOSURE
 	bool "Call vl53l9_set_exposure()"
 	default y
