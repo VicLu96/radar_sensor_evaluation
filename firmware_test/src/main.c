@@ -1044,10 +1044,18 @@ int main(void)
 		 * should be seeing this".
 		 */
 		if ((beat % 10U) == 0U) {
-			LOG_INF("BLE: %s", app_ble_connected()
-				? "CONNECTED"
-				: "advertising as \"" CONFIG_BT_DEVICE_NAME
-				  "\" — discoverable now");
+			if (app_ble_connected()) {
+				LOG_INF("BLE: CONNECTED");
+			} else if (app_ble_advertising()) {
+				LOG_INF("BLE: the host says it IS advertising "
+					"as \"" CONFIG_BT_DEVICE_NAME "\" "
+					"(bt_le_adv_start -> -EALREADY). If no "
+					"scanner sees it, the packets are not "
+					"reaching the air.");
+			} else {
+				LOG_ERR("BLE: NOT ADVERTISING — see the errno "
+					"above");
+			}
 		}
 #endif
 

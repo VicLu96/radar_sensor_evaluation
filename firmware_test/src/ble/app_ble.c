@@ -61,9 +61,21 @@ static const struct bt_data ad[] = {
 		sizeof(CONFIG_BT_DEVICE_NAME) - 1),
 };
 
-static const struct bt_data sd[] = {
-	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UUID_SVC_CONFIG_VAL),
-};
+/*
+ * NO SCAN RESPONSE.
+ *
+ * It carried the 128-bit config service UUID, purely so a scanner like nRF
+ * Connect would show it — nothing depended on it, because the web interface
+ * filters on the name and lists services in optionalServices.
+ *
+ * Removed 2026-09-11 while chasing a node that reported itself advertising and
+ * could not be seen. Legacy advertising with scan response data is the one
+ * place in this configuration where the advertising TYPE is inferred rather
+ * than stated (ADV_IND versus ADV_SCAN_IND), and with the RF path now PROVEN by
+ * the receive self-test — 89 advertisements heard at -42 dBm — the remaining
+ * candidates are all in the advertising configuration. This removes one of
+ * them and costs nothing.
+ */
 
 /*
  * Advertising restart, on a work item rather than inline.
@@ -83,7 +95,7 @@ static K_WORK_DEFINE(adv_work, adv_start);
 static int advertising_start(void)
 {
 	int ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
-				  sd, ARRAY_SIZE(sd));
+				  NULL, 0);
 
 	if (ret == -EALREADY) {
 		return 0;
@@ -103,12 +115,46 @@ static void adv_start(struct k_work *work)
 	(void)advertising_start();
 }
 
+/*
+ * Is this node ACTUALLY advertising?
+ *
+ * The previous version of this function returned !app_ble_connected() and
+ * claimed the two were mutually exclusive by construction. That was an
+ * assumption dressed as a measurement: it reported "discoverable now" on every
+ * heartbeat of a node that no scanner could see, which is worse than silence
+ * because it retires the question.
+ *
+ * This asks the host instead. bt_le_adv_start() returns -EALREADY when an
+ * advertising set is already running, so the return code IS the state:
+ *
+ *   -EALREADY  the host is advertising. Believe it.
+ *   0          it had STOPPED and we have just restarted it — a finding in
+ *              itself, and worth shouting about.
+ *   other      it cannot advertise, and now we have the errno.
+ *
+ * Self-healing as a side effect, which is a bonus rather than the point.
+ */
 bool app_ble_advertising(void)
 {
-	/* Zephyr stops the set on connect, so "connected" and "advertising"
-	 * are mutually exclusive here by construction.
-	 */
-	return !app_ble_connected();
+	int ret;
+
+	if (app_ble_connected()) {
+		return false;
+	}
+
+	ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
+			      NULL, 0);
+	if (ret == -EALREADY) {
+		return true;
+	}
+	if (ret == 0) {
+		LOG_WRN("advertising had STOPPED and has just been restarted — "
+			"something is ending it, which is worth knowing");
+		return true;
+	}
+
+	LOG_ERR("NOT advertising: bt_le_adv_start returned %d", ret);
+	return false;
 }
 
 static void connected(struct bt_conn *conn, uint8_t err)
