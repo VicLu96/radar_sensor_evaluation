@@ -79,7 +79,16 @@
 	 * TO REVERT: delete this property. The boot banner prints the frequency,
 	 * so which one is running is never in doubt.
 	 * ------------------------------------------------------------------ */
-	clock-frequency = <I2C_BITRATE_FAST_PLUS>;
+	/* 400 kHz for the demo milestone. The 1 MHz line is one edit away:
+	 *
+	 *     clock-frequency = <I2C_BITRATE_FAST_PLUS>;
+	 *
+	 * It is NOT in the tagged build because it has not been run, and because
+	 * the 4.7 kOhm pull-ups give a ~398 ns rise time against Fast-mode
+	 * Plus's 120 ns limit. A demo should not rest on an untested bus that is
+	 * three times outside its timing spec. Fit 1 kOhm, then enable it - see
+	 * docs/plan/i2c-fast-mode-plus.md.
+	 */
 
 	zephyr,concat-buf-size = <1040>;
 	zephyr,flash-buf-max-size = <1040>;
