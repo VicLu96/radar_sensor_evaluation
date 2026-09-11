@@ -1853,3 +1853,32 @@ uses, or TWIM. If advertising still works, the sensor was never involved and the
 somewhere in the removed scan response or in something outside the firmware entirely.
 Worth running, because "we changed several things and it started working" is not a result
 and cannot go in a paper.
+
+## 2026-09-11 - The advertising fault is INTERMITTENT, and the logging may be causing it.
+Victor flashed ed740a8 and the node was invisible again - without the sensor ever being
+powered, since it only powers after a connection.
+THE DIFF BETWEEN THE WORKING BUILD AND THAT ONE IS ADDITIVE ONLY, and every line of it
+runs AFTER a connection is established: app_ble_set_streaming(), a log line around the
+deferred sensor boot, and the autostream block. None of it touches advertising and none
+of it executes before the connect-wait loop. So it cannot have broken advertising.
+THEREFORE THE FAULT IS INTERMITTENT, not deterministic, and that reframes the whole
+session: one "it works" and many "it does not" are all consistent with a flaky advertiser
+rather than with a fault that kept moving as we changed things. Several earlier
+conclusions were drawn from single observations and are not safe.
+SELF-INFLICTED SUSPECT, and it is the strongest one available. The build logs in
+IMMEDIATE mode - each message formatted on the CALLING thread - through an RTT backend
+set to BLOCK for up to RETRY_CNT x RETRY_DELAY_MS = 4 x 5 = 20 ms per message. With
+CONFIG_BT_HCI_CORE_LOG_LEVEL_DBG on, that is hundreds of messages during bt_enable() and
+advertising setup, some of them on the Bluetooth host's own threads. A 20 ms stall there
+is long enough to miss advertising events and HCI responses. It is not a neutral
+observation; it changes the timing of the thing being observed.
+And whether RTT blocks at all depends on whether a viewer is attached and draining it,
+which differs run to run. That is exactly the shape of an intermittent fault.
+DONE: HCI debug off (it had answered its question - every init command returned status
+0x00), and RTT retry cut from 4 to 1, so the worst-case block per message is 5 ms rather
+than 20. The trade is stated: a message is more likely to be DROPPED when no viewer is
+attached, in exchange for a radio whose timing does not depend on whether someone has RTT
+open. For a bring-up ladder that was the wrong trade; for a radio it is the right one.
+WHAT TO DO WITH THIS: stop drawing conclusions from single runs. An intermittent fault
+needs a pass/fail count over several resets before any change can be called a fix - and
+that includes calling this one a fix.
