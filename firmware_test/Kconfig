@@ -130,6 +130,21 @@ config APP_BLE_FIRST
 	  Turn it OFF for unattended runs - a node that will not range until
 	  someone connects is a bring-up tool, not a sensor.
 
+config APP_BLE_CHECK_HFXO
+	bool "Ask whether the 32 MHz crystal starts, at boot"
+	default n
+	depends on APP_BLE
+	help
+	  Requests HFXO explicitly and waits up to 20 ms for it, then says which
+	  it got. BLE is the only thing on this board that needs HFXO - the CPU
+	  runs from internal oscillators - so this separates "the radio is
+	  silent" from "the radio has no clock".
+
+	  It answered its question on 2026-09-11: the crystal starts. Off by
+	  default because it briefly holds a clock the Bluetooth controller
+	  manages for itself, and an unnecessary clock request is not something
+	  to leave in a build that will be measured for energy.
+
 config APP_BLE_ADV_SWEEP
 	bool "At boot, try four advertising configurations in turn"
 	default n

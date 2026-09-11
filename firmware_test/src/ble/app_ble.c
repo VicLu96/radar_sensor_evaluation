@@ -62,20 +62,24 @@ static const struct bt_data ad[] = {
 };
 
 /*
- * NO SCAN RESPONSE.
+ * Scan response carries the 128-bit config service UUID, as planned
+ * (docs/plan/ble-streaming-and-web-ui.md section 7).
  *
- * It carried the 128-bit config service UUID, purely so a scanner like nRF
- * Connect would show it — nothing depended on it, because the web interface
- * filters on the name and lists services in optionalServices.
+ * It goes here rather than in the advertisement because a 128-bit UUID is an
+ * 18-byte AD element and the budget is 31: flags (3) + 18 + a name of any
+ * useful length does not fit. That is the single most common reason a device
+ * advertises and then cannot be filtered for.
  *
- * Removed 2026-09-11 while chasing a node that reported itself advertising and
- * could not be seen. Legacy advertising with scan response data is the one
- * place in this configuration where the advertising TYPE is inferred rather
- * than stated (ADV_IND versus ADV_SCAN_IND), and with the RF path now PROVEN by
- * the receive self-test — 89 advertisements heard at -42 dBm — the remaining
- * candidates are all in the advertising configuration. This removes one of
- * them and costs nothing.
+ * It was removed for one build on 2026-09-11 while chasing an invisible
+ * advertiser, on the theory that legacy advertising with scan response data
+ * leaves the PDU type inferred rather than stated. Removing it changed nothing
+ * — the subsequent four-way sweep showed legacy AND extended, connectable AND
+ * non-connectable all equally invisible — so the theory was wrong and the
+ * planned design is restored.
  */
+static const struct bt_data sd[] = {
+	BT_DATA_BYTES(BT_DATA_UUID128_ALL, UUID_SVC_CONFIG_VAL),
+};
 
 /*
  * Advertising restart, on a work item rather than inline.
@@ -95,7 +99,7 @@ static K_WORK_DEFINE(adv_work, adv_start);
 static int advertising_start(void)
 {
 	int ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
-				  NULL, 0);
+				  sd, ARRAY_SIZE(sd));
 
 	if (ret == -EALREADY) {
 		return 0;
@@ -143,7 +147,7 @@ bool app_ble_advertising(void)
 	}
 
 	ret = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad),
-			      NULL, 0);
+			      sd, ARRAY_SIZE(sd));
 	if (ret == -EALREADY) {
 		return true;
 	}
@@ -293,7 +297,7 @@ static struct bt_gatt_cb gatt_callbacks = { .att_mtu_updated = mtu_updated };
  * stop it starting. The correct figure for the ISP2454-LX is Insight SiP's to
  * state - the DK's is NOT it, and must not be copied as if it were.
  */
-static void check_hfxo(void)
+__maybe_unused static void check_hfxo(void)
 {
 	const struct device *hf = DEVICE_DT_GET(DT_NODELABEL(clock));
 	enum clock_control_status st;
@@ -533,7 +537,9 @@ int app_ble_init(void)
 {
 	int ret;
 
+#if defined(CONFIG_APP_BLE_CHECK_HFXO)
 	check_hfxo();
+#endif
 
 	ret = bt_enable(NULL);
 	if (ret) {
