@@ -42,7 +42,17 @@ asks in that message. Everything the driver needs lives in the application overl
 
 ## Next session — TODO, in order
 
-0. **MEASURE THE RANGE PRESETS.** Measurement range became configurable on
+0a. **STAGE 3 IS PLANNED: [docs/plan/people-counting.md](docs/plan/people-counting.md).**
+   The people-counting mode, the calibration flow, a literature scan, a dummy-code
+   implementation sketch, and eight open questions. Section 7 holds the expert
+   review and is the pickup point.
+   **The first item there blocks the rest: measure full-resolution SNR.** Binning
+   4->2 is a quarter the SPADs per zone, so amplitude should fall from 126 to ~32.
+   If that cannot be thresholded, counting runs at 24x20 and the paper's
+   resolution axis is shorter than hoped. One bench session, and it can save a
+   month.
+
+0b. **MEASURE THE RANGE PRESETS.** Measurement range became configurable on
    2026-09-12 (`docs/plan/measurement-range.md`) — the driver had used the LONG
    ranging context unconditionally, which is why nothing resolved close to the
    sensor. The four presets in the web interface carry ESTIMATED exposures.
