@@ -23,9 +23,13 @@ Owner: Victor, Zurich. He designed the hardware.
 - **Every figure carries its source and date.** A number without one does not go in.
 - **`VERIFY` means not confirmed.** Never design against a VERIFY item without saying
   so out loud; never quietly promote one to fact.
-- **Sensor energy dominates.** 150 mW active sensor versus a few mA of MCU. Optimising
-  MCU cycles is nearly pointless; reducing active sensor time is everything. Check any
-  proposed optimisation against this before spending effort on it.
+- **Sensor energy dominates.** **450–800 mW** active sensor versus a few mA of MCU.
+  (UM3683 Table 23, the ambient/outdoor profile at 16 ms — verified 2026-09-11. The
+  **150 mW** figure this file carried until then is ST's *VR headset / precision*
+  profile at 5 ms, which is **not** the one this design uses. Do not reintroduce it;
+  it understates the budget by 3–5×.) Optimising MCU cycles is nearly pointless;
+  reducing active sensor time is everything. Check any proposed optimisation against
+  this before spending effort on it.
 - **Counts leave the device, frames never do.** The privacy claim is architectural and
   free — do not add a raw-frame transmit path.
 - **There is no DK and no ST eval board** — a single custom PCB carries both parts, and

@@ -1,6 +1,10 @@
 # Current State
 Last updated: 2026-09-11
 
+## Read this first
+**[docs/plan/roadmap.md](docs/plan/roadmap.md)** — state, the two mode axes, the
+end-to-end flow, and the demo-versus-paper separation. Written 2026-09-12.
+
 ## Where the project actually is
 **Stage 1 is done. The sensor ranges at full resolution on the custom board.**
 54x42, 2268 zones, confirmed on Victor's bench 2026-09-11 — tag

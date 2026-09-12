@@ -14,8 +14,15 @@ currently look up.
 ## What is genuinely unknown
 
 The VL53L9CX shipped in 2026. It is the first dToF part at this resolution — **2268
-zones, 35× a VL53L8CX** — and its power figure (150 mW typical) is high enough that
-battery operation is not obviously viable at all.
+zones, 35× a VL53L8CX** — and its active power is high enough that battery operation is
+not obviously viable at all.
+
+> **Corrected 2026-09-11.** This said *150 mW typical*. That is ST's **VR headset /
+> precision** profile at 5 ms exposure. The profile this design actually uses —
+> ambient/outdoor, 16 ms — is **450–800 mW**, UM3683 Table 23. The correction makes the
+> premise *stronger*, not weaker: at 3–5× the assumed draw, "is this viable on a battery
+> at all" stops being rhetorical. But every duty-cycle and battery-life figure derived
+> before that date is wrong by the same factor and must be recomputed.
 
 Nobody has published:
 
