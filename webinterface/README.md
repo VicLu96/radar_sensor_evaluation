@@ -63,6 +63,23 @@ stall, so drops are expected and the *drop rate* is what says whether the link
 keeps up. It is counted and displayed rather than papered over — a throughput
 claim nobody can check is not a measurement.
 
+## Recording
+
+The **Recording** panel captures live frames to a file, with the **full
+configuration in the header - including changes made mid-recording**.
+
+- **CSV** (default) opens in anything and documents itself in a `#` comment
+  block: `pd.read_csv(path, comment="#")`
+- **Binary `.wstof`** is ~3x smaller (0.68 against 2.05 MB per minute at 54x42
+  distance-only) and exact. Use it for long runs.
+
+Distances are millimetres and **-1 means no valid measurement** - not zero
+distance. Timestamps are the host's clock at frame completion; the device has no
+clock by design.
+
+Format specification and Python decoders for both:
+[../docs/plan/recording-format.md](../docs/plan/recording-format.md).
+
 ## What is not here yet
 
 Counting mode (phase 7) broadcasts the count in an **advertisement**, and

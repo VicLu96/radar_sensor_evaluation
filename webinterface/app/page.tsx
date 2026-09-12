@@ -17,6 +17,8 @@ import FrameCanvas from '../components/FrameCanvas';
 import ConfigPanel, { FIELD_NAMES } from '../components/ConfigPanel';
 import HealthPanel from '../components/HealthPanel';
 import StatsBar, { type Stats } from '../components/StatsBar';
+import RecordPanel from '../components/RecordPanel';
+import { Recorder } from '../lib/recorder';
 
 const EMPTY_STATS: Stats = {
   fps: 0,
@@ -42,6 +44,7 @@ export default function Page() {
    */
   const frameRef = useRef<Frame | null>(null);
   const nodeRef = useRef<Node | null>(null);
+  const recorderRef = useRef<Recorder>(new Recorder());
 
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,6 +56,9 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
   const [hasFrames, setHasFrames] = useState(true);
+  /* Bumped by the sampling interval so the recording panel's counters
+   * move without frames going through React state. */
+  const [tick, setTick] = useState(0);
 
   /* No `navigator` during SSR — this is the only safe place to look. */
   useEffect(() => setSupported(bluetoothAvailable()), []);
@@ -107,6 +113,7 @@ export default function Page() {
         ambient = n ? Math.round(ambient / n) : 0;
       }
 
+      setTick((t) => t + 1);
       setStats({
         fps,
         kbps,
@@ -131,10 +138,17 @@ export default function Page() {
     const node = new Node({
       onFrame: (f) => {
         frameRef.current = f;
+        recorderRef.current.add(f);
       },
       onHealth: setHealth,
       onEnergy: setEnergy,
-      onConfig: setConfig,
+      onConfig: (c) => {
+        setConfig(c);
+        /* Configuration changes DURING a recording are part of the record.
+         * A file that does not say someone switched mode ninety seconds in is
+         * a picture rather than a measurement. */
+        recorderRef.current.noteConfig(c);
+      },
       onResult: (r) => {
         if (r.status === 0) {
           addLog(r.opcode ? `command ${r.opcode} applied` : 'config applied');
@@ -329,6 +343,12 @@ export default function Page() {
           </div>
 
           <StatsBar s={stats} />
+
+          <RecordPanel
+            recorder={recorderRef.current}
+            config={config}
+            tick={tick}
+          />
 
           <div className="panel">
             <h2>Event log</h2>
