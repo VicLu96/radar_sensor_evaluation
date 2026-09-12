@@ -323,6 +323,51 @@ correct and intended.
 
 ---
 
+## 5b. What the three reviews change — the corrected build order
+
+Written after §7. **Read this before writing code; §4's sketch has known bugs.**
+
+**Three bench sessions gate everything, and none needs people:**
+
+1. **Full-resolution SNR** at binning 2. Decides whether 54×42 is a real point at
+   all. If amplitude is unusable the watch tier gets *better* (binning 6 has ~9×
+   the SPADs), so this changes the design either way.
+2. **Verify the wide-family FoV** at 54×42 / 18×14 / 12×10 with retroreflective
+   markers. 12×10 at binning 8 from a 108×84 array is 13.5×10.5 — non-integer, so
+   the premise may have a hole.
+3. **An overnight empty-room recording.** Sets the false-wake threshold directly,
+   and it is *"the single highest-value first dataset item"*.
+
+**Then, before any detection code:** the `lib/detect` split with no Zephyr
+(CI-enforced by grep), time as a parameter, all state in one opaque struct, and a
+synthetic frame generator. That harness is what makes ten tunables fittable.
+
+**Corrections to §4 that must land in v1:**
+
+| §4 says | change to | why |
+|---|---|---|
+| 3×3 majority despeckle | asymmetric open/close, remove ≤1, fill ≥7 | majority **erases far people**; ≥7 never bridges an abreast gap |
+| 8-connectivity | **4-connectivity**, runtime-switchable | 8-conn **merges diagonally-touching people** |
+| `expected = k / d²` | multiply area by d², **per zone** | integer division collapses the gate; per-zone solves straddling |
+| global foreground threshold | per-zone `max(T_min, k·sigma)` | sigma varies 10× across a corner FoV |
+| constant amplitude minimum | function of range | amplitude falls as 1/r²·cos θ |
+| mean of 16 calibration frames | trimmed mean of 64–128, plus a **spread** map | one walk-through pulls the mean 190 mm |
+| binary 75% reliability | validity **and** spread, both reported | a stable 12/16 zone beats a jittery 16/16 one |
+| `bg[i] - dist[i]` | explicit `(int32_t)` casts | unsigned underflow makes **every excluded zone foreground** |
+| greedy nearest neighbour | gate-then-nearest, merge/split aware | NN cannot represent "one measurement, two tracks" |
+| `struct vl53l9cx_frame` input | raw depth/amplitude planes | saves 18.3 KB and makes replay trivial |
+| background adapts | **frozen**, re-baseline on confident emptiness | a leaky integrator reintroduces the failure this exists to prevent |
+
+**And two structural changes worth adopting now:**
+
+- **The watch tier runs at 18×14, depth-only** — up to 24.6× less transfer, which
+  is 95% of sensor-active time. Must stay in the *wide* family and needs its own
+  calibration.
+- **A 284-byte installer-painted exclusion mask** in the web UI. Kills curtains
+  and windows more reliably than any algorithm.
+
+---
+
 ## 6. Open questions before any code
 
 1. **Full-resolution SNR.** Blocks everything. One bench session.
@@ -347,8 +392,7 @@ correct and intended.
 low-resolution depth data, embedded implementation on Cortex-M, and evaluation
 methodology for the paper. Findings are recorded below as they arrive.*
 
-**STATUS: 2 of 3 returned — the embedded-implementation review is still
-running. This section is the pickup point.**
+**STATUS: all three returned. This section is the pickup point.**
 
 ### 7.1 People detection on low-resolution depth — returned 2026-09-12
 
@@ -804,3 +848,252 @@ include a Datasheet for Datasets.
 *"Steps 1–3 are three bench sessions and they determine whether the headline claim
 is measurable. Everything else is downstream of them."*
 
+### 7.3 Embedded implementation — returned 2026-09-12
+
+This reviewer read the actual linker map rather than estimating.
+
+#### The memory premise was wrong, in our favour
+
+From `build_1/firmware_test/zephyr/zephyr_final.map`:
+
+| symbol | size | note |
+|---|---|---|
+| `.rtt_buff_data` | **32,952 B** | **dev-only.** Zero in a measurement or D3 build |
+| `.bss.frame` (`app_capture.c`) | **18,272 B** | the unpacked frame — **avoidable** |
+| driver raw buffer | 14,920 B | must stay |
+
+**The 60–70 KB ceiling is a dev-build figure. The deployed build has ~95–100 KB
+free.** So: *"when a choice is between smaller and clearer/more robust, take
+clearer every time."*
+
+**Detection RAM: 38.5 KB** — 18.1 KB persistent plus a 20.4 KB arena, with the
+scratch and calibration buffers in **one union** (they never run concurrently).
+Net system effect is **+20 KB**, because deleting the unpacked frame gives back
+18.3 KB.
+
+**Delete `struct vl53l9cx_frame` from the detector path.** Depth and amplitude are
+already contiguous planes inside the driver's `raw[]`. Make the detector's input
+`(const uint16_t *depth_plane, const uint16_t *amp_plane)` — zero copy, 18.3 KB
+saved, and it makes the PC replay harness trivial.
+
+**Every buffer `static`, never on the stack.** `z_main_stack` is 4,096 B; one
+`uint16_t local[2268]` is 4,536 B and blows it instantly, with a hard fault whose
+backtrace points somewhere unrelated. *Same class as the `MAIN_STACK_SIZE` 1024
+overflow in the bring-up notes.*
+
+#### Connected components: run-based, and 4-connectivity
+
+**Run-based two-scan with union-find over runs.** Not because of RAM but because
+per-blob accumulators come out in closed form per run — and `(c0+c1)*L` is always
+even, so the centroid division is exact with no rounding.
+
+**The union-find bound is provable, not a guess:** two run-starts in a row must be
+≥2 apart, so ≤⌈54/2⌉ = 27 runs/row × 42 rows = **1,134 runs**, hard. Size for that
+and the structure *cannot* overflow — 9.1 KB to delete an entire failure class.
+
+> If you cap lower, you **must** define the overflow path: mark the frame
+> `DEGRADED`, do not update tracks, do not update the background. *"A silently
+> truncated label set merges unrelated blobs and the count goes wrong quietly —
+> the worst failure mode this project has."*
+
+**Change to the plan: 4-connectivity, not 8.** §4.2 currently specifies 8.
+**8-connectivity merges diagonally-touching people** — at 4 m two abreast are ~6
+zones each and a single corner contact merges them, dropping the count by one.
+That is precisely the experiment that justifies the sensor. The usual argument for
+8-conn (dropouts inside a person from dark hair) is the *despeckle's* job. Keep it
+runtime-switchable — the overlap test differs by one character — and sweep both.
+
+#### Fixed-point traps, including two that would have shipped
+
+**The signed-subtraction trap — the most likely bug in the pipeline.**
+`bg[i] - dist[i]` on two `uint16_t` works *by accident* (both promote to `int`).
+The moment either becomes `uint32_t`, `0 - 3000` is 4,294,964,296, passes any
+threshold, and **every excluded zone becomes foreground** — a full-frame blob that
+looks exactly like a sensor fault. Write `(int32_t)bg - (int32_t)dist` explicitly.
+The `bg == 0` sentinel for "excluded" then works for free, with no reliability
+bitmap at runtime.
+
+**The size gate is the wrong way round in §4.4.** `expected = k / (d*d)` collapses
+under integer division — at 6 m it evaluates to 1 and the gate has evaporated.
+**Multiply the measured area by d² and compare against a constant**, no division at
+all.
+
+And better: **weight per zone, not per blob** — accumulate `dd*dd` per zone during
+the run scan, where `dd` is that zone's own distance in decimetres. **This solves
+open question §6.6(2)** — a person straddling a steep range gradient is handled by
+construction, and the blob's mean distance disappears from the gate entirely.
+
+**The despeckle as specified destroys the far field** (agreeing with §7.1). A "3×3
+majority" is ≥5 of 9 and erodes ~1 zone all round; a 3-zone-wide person at 8 m
+vanishes. Use an **asymmetric open/close**: remove a foreground zone with ≤1
+foreground neighbour, add one with **≥7 of 8**.
+
+> The ≥7 threshold is deliberate: a true interior hole has 8 foreground neighbours
+> and gets filled; **a 1-zone gap between two people abreast has at most 6 and is
+> never bridged.** Two interpretable tunables, and it protects the abreast case
+> rather than fighting it.
+
+Also: `sum_d²` overflows u32 (2.09 × 10¹¹) — use `max − min` instead; round
+centroids rather than truncating, or every centroid carries a systematic −0.5 zone
+bias; never compute motion where either frame's zone was invalid; express motion as
+a **fraction**, or a near blob always looks more alive than a far one. **No `float`
+anywhere** — one stray float pulls in soft-float and makes host/target
+bit-exactness an open question. Compile with `-Wconversion`.
+
+**Association: gate, then nearest — do not build a weighted-sum cost.** Zones,
+millimetres and areas have wildly different magnitudes, and the weights would be
+three more uninterpretable tunables on top of ten. Every gate should be a physical
+quantity with a unit that can be set by looking at a plot.
+
+#### Background: trimmed mean, spread, and frozen
+
+**Not the mean.** One frame with someone at 2 m against a 5 m background pulls it
+190 mm — most of the margin against a 300 mm threshold. True median needs 72.6 KB
+and does not fit. Keep `sum`, `count`, `min`, `max` per zone and use
+**`(sum − min − max) / (count − 2)`**. Four lines, exact, removes the
+walked-through-frame case.
+
+**`max − min` is a strictly better exclusion criterion than validity fraction, and
+it answers open question §6.6(8).** A zone valid 16/16 whose distance swings
+800 mm (a grazing wall, a glass edge) is **worse** than one valid 12/16 at a stable
+distance — and the 75% rule keeps the bad one and discards the good one. Report
+both in the calibration summary:
+
+> 2,268 zones: 1,932 reliable, 214 excluded for validity, 122 excluded for spread.
+
+Those two numbers say **whether** the mount is wrong *and why* — validity failures
+mean no return at all, spread failures mean grazing incidence.
+
+**Ship v1 with the background frozen.** *"Adding a leaky integrator is adding the
+exact failure mode this project exists to prevent, in exchange for a
+convenience."* Instead, **re-baseline on confident emptiness**: after N consecutive
+watch frames with zero foreground and no live tracks, snapshot wholesale. Handles
+moved furniture in one step, can never absorb a person, and gives one observable
+telemetry event.
+
+Two traps if adaptation is ever built:
+
+- **`bg += (d − bg) >> 8` with `bg` in u16 millimetres never converges** — any
+  residual under 256 mm shifts to zero and the update is a silent no-op. *"You
+  conclude adaptation works because nothing drifts."* Keep the background in **Q8**.
+- **A frame-driven EWMA has a wall-clock constant that depends on the tier** —
+  `shift=8` is 43 minutes at 0.1 Hz but **128 seconds at 2 fps**, so it adapts 20×
+  faster precisely when someone is in the room. **Adapt only on watch-tier frames.**
+- And guard on `fg_raw`, not just tracks: **a person can be foreground without
+  being a track** (TENTATIVE, or too small, or the frame before a track exists), and
+  gating only on tracks leaks every arrival into the background.
+
+#### The wake condition: three tests that must all agree
+
+1. **Spatial coherence, not zone count.** Sunlight scatters; a person is
+   contiguous. Threshold on the **largest component after despeckle**, using the
+   *same* range-normalised metric as the track tier — one tunable, not two.
+2. **The `valid_count` test, which is what actually kills sunlight.** Direct
+   sunlight raises ambient and **loses** zones; a person does not. If `valid_count`
+   falls more than X% below calibration, do not wake — flag `BLINDED`. **This is
+   testable offline today against any existing recording**, since `valid_count` is
+   already in the `.wstof` frame header.
+3. **Persistence with hysteresis.** 2-of-3 at 0.1 Hz is 20–30 s of latency —
+   acceptable for dwell, sluggish for a demo. Use 2-of-3 out of long idle, **1-of-1
+   if the room was occupied within 60 s**.
+
+**On curtains:** coherent, plausible distance, good amplitude — tests 1 and 2 do
+not reject them. What does: the **upper** size bound, and a **static exclusion mask
+the installer paints in the web UI — 2268 bits = 284 bytes.** *"A 284-byte feature
+that eliminates a whole class of false positives, far more reliably than any
+algorithm."*
+
+**Tune for ~1 false wake per hour, not zero.** One costs ~7 s of sensor time ≈
+4–6 J; a handful a day is nothing against a multi-month budget. **This makes an
+overnight empty-room recording the single highest-value first dataset item — and
+it needs no people.**
+
+#### The reframe for the paper: the bus is the sensor's cost, not the laser
+
+> At 400 kHz, transfer is 334 ms against 4–16 ms of integration. **~95% of
+> sensor-active time is handing over the answer, not measuring it.**
+
+*"For high-resolution dToF as a class, the I²C interface, not the optical front
+end, sets the energy floor."* A more general claim than "duty cycling saves
+power", and it is already implied by numbers we have measured.
+
+Three levers, in order:
+
+1. **Depth-only reads.** 4,636 B ≈ 104 ms instead of 14,842 B ≈ 334 ms —
+   **3.2× on the dominant cost**, no resolution change. **VERIFY:** depends on
+   whether the frame read can stop early after the depth plane. *"Probably the
+   highest-value single check on this list."*
+2. **Watch tier at 18×14** — 39 ms vs 334 ms, **8.6×**. Combined with (1):
+   **24.6×**. Two constraints: the watch tier must stay in the **wide** family
+   (24×20 is square/cropped and would invalidate the background), and **calibrate
+   at 18×14 separately** — sensor binning averages SPAD returns, not distances.
+3. **1 MHz** — already on the critical path, 2.5× on both tiers.
+
+**These move the standby/power-down crossover, so re-derive it afterwards.** With
+depth-only 18×14 the 313 ms blob upload becomes **82%** of a watch cycle, and the
+crossover shifts decisively toward keeping standby.
+
+**And the ranking inverts once the bus is fixed:** integration is ~4% of
+sensor-active time today, so tuning exposure is energetically pointless — but at
+1 MHz with depth-only 18×14, transfer falls to ~5 ms and **exposure becomes
+dominant.** *"Design the measurement to capture that inversion; it is a better
+result than either endpoint."*
+
+#### Testability — set this up before the first line of detection code
+
+```
+firmware_test/lib/detect/     <- NO Zephyr. C99. Integers only.
+firmware_test/src/app_detect.c <- Zephyr glue: thread, k_poll, PM, BLE
+host/replay.c                  <- .wstof -> detect_step() -> CSV
+```
+
+The rules that get violated:
+
+- **`lib/detect` includes only `<stdint.h>`, `<stddef.h>`, `<string.h>`. Enforce
+  with one grep in CI.** That is the entire contract.
+- **Time is a parameter, never a call.** Every entry point takes `now_ms`. One
+  `k_uptime_get()` inside the core and replaying last week's recording produces
+  different track states than the device did.
+- **All state in one caller-owned opaque struct.** *"Ten tunables means thousands
+  of runs; reloading a 20 MB recording each time turns a 3-minute sweep into an
+  hour."* It also allows running two configs over the same frames in one process
+  and diffing track streams **frame by frame** — so you learn *which frame* a
+  parameter flipped.
+- **Test bit-exactness, don't assume it.** A device command that hashes the track
+  state after ~8 synthetic frames, compared against the host. *"Catching this once
+  costs an afternoon; discovering it after fitting ten parameters costs a week."*
+- **Build a synthetic frame generator before any real recording exists** — a
+  configurable blob on a known path. Makes CCL, gating, association and lifecycle
+  testable as unit tests with exact expected answers.
+- **Determinism:** break association ties by lowest track id, never scan order;
+  track IDs from a counter in the state struct, never an address or timestamp.
+- **One config struct end to end** — the GATT payload *is* the struct the core
+  takes. Then a fitted parameter set writes to the device verbatim, and the fitted
+  config goes into the recording header.
+
+#### Further energy levers
+
+- **Cap a false wake at one frame, not twenty** — take one track-resolution frame
+  immediately and return to watch if it holds no person-sized blob. ~20 lines, and
+  it lets the watch threshold be set far more sensitively.
+- **Adaptive watch period** — back off 10 → 20 → 40 → 120 s on continued
+  emptiness. Overnight in an office that is ~12× across two-thirds of the day.
+- **Asymmetric tier hysteresis**: exit the track tier after 5–10 s of no *motion*,
+  not "no tracks" — so **a room of seated, still people runs entirely in the watch
+  tier.** That is the design's best case and it should be reachable.
+- **Later: escalate to 54×42 only when two tracks come within N zones**, cutting
+  the track tier ~8× while keeping resolution exactly where it earns its keep.
+  *"Resolution becomes activity-dependent in the same way the rate is."*
+- **What NOT to do:** optimise the detector's arithmetic. Two passes over 2268
+  zones is 50–200 µs. *"The entire detection algorithm could be 100× slower than
+  necessary and not register in the energy budget."*
+
+#### New VERIFY items
+
+- **Can the frame read stop after the depth plane?** Highest-value unknown here.
+- **Power during the 313 ms blob upload** — the VCSEL is not firing, so almost
+  certainly well below 450–800 mW, but unsourced. Sets the standby crossover.
+- **VL53L9CX standby current** — same decision.
+- 18×14 person sizes are scaled from our own table, not measured.
+- Whether software 3×3 binning approximates sensor binning 6, and in which
+  direction the error runs.
