@@ -122,19 +122,35 @@ export interface MeasurementMode {
 
 export const MEASUREMENT_MODES: MeasurementMode[] = [
   {
-    id: 'close',
-    name: 'Close object',
+    id: 'close-fast',
+    name: 'Close · fast',
     band: '5 cm – 50 cm',
     bandMinMm: 50,
     bandMaxMm: 500,
     goodFor:
-      'A hand, a cup, a face right in front of the sensor. Near context with the shortest exposure, because a target this close returns a great deal of light.',
+      'A moving hand right in front of the sensor. 24×20 is ~90 ms per frame against ~334 ms, so roughly 4× the frame rate — which is what makes a gesture watchable rather than a slideshow.',
     watchOut:
-      'If a very close object reads as EMPTY rather than near, exposure is still too high — it is saturating and the zone gets rejected. Drop it to 1 ms.',
+      'If a very close object reads as EMPTY rather than near, exposure is still too high — it is saturating and the zone gets rejected. 1 ms is already the floor, so move the target back instead.',
     range: 1,
     exposureMs: 1,
     switchoverMm: 200,
-    resolution: 4, // 24x20 — ~4x the frame rate of full resolution
+    resolution: 4, // 24x20
+    framePeriodMs: 0,
+  },
+  {
+    id: 'close-detail',
+    name: 'Close · detail',
+    band: '5 cm – 50 cm',
+    bandMinMm: 50,
+    bandMaxMm: 500,
+    goodFor:
+      'The same band at the FULL 54×42 array — 2268 zones on an object 10 cm away. The shape of a hand, fingers separated, the contour of a face. This is the picture worth showing.',
+    watchOut:
+      'Full resolution is ~334 ms per frame, so ~2.5 fps. Hold the object still: anything moving smears. Use Close · fast for gestures and this for detail.',
+    range: 1,
+    exposureMs: 1,
+    switchoverMm: 200,
+    resolution: 5, // 54x42
     framePeriodMs: 0,
   },
   {

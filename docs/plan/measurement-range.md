@@ -77,19 +77,28 @@ are not independent — a near target needs the SHORT context AND a low exposure
 AND enough frame rate to follow a moving hand, and setting one without the
 others gives a worse result than leaving the default alone.
 
-| mode | band it is good at | context | exposure | resolution |
-|---|---|---|---|---|
-| **Close object** | **5 cm – 50 cm** | SHORT | 1 ms | 24×20 |
-| **Desk / gesture** | **10 cm – 1.5 m** | SHORT | 2 ms | 24×20 |
-| **Room detection** | **0.5 m – 4 m** | LONG | 4 ms | 54×42 |
-| **Long range** | **2 m – 9.6 m** | LONG | 16 ms | 54×42 |
+| mode | band it is good at | context | exposure | resolution | ceiling |
+|---|---|---|---|---|---|
+| **Close · fast** | **5 cm – 50 cm** | SHORT | 1 ms | 24×20 | ~11 fps |
+| **Close · detail** | **5 cm – 50 cm** | SHORT | 1 ms | **54×42** | ~3 fps |
+| **Desk / gesture** | **10 cm – 1.5 m** | SHORT | 2 ms | 24×20 | ~11 fps |
+| **Room detection** | **0.5 m – 4 m** | LONG | 4 ms | 54×42 | ~3 fps |
+| **Long range** | **2 m – 9.6 m** | LONG | 16 ms | 54×42 | ~3 fps |
 
-Switchover is 200 / 400 / 650 / 1500 mm respectively.
+Switchover is 200 / 200 / 400 / 650 / 1500 mm respectively.
 
-The near modes drop to **24×20** deliberately: ~90 ms per frame against ~334 ms,
-so roughly 4× the frame rate. A hand moving at normal speed is unwatchable at
-2.5 fps. The crop costs field of view, which matters for the paper's
-energy-versus-zones curve and not at all for a hand 10 cm away.
+**Close range comes in two, and the difference is frame rate against detail.**
+24×20 is ~90 ms per frame against ~334 ms, so roughly 4× faster — which is what
+makes a gesture watchable rather than a slideshow. 54×42 puts **2268 zones on an
+object 10 cm away**: the shape of a hand with fingers separated, the contour of a
+face. That is the picture worth showing, and it needs the object held still.
+
+The crop on the square formats costs field of view, which matters for the paper's
+energy-versus-zones curve and not at all for a hand 10 cm from the sensor.
+
+The frame-rate ceilings are derived from the I²C read and are **upper bounds**:
+exposure, the device's own ranging and the STANDBY round trip sit on top. 24×20
+predicted ~90 ms and measured 120 ms on 2026-09-11.
 
 The band is what each mode is **good at**, not what the sensor can do. The part
 is specified 5 cm to 8.8 m and hard-limited to 9.6 m; no mode extends that, they
@@ -127,9 +136,11 @@ paper's range characterisation, so the work is not only for the demo.
 
 1. **Room preset, hand sweeping at 0.5–2 m.** The default, and the shape people
    recognise: a hand moving across the field of view.
-2. **Switch to Very near, hold a hand 10 cm out.** This is the one that lands —
-   it is visibly a different instrument, and it is the capability that did not
-   exist yesterday.
+2. **Switch to Close · detail, hold a hand 10 cm out.** This is the one that
+   lands: 2268 zones on a hand, fingers separated. Visibly a different
+   instrument, and a capability that did not exist the day before.
+   Then **Close · fast** and wave — the same band at 4× the rate, and the
+   trade between detail and motion becomes obvious without explaining it.
 3. **Switch back to Room without moving the hand.** The near target degrades or
    disappears. That makes the point that range is a *setting*, not a property of
    the sensor, better than any explanation.

@@ -64,6 +64,12 @@ export default function ConfigPanel({
   const frameBytes = res ? res.zones * 2 * nPlanes : 0;
   const i2cMs = res ? Math.round(((res.zones * 6 + res.zones / 2 + 100) * 9) / 400) : 0;
 
+  /* The bus is the frame-rate ceiling at 400 kHz, so derive from it. A frame
+   * period caps it instead whenever that is the slower of the two. */
+  const busFps = i2cMs > 0 ? 1000 / i2cMs : 0;
+  const maxFps =
+    draft.framePeriodMs > 0 ? Math.min(busFps, 1000 / draft.framePeriodMs) : busFps;
+
   const dirty = JSON.stringify(draft) !== JSON.stringify(config);
   const active = modeFor(draft);
 
@@ -117,32 +123,82 @@ export default function ConfigPanel({
         </p>
       )}
 
-      <details style={{ marginBottom: 10 }}>
-        <summary className="note" style={{ cursor: 'pointer' }}>
-          What a mode actually sets
-        </summary>
-        <table className="bits" style={{ marginTop: 8 }}>
-          <tbody>
-            {MEASUREMENT_MODES.map((m) => (
-              <tr key={m.id} className={active?.id === m.id ? 'set' : ''}>
-                <td>
-                  {m.name}
-                  <br />
-                  <span style={{ opacity: 0.6 }}>{m.band}</span>
-                </td>
-                <td>
-                  {m.range === RANGE.near ? 'near' : 'far'} &middot;{' '}
-                  {m.exposureMs} ms &middot; {RESOLUTIONS[m.resolution]?.label}
-                  <br />
-                  <span style={{ opacity: 0.6 }}>
-                    switchover {m.switchoverMm} mm
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </details>
+      {/*
+        * WHAT THE SELECTED MODE APPLIES, always visible.
+        *
+        * This was behind a <details> and Victor asked for it on the face, which
+        * is right: a mode called "Close object" that silently changes exposure,
+        * resolution AND frame rate is a black box, and a black box is the wrong
+        * thing to put in front of an audience. It tracks the DRAFT, so editing
+        * any field below updates it immediately.
+        */}
+      <div className="settings">
+        <div className="kv">
+          <span className="k">Ranging context</span>
+          <span className="v">
+            {draft.rangeMode === RANGE.near ? 'near (SHORT)' : 'far (LONG)'}
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Exposure</span>
+          <span className="v">{draft.exposureMs} ms</span>
+        </div>
+        <div className="kv">
+          <span className="k">Resolution</span>
+          <span className="v">
+            {res?.label} &middot; {res?.zones} zones
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Switchover</span>
+          <span className="v">
+            {draft.switchoverMm === 0 ? 'device default' : `${draft.switchoverMm} mm`}
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Frame period</span>
+          <span className="v">
+            {draft.framePeriodMs === 0 ? 'free-running' : `${draft.framePeriodMs} ms`}
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Frame rate ceiling</span>
+          <span className="v">
+            {maxFps.toFixed(1)} fps
+            <span className="sub"> &middot; I&sup2;C {i2cMs} ms</span>
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Per frame on the link</span>
+          <span className="v">
+            {frameBytes.toLocaleString()} B
+            <span className="sub">
+              {' '}&middot; {nPlanes} plane{nPlanes === 1 ? '' : 's'}
+            </span>
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Heatmap scale</span>
+          <span className="v">
+            0 &ndash; {((active?.bandMaxMm ?? 4000) / 10).toFixed(0)} cm
+          </span>
+        </div>
+      </div>
+
+      <p className="note">
+        The frame-rate figure is an <strong>upper bound set by the I&sup2;C
+        read</strong>, not a measurement &mdash; at 400 kHz the bus is the
+        ceiling, not BLE. Exposure, the device&rsquo;s own ranging and the
+        STANDBY round trip sit on top, so the measured rate is lower: 24&times;20
+        predicted ~90&nbsp;ms and measured 120&nbsp;ms.
+      </p>
+
+      <h2 style={{ marginTop: 18 }}>Adjust</h2>
+      <p className="note" style={{ marginTop: 0, marginBottom: 10 }}>
+        Every field below is independent. Changing one leaves the mode buttons
+        unhighlighted and the readout says <em>custom</em> &mdash; that is not an
+        error, it just means you are off a known working point.
+      </p>
 
       <label className="field">
         Ranging context

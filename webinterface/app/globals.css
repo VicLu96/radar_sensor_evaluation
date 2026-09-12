@@ -259,3 +259,24 @@ button.mode.on {
 button.mode.on .mode-band { color: #06121f; opacity: 0.75; }
 
 details summary::marker { color: var(--dim); }
+
+/* --- what the selected mode applies -------------------------------------- */
+.settings {
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: 4px 10px;
+  margin: 10px 0;
+}
+.settings .kv {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.settings .kv:last-child { border-bottom: none; }
+.settings .k { color: var(--dim); }
+.settings .v { font-family: var(--mono); text-align: right; color: var(--text); }
+.settings .v .sub { color: var(--dim); }
