@@ -598,6 +598,15 @@ static bool last_status_was_laser_fault;
  */
 static uint16_t exposure_ms = CONFIG_VL53L9CX_EXPOSURE_MS;
 
+/*
+ * Which ranging context, and where it switches over. Live rather than fixed,
+ * because measurement range is something the web interface sets and the demo
+ * changes between targets - see enum vl53l9cx_range_mode in the public header
+ * for what the context actually does.
+ */
+static vl53l9_context_t range_context = VL53L9_CONTEXT_LONG;
+static uint16_t range_switchover_mm = CONFIG_VL53L9CX_SWITCHOVER_MM;
+
 static void log_device_status(const struct device *dev)
 {
 	vl53l9_status_t st;
@@ -1248,12 +1257,12 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 		return -ENOMEM;
 	}
 
-	ret = vl53l9_set_context((void *)dev, VL53L9_CONTEXT_LONG);
+	ret = vl53l9_set_context((void *)dev, range_context);
 	if (ret != VL53L9_ERROR_NONE) {
 		return -EIO;
 	}
 
-	ret = vl53l9_set_binning((void *)dev, VL53L9_CONTEXT_LONG, g->binning);
+	ret = vl53l9_set_binning((void *)dev, range_context, g->binning);
 	if (ret != VL53L9_ERROR_NONE) {
 		LOG_ERR("set_binning(%u) failed (%d) — note it requires the "
 			"device to be in STANDBY", g->binning, ret);
@@ -1296,12 +1305,12 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 			"the 2026-09-10 working configuration");
 	} else {
 		int pret = vl53l9_write16((void *)dev,
-			VL53L9_REGADDR_STREAM_SWITCHOVER_DIST(VL53L9_CONTEXT_LONG),
-			650U);
+			VL53L9_REGADDR_STREAM_SWITCHOVER_DIST(range_context),
+			range_switchover_mm);
 
 		if (pret == VL53L9_ERROR_NONE) {
 			pret = vl53l9_write8((void *)dev,
-				VL53L9_REGADDR_STREAM_RTN_SHORT_OFFSET(VL53L9_CONTEXT_LONG),
+				VL53L9_REGADDR_STREAM_RTN_SHORT_OFFSET(range_context),
 				2U);
 		}
 		if (pret != VL53L9_ERROR_NONE) {
@@ -1320,7 +1329,7 @@ static int apply_resolution(const struct device *dev, enum vl53l9cx_res res)
 			"almost no signal.");
 		ret = VL53L9_ERROR_NONE;
 	} else {
-		ret = vl53l9_set_exposure((void *)dev, VL53L9_CONTEXT_LONG,
+		ret = vl53l9_set_exposure((void *)dev, range_context,
 					  exposure_ms);
 	}
 	if (ret != VL53L9_ERROR_NONE) {
@@ -1741,6 +1750,47 @@ int vl53l9cx_retry_boot(const struct device *dev)
 
 	k_mutex_unlock(&data->lock);
 	return ret;
+}
+
+int vl53l9cx_set_range_mode(const struct device *dev,
+			    enum vl53l9cx_range_mode mode,
+			    uint16_t switchover_mm)
+{
+	struct vl53l9cx_data *data = dev->data;
+
+	if (mode != VL53L9CX_RANGE_NEAR && mode != VL53L9CX_RANGE_FAR) {
+		return -EINVAL;
+	}
+	/* The device cannot range past 9.6 m at all - UM3683 2.6.1 fixes the
+	 * ranging period at 64 ns - so a switchover beyond that is a typo
+	 * rather than a setting.
+	 */
+	if (switchover_mm != 0U && (switchover_mm < 100U || switchover_mm > 9600U)) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&data->lock, K_FOREVER);
+	range_context = (mode == VL53L9CX_RANGE_NEAR) ? VL53L9_CONTEXT_SHORT
+						      : VL53L9_CONTEXT_LONG;
+	if (switchover_mm != 0U) {
+		range_switchover_mm = switchover_mm;
+	}
+	/* STANDBY-only registers: force apply_resolution() to rewrite them. */
+	data->binning = 0;
+	k_mutex_unlock(&data->lock);
+
+	LOG_INF("range mode -> %s context, switchover %u mm - takes effect on "
+		"the next capture",
+		mode == VL53L9CX_RANGE_NEAR ? "SHORT (near)" : "LONG (far)",
+		range_switchover_mm);
+	return 0;
+}
+
+enum vl53l9cx_range_mode vl53l9cx_range_mode(const struct device *dev)
+{
+	ARG_UNUSED(dev);
+	return (range_context == VL53L9_CONTEXT_SHORT) ? VL53L9CX_RANGE_NEAR
+						       : VL53L9CX_RANGE_FAR;
 }
 
 int vl53l9cx_set_exposure_ms(const struct device *dev, uint16_t ms)

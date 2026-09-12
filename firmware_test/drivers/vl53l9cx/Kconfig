@@ -114,6 +114,24 @@ config VL53L9CX_WRITE_DSS_LUT
 	  are enabled - and "SPAD supply overload" is one of the device's error
 	  bits. Turn OFF to bisect.
 
+config VL53L9CX_SWITCHOVER_MM
+	int "STREAM_SWITCHOVER_DIST, millimetres"
+	default 650
+	range 100 9600
+	help
+	  Where the selected ranging context hands over between its short and
+	  long distance paths. UM3683 2.5.5.1 uses 650 for the six-step ambient
+	  profile; the register resets to 500, and ST's own driver does not write
+	  it at all.
+
+	  Only the boot default - the web interface sets it at runtime through
+	  vl53l9cx_set_range_mode(), because measurement range is something a
+	  demo changes between targets.
+
+	  The upper bound is not arbitrary: UM3683 2.6.1 fixes the ranging period
+	  at 64 ns, which is 9.6 m, and the device cannot range beyond that at
+	  all.
+
 config VL53L9CX_EXPOSURE_MS
 	int "Exposure time per frame, milliseconds"
 	default 4

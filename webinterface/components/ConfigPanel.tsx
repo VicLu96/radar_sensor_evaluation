@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RESOLUTIONS, PLANE, MODE, type Config } from '../lib/protocol';
+import {
+  RESOLUTIONS,
+  PLANE,
+  MODE,
+  RANGE,
+  RANGE_PRESETS,
+  type Config,
+} from '../lib/protocol';
 
 /**
  * Tier 1 of the configuration surface: the tuning loop.
@@ -17,7 +24,7 @@ import { RESOLUTIONS, PLANE, MODE, type Config } from '../lib/protocol';
  * Result notification says which field was at fault.
  */
 
-const FIELD_NAMES = ['', 'resolution', 'planes', 'exposure', 'mode'];
+const FIELD_NAMES = ['', 'resolution', 'planes', 'exposure', 'mode', 'range mode', 'switchover'];
 
 export default function ConfigPanel({
   config,
@@ -61,6 +68,68 @@ export default function ConfigPanel({
   return (
     <div className="panel">
       <h2>Configuration</h2>
+
+      <div className="field">
+        Measurement range
+        <div className="row">
+          {RANGE_PRESETS.map((p) => {
+            const active =
+              draft.rangeMode === p.range &&
+              draft.exposureMs === p.exposureMs &&
+              draft.switchoverMm === p.switchoverMm;
+            return (
+              <button
+                key={p.label}
+                className={active ? 'primary' : ''}
+                title={p.hint}
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    rangeMode: p.range,
+                    exposureMs: p.exposureMs,
+                    switchoverMm: p.switchoverMm,
+                  })
+                }
+              >
+                {p.label.split(' — ')[0]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <p className="note">
+        {RANGE_PRESETS.find(
+          (p) =>
+            draft.rangeMode === p.range &&
+            draft.exposureMs === p.exposureMs &&
+            draft.switchoverMm === p.switchoverMm,
+        )?.hint ??
+          'Custom — range context, exposure and switchover set independently below.'}
+      </p>
+
+      <label className="field">
+        Ranging context
+        <select
+          value={draft.rangeMode}
+          onChange={(e) => set('rangeMode', Number(e.target.value))}
+        >
+          <option value={RANGE.far}>far — LONG context (default)</option>
+          <option value={RANGE.near}>near — SHORT context (ST precision)</option>
+        </select>
+      </label>
+
+      <label className="field">
+        Switchover distance (mm) &mdash; 0 leaves the device&rsquo;s value
+        <input
+          type="number"
+          min={0}
+          max={9600}
+          step={50}
+          value={draft.switchoverMm}
+          onChange={(e) => set('switchoverMm', Number(e.target.value))}
+        />
+      </label>
 
       <label className="field">
         Resolution
@@ -149,6 +218,20 @@ export default function ConfigPanel({
         Applying stops ranging, waits for STANDBY, writes, and restarts. Amplitude
         and ambient cost bus time but no extra exposure &mdash; they are already
         measured, just not transmitted.
+      </p>
+
+      <p className="note">
+        <strong>Range is not only the context.</strong> Exposure matters as much
+        close up, and in the opposite direction: a near target returns a lot of
+        light, and too much exposure saturates the histogram so the zone is{' '}
+        <em>rejected</em> rather than reported near. If the valid-zone count
+        drops when you move something closer, lower the exposure before
+        anything else &mdash; the amplitude split below says which way to go.
+      </p>
+      <p className="note">
+        <strong>9.6 m is a hard ceiling</strong>, not a guideline. UM3683 fixes
+        the ranging period at 64 ns and the device cannot see past it at any
+        setting.
       </p>
     </div>
   );

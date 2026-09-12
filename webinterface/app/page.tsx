@@ -5,6 +5,7 @@ import { Node, bluetoothAvailable } from '../lib/ble';
 import {
   MODE,
   OPCODE,
+  RANGE,
   RESOLUTIONS,
   type Config,
   type Energy,
@@ -200,6 +201,22 @@ export default function Page() {
     [addLog],
   );
 
+  /*
+   * The heatmap's colour scale follows the selected range.
+   *
+   * It was fixed at 0-4 m, which makes a near-range demo look almost flat: a
+   * hand at 20 cm and a desk at 60 cm land in the same 10% of the ramp. The
+   * scale has to follow the measurement, or the picture understates exactly the
+   * thing being demonstrated.
+   */
+  const rangeMm = (() => {
+    if (!config) return { min: 0, max: 4000 };
+    if (config.rangeMode === RANGE.near) {
+      return { min: 0, max: config.switchoverMm > 0 ? config.switchoverMm * 3 : 1500 };
+    }
+    return { min: 0, max: config.switchoverMm >= 1500 ? 9600 : 4000 };
+  })();
+
   const streaming = config?.mode === MODE.streaming;
   const res = config ? RESOLUTIONS[config.resolution] : null;
 
@@ -295,12 +312,14 @@ export default function Page() {
               </button>
               {res && (
                 <span className="pill" style={{ marginLeft: 'auto' }}>
-                  {res.label} &middot; {res.zones} zones
+                  {res.label} &middot; {res.zones} zones &middot;{' '}
+                  {config?.rangeMode === RANGE.near ? 'NEAR' : 'far'} &middot;{' '}
+                  {config?.exposureMs} ms
                 </span>
               )}
             </div>
 
-            <FrameCanvas frameRef={frameRef} rangeMm={{ min: 0, max: 4000 }} />
+            <FrameCanvas frameRef={frameRef} rangeMm={rangeMm} />
           </div>
 
           <StatsBar s={stats} />

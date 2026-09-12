@@ -62,6 +62,8 @@ static struct app_config cfg = {
 	.adv_interval_ms = 1000,
 	.mode = APP_MODE_IDLE,
 	.flags = 0,
+	.range_mode = VL53L9CX_RANGE_FAR,
+	.switchover_mm = CONFIG_VL53L9CX_SWITCHOVER_MM,
 };
 
 const struct app_config *app_ble_config(void)
@@ -214,6 +216,20 @@ static ssize_t write_config(struct bt_conn *conn, const struct bt_gatt_attr *att
 		app_svc_config_notify_result(APP_CMD_NONE, -EINVAL, 4);
 		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
 	}
+	if (in.range_mode > VL53L9CX_RANGE_NEAR) {
+		app_svc_config_notify_result(APP_CMD_NONE, -EINVAL, 5);
+		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+	}
+	/*
+	 * 9600 mm is not a style choice: UM3683 2.6.1 fixes the ranging period
+	 * at 64 ns, so the device cannot range past 9.6 m at all and a larger
+	 * switchover is a typo rather than a setting.
+	 */
+	if (in.switchover_mm != 0U &&
+	    (in.switchover_mm < 100U || in.switchover_mm > 9600U)) {
+		app_svc_config_notify_result(APP_CMD_NONE, -EINVAL, 6);
+		return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+	}
 
 	/*
 	 * Exposure goes through the driver, which invalidates its resolution
@@ -231,6 +247,20 @@ static ssize_t write_config(struct bt_conn *conn, const struct bt_gatt_attr *att
 		}
 	}
 
+	if (in.range_mode != cfg.range_mode ||
+	    in.switchover_mm != cfg.switchover_mm) {
+		ret = vl53l9cx_set_range_mode(
+			tof, (enum vl53l9cx_range_mode)in.range_mode,
+			in.switchover_mm);
+		if (ret) {
+			LOG_ERR("set range mode failed (%d)", ret);
+			app_svc_config_notify_result(APP_CMD_NONE, (int16_t)ret, 5);
+			return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+		}
+	}
+
+	cfg.range_mode = in.range_mode;
+	cfg.switchover_mm = in.switchover_mm;
 	cfg.resolution = in.resolution;
 	cfg.planes = in.planes;
 	cfg.instance_id = in.instance_id;
@@ -240,9 +270,11 @@ static ssize_t write_config(struct bt_conn *conn, const struct bt_gatt_attr *att
 	cfg.mode = in.mode;
 
 	LOG_INF("config applied: res %u, planes 0x%02x, exposure %u ms, "
-		"period %u ms, mode %s",
+		"period %u ms, range %s @ %u mm, mode %s",
 		cfg.resolution, cfg.planes, cfg.exposure_ms,
 		cfg.frame_period_ms,
+		cfg.range_mode == VL53L9CX_RANGE_NEAR ? "NEAR" : "far",
+		cfg.switchover_mm,
 		cfg.mode == APP_MODE_STREAMING ? "STREAMING" : "idle");
 
 	app_stream_kick();

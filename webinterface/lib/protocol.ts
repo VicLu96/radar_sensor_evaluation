@@ -66,6 +66,73 @@ export const PLANE = {
 
 export const MODE = { idle: 0, streaming: 1 } as const;
 
+/**
+ * Measurement range: which ranging CONTEXT the device uses.
+ *
+ * Not a filter on the output. The context changes the analogue front end's
+ * distance scaling and its calibration offsets, so it decides how well close
+ * targets resolve at all. The driver used FAR unconditionally until 2026-09-12,
+ * which is why nothing measured close despite the part being specified from
+ * 5 cm.
+ *
+ * ST's own profiles split the same way: their precision and autofocus profiles
+ * use the near context, their two range profiles use far.
+ *
+ * RANGE IS NOT ONLY THIS. Exposure matters as much at close distance and in the
+ * opposite direction: a near target returns a lot of light, and too much
+ * exposure saturates the histogram so the zone is REJECTED rather than reported
+ * near. Expect to lower exposure when selecting NEAR.
+ */
+export const RANGE = { far: 0, near: 1 } as const;
+
+/**
+ * Presets, so a demo is one click rather than three fields.
+ *
+ * Exposure values are starting points, not measurements. The honest way to use
+ * them is to pick one, then watch the amplitude split and the valid-zone
+ * percentage and adjust: invalid zones BRIGHTER than valid ones means
+ * saturation and exposure must come down; near-zero amplitude in the invalid
+ * zones means the opposite.
+ */
+export interface RangePreset {
+  label: string;
+  hint: string;
+  range: number;
+  exposureMs: number;
+  switchoverMm: number;
+}
+
+export const RANGE_PRESETS: RangePreset[] = [
+  {
+    label: 'Very near — 5 cm to ~50 cm',
+    hint: 'A hand in front of the sensor. Near context, minimum exposure, because a target this close saturates easily.',
+    range: RANGE.near,
+    exposureMs: 1,
+    switchoverMm: 200,
+  },
+  {
+    label: 'Near — 10 cm to ~1.5 m',
+    hint: 'Desk distance. ST use this context for their precision profiles.',
+    range: RANGE.near,
+    exposureMs: 2,
+    switchoverMm: 400,
+  },
+  {
+    label: 'Room — 0.5 m to ~4 m',
+    hint: 'The default, and what every capture before 2026-09-12 used.',
+    range: RANGE.far,
+    exposureMs: 4,
+    switchoverMm: 650,
+  },
+  {
+    label: 'Far — 2 m to 9.6 m',
+    hint: 'Long exposure for a weak return. 9.6 m is a hard ceiling: UM3683 fixes the ranging period at 64 ns and the device cannot see past it.',
+    range: RANGE.far,
+    exposureMs: 16,
+    switchoverMm: 1500,
+  },
+];
+
 export const OPCODE = {
   none: 0,
   start: 1,
@@ -88,6 +155,10 @@ export interface Config {
   advIntervalMs: number;
   mode: number;
   flags: number;
+  /** enum vl53l9cx_range_mode: 0 far (LONG context), 1 near (SHORT). */
+  rangeMode: number;
+  /** STREAM_SWITCHOVER_DIST in mm; 0 leaves the device's value alone. */
+  switchoverMm: number;
 }
 
 export function decodeConfig(dv: DataView): Config {
@@ -101,6 +172,8 @@ export function decodeConfig(dv: DataView): Config {
     advIntervalMs: dv.getUint16(8, true),
     mode: dv.getUint8(10),
     flags: dv.getUint8(11),
+    rangeMode: dv.getUint8(12),
+    switchoverMm: dv.getUint16(14, true),
   };
 }
 
@@ -116,7 +189,9 @@ export function encodeConfig(c: Config): ArrayBuffer {
   dv.setUint16(8, c.advIntervalMs, true);
   dv.setUint8(10, c.mode);
   dv.setUint8(11, c.flags);
-  /* bytes 12-15 reserved, left zero */
+  dv.setUint8(12, c.rangeMode);
+  /* byte 13 reserved */
+  dv.setUint16(14, c.switchoverMm, true);
   return buf;
 }
 

@@ -231,6 +231,55 @@ int vl53l9cx_retry_boot(const struct device *dev);
  * Exposure is also the most direct energy term on the device, so a frame whose
  * exposure is unknown is not a usable measurement.
  */
+/*
+ * Measurement range.
+ *
+ * The device has two ranging CONTEXTS, and which one is selected decides how
+ * well it sees close targets. They are not a filter on the output - they change
+ * the analogue front end's distance scaling and its calibration offsets:
+ *
+ *                      CAL_PROG_OFFSET_1TO5  _6     CAB short scale
+ *   SHORT (near)                         1    5                 256
+ *   LONG  (far)                         -8   -1                 683
+ *
+ * (st/vl53l9.c:428-443, vl53l9_set_context.)
+ *
+ * THE DRIVER USED LONG UNCONDITIONALLY until 2026-09-12, which is why close
+ * targets did not measure despite the part being specified from 5 cm. ST's own
+ * profiles pick per use case: their two "precision" and autofocus profiles use
+ * SHORT, their two "range" profiles use LONG (st-reference/vl53l9_utils.c:29).
+ *
+ * RANGE IS NOT ONLY THE CONTEXT. Exposure matters as much at close distance and
+ * in the opposite direction: a near target returns a great deal of light, and
+ * too much exposure saturates the histogram so the zone is REJECTED rather than
+ * reported near. That was already observed at ~1 m on 2026-09-11, where the
+ * invalid zones came back brighter than the valid ones. Expect to lower
+ * exposure as well as selecting NEAR.
+ */
+enum vl53l9cx_range_mode {
+	VL53L9CX_RANGE_FAR = 0,  /* LONG context. The default, and what every
+				  * capture before 2026-09-12 used. */
+	VL53L9CX_RANGE_NEAR = 1, /* SHORT context, ST's precision profiles. */
+};
+
+/**
+ * @brief Select the ranging context, and optionally the switchover distance.
+ *
+ * @param mode           near or far, see enum vl53l9cx_range_mode
+ * @param switchover_mm  STREAM_SWITCHOVER_DIST for that context, or 0 to leave
+ *                       the driver's compiled-in value alone. UM3683 2.5.5.1
+ *                       uses 650 mm; the register resets to 500.
+ *
+ * Both are STANDBY-only registers, so this invalidates the resolution cache and
+ * takes effect on the NEXT capture rather than the one in flight.
+ */
+int vl53l9cx_set_range_mode(const struct device *dev,
+			    enum vl53l9cx_range_mode mode,
+			    uint16_t switchover_mm);
+
+/** The range mode in use. */
+enum vl53l9cx_range_mode vl53l9cx_range_mode(const struct device *dev);
+
 /**
  * @brief Set the exposure for subsequent captures, in milliseconds.
  *

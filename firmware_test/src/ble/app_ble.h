@@ -48,7 +48,16 @@ struct __packed app_config {
 	uint16_t adv_interval_ms;
 	uint8_t  mode;            /* enum app_mode */
 	uint8_t  flags;
-	uint32_t reserved;
+	/*
+	 * MEASUREMENT RANGE, carved out of what was a reserved uint32 on
+	 * 2026-09-12. The struct is still 16 bytes and the protocol version is
+	 * unchanged, deliberately: an older client sends zeros here, and zero
+	 * means FAR plus "leave the switchover alone", which is exactly what
+	 * every build before this did. Nothing silently changes behaviour.
+	 */
+	uint8_t  range_mode;      /* enum vl53l9cx_range_mode: 0 far, 1 near */
+	uint8_t  reserved0;
+	uint16_t switchover_mm;   /* 0 = leave the driver's value alone */
 };
 BUILD_ASSERT(sizeof(struct app_config) == 16, "config is a 16-byte wire format");
 

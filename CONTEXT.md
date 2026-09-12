@@ -37,6 +37,16 @@ asks in that message. Everything the driver needs lives in the application overl
   everything in silence.
 
 ## Next session — TODO, in order
+
+0. **MEASURE THE RANGE PRESETS.** Measurement range became configurable on
+   2026-09-12 (`docs/plan/measurement-range.md`) — the driver had used the LONG
+   ranging context unconditionally, which is why nothing resolved close to the
+   sensor. The four presets in the web interface carry ESTIMATED exposures.
+   Half an hour with a white card at three distances per preset turns them into
+   settings that work, and produces the first real range data for the paper.
+   Watch for the close-range trap: too much exposure SATURATES a near target and
+   the zone is reported as no-target, which looks exactly like nothing being
+   there.
 1. **Capture a full-resolution log and record the numbers.** Nothing from 54x42 is
    written down yet. The one that matters: **per-zone amplitude at binning 2 against
    the 126 measured at 24x20**. Binning 4 -> 2 is a quarter as many SPADs per zone, so
