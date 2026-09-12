@@ -7,6 +7,7 @@ import {
   OPCODE,
   RANGE,
   RESOLUTIONS,
+  modeFor,
   type Config,
   type Energy,
   type Frame,
@@ -202,20 +203,20 @@ export default function Page() {
   );
 
   /*
-   * The heatmap's colour scale follows the selected range.
+   * The heatmap's colour scale follows the SELECTED MODE'S BAND.
    *
-   * It was fixed at 0-4 m, which makes a near-range demo look almost flat: a
+   * It was fixed at 0-4 m, which makes a close-object demo look almost flat: a
    * hand at 20 cm and a desk at 60 cm land in the same 10% of the ramp. The
    * scale has to follow the measurement, or the picture understates exactly the
-   * thing being demonstrated.
+   * thing being demonstrated. A hand-edited configuration falls back to a
+   * sensible default for its context.
    */
-  const rangeMm = (() => {
-    if (!config) return { min: 0, max: 4000 };
-    if (config.rangeMode === RANGE.near) {
-      return { min: 0, max: config.switchoverMm > 0 ? config.switchoverMm * 3 : 1500 };
-    }
-    return { min: 0, max: config.switchoverMm >= 1500 ? 9600 : 4000 };
-  })();
+  const mode = config ? modeFor(config) : null;
+  const rangeMm = mode
+    ? { min: 0, max: mode.bandMaxMm }
+    : config?.rangeMode === RANGE.near
+      ? { min: 0, max: 1500 }
+      : { min: 0, max: 4000 };
 
   const streaming = config?.mode === MODE.streaming;
   const res = config ? RESOLUTIONS[config.resolution] : null;
@@ -310,11 +311,16 @@ export default function Page() {
               >
                 Reboot sensor
               </button>
-              {res && (
+              {config && (
                 <span className="pill" style={{ marginLeft: 'auto' }}>
-                  {res.label} &middot; {res.zones} zones &middot;{' '}
-                  {config?.rangeMode === RANGE.near ? 'NEAR' : 'far'} &middot;{' '}
-                  {config?.exposureMs} ms
+                  {mode ? (
+                    <>
+                      <strong>{mode.name}</strong> &middot; {mode.band}
+                    </>
+                  ) : (
+                    <>custom</>
+                  )}
+                  &nbsp;&middot; {res?.label} &middot; {config.exposureMs} ms
                 </span>
               )}
             </div>

@@ -69,12 +69,35 @@ follows the selected range** — it was fixed at 0–4 m, which makes a near-ran
 demo look almost flat, with a hand at 20 cm and a desk at 60 cm landing in the
 same 10% of the ramp.
 
-| preset | context | exposure | switchover |
-|---|---|---|---|
-| Very near — 5 cm to ~50 cm | SHORT | 1 ms | 200 mm |
-| Near — 10 cm to ~1.5 m | SHORT | 2 ms | 400 mm |
-| Room — 0.5 m to ~4 m | LONG | 4 ms | 650 mm |
-| Far — 2 m to 9.6 m | LONG | 16 ms | 1500 mm |
+### The four modes
+
+A **mode is a whole working point**, not a range setting: context, exposure,
+switchover, resolution and frame period together. They are bundled because they
+are not independent — a near target needs the SHORT context AND a low exposure
+AND enough frame rate to follow a moving hand, and setting one without the
+others gives a worse result than leaving the default alone.
+
+| mode | band it is good at | context | exposure | resolution |
+|---|---|---|---|---|
+| **Close object** | **5 cm – 50 cm** | SHORT | 1 ms | 24×20 |
+| **Desk / gesture** | **10 cm – 1.5 m** | SHORT | 2 ms | 24×20 |
+| **Room detection** | **0.5 m – 4 m** | LONG | 4 ms | 54×42 |
+| **Long range** | **2 m – 9.6 m** | LONG | 16 ms | 54×42 |
+
+Switchover is 200 / 400 / 650 / 1500 mm respectively.
+
+The near modes drop to **24×20** deliberately: ~90 ms per frame against ~334 ms,
+so roughly 4× the frame rate. A hand moving at normal speed is unwatchable at
+2.5 fps. The crop costs field of view, which matters for the paper's
+energy-versus-zones curve and not at all for a hand 10 cm away.
+
+The band is what each mode is **good at**, not what the sensor can do. The part
+is specified 5 cm to 8.8 m and hard-limited to 9.6 m; no mode extends that, they
+trade where inside it the measurement is accurate.
+
+Each mode carries a **watch-out** shown in the UI. The one that matters most is
+on Close object: *if a very close object reads as EMPTY rather than near,
+exposure is still too high — it is saturating and the zone gets rejected.*
 
 **The exposure figures are starting points, not measurements.** Nothing in this
 repo has yet measured the valid-zone count against distance for either context.

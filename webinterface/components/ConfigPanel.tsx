@@ -6,7 +6,8 @@ import {
   PLANE,
   MODE,
   RANGE,
-  RANGE_PRESETS,
+  MEASUREMENT_MODES,
+  modeFor,
   type Config,
 } from '../lib/protocol';
 
@@ -64,49 +65,84 @@ export default function ConfigPanel({
   const i2cMs = res ? Math.round(((res.zones * 6 + res.zones / 2 + 100) * 9) / 400) : 0;
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(config);
+  const active = modeFor(draft);
 
   return (
     <div className="panel">
       <h2>Configuration</h2>
 
       <div className="field">
-        Measurement range
-        <div className="row">
-          {RANGE_PRESETS.map((p) => {
-            const active =
-              draft.rangeMode === p.range &&
-              draft.exposureMs === p.exposureMs &&
-              draft.switchoverMm === p.switchoverMm;
+        Measurement mode
+        <div className="modes">
+          {MEASUREMENT_MODES.map((m) => {
+            const on = active?.id === m.id;
             return (
               <button
-                key={p.label}
-                className={active ? 'primary' : ''}
-                title={p.hint}
+                key={m.id}
+                className={`mode ${on ? 'on' : ''}`}
                 onClick={() =>
                   setDraft({
                     ...draft,
-                    rangeMode: p.range,
-                    exposureMs: p.exposureMs,
-                    switchoverMm: p.switchoverMm,
+                    rangeMode: m.range,
+                    exposureMs: m.exposureMs,
+                    switchoverMm: m.switchoverMm,
+                    resolution: m.resolution,
+                    framePeriodMs: m.framePeriodMs,
                   })
                 }
               >
-                {p.label.split(' — ')[0]}
+                <span className="mode-name">{m.name}</span>
+                <span className="mode-band">{m.band}</span>
               </button>
             );
           })}
         </div>
       </div>
 
-      <p className="note">
-        {RANGE_PRESETS.find(
-          (p) =>
-            draft.rangeMode === p.range &&
-            draft.exposureMs === p.exposureMs &&
-            draft.switchoverMm === p.switchoverMm,
-        )?.hint ??
-          'Custom — range context, exposure and switchover set independently below.'}
-      </p>
+      {active ? (
+        <>
+          <p className="note">
+            <strong>{active.name}</strong> &middot; {active.band} &mdash;{' '}
+            {active.goodFor}
+          </p>
+          <p className="note">
+            <strong>Watch out:</strong> {active.watchOut}
+          </p>
+        </>
+      ) : (
+        <p className="note">
+          <strong>Custom.</strong> The fields below have been set individually
+          and no longer match a mode. Pick a mode above to go back to a known
+          working point.
+        </p>
+      )}
+
+      <details style={{ marginBottom: 10 }}>
+        <summary className="note" style={{ cursor: 'pointer' }}>
+          What a mode actually sets
+        </summary>
+        <table className="bits" style={{ marginTop: 8 }}>
+          <tbody>
+            {MEASUREMENT_MODES.map((m) => (
+              <tr key={m.id} className={active?.id === m.id ? 'set' : ''}>
+                <td>
+                  {m.name}
+                  <br />
+                  <span style={{ opacity: 0.6 }}>{m.band}</span>
+                </td>
+                <td>
+                  {m.range === RANGE.near ? 'near' : 'far'} &middot;{' '}
+                  {m.exposureMs} ms &middot; {RESOLUTIONS[m.resolution]?.label}
+                  <br />
+                  <span style={{ opacity: 0.6 }}>
+                    switchover {m.switchoverMm} mm
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </details>
 
       <label className="field">
         Ranging context

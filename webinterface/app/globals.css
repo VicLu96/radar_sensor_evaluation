@@ -227,3 +227,35 @@ table.bits tr.set td { color: var(--err); }
   border-radius: 3px;
   background: linear-gradient(90deg, #2c1a5e, #1f6feb, #2ea043, #d29922, #f85149);
 }
+
+/* --- measurement mode selector ------------------------------------------ */
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+button.mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 9px 11px;
+  line-height: 1.3;
+}
+button.mode .mode-name { font-weight: 600; font-size: 13px; }
+button.mode .mode-band {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+button.mode.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06121f;
+}
+button.mode.on .mode-band { color: #06121f; opacity: 0.75; }
+
+details summary::marker { color: var(--dim); }

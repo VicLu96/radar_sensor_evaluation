@@ -86,52 +86,124 @@ export const MODE = { idle: 0, streaming: 1 } as const;
 export const RANGE = { far: 0, near: 1 } as const;
 
 /**
- * Presets, so a demo is one click rather than three fields.
+ * MEASUREMENT MODES.
  *
- * Exposure values are starting points, not measurements. The honest way to use
- * them is to pick one, then watch the amplitude split and the valid-zone
- * percentage and adjust: invalid zones BRIGHTER than valid ones means
- * saturation and exposure must come down; near-zero amplitude in the invalid
- * zones means the opposite.
+ * A mode is a whole working point, not just a range: context, exposure,
+ * switchover, resolution and frame period together. They are bundled because
+ * they are not independent — a near target needs the SHORT context AND a low
+ * exposure AND enough frame rate to follow a moving hand, and setting one
+ * without the others produces a worse result than leaving the default alone.
+ *
+ * `band` is what the mode is GOOD AT, not what the sensor can physically do.
+ * The part is specified 5 cm to 8.8 m and hard-limited to 9.6 m (UM3683 fixes
+ * the ranging period at 64 ns); no mode extends that, they trade where inside
+ * it the measurement is accurate.
+ *
+ * THE EXPOSURE FIGURES ARE ESTIMATES. Nothing in this repo has yet measured
+ * valid-zone count against distance for either context. They are a place to
+ * start; the amplitude split in the stats bar says which way to move.
+ * docs/plan/measurement-range.md has the half hour of measurement that turns
+ * them into settings.
  */
-export interface RangePreset {
-  label: string;
-  hint: string;
+export interface MeasurementMode {
+  id: string;
+  name: string;
+  band: string;
+  bandMinMm: number;
+  bandMaxMm: number;
+  goodFor: string;
+  watchOut: string;
   range: number;
   exposureMs: number;
   switchoverMm: number;
+  resolution: number;
+  framePeriodMs: number;
 }
 
-export const RANGE_PRESETS: RangePreset[] = [
+export const MEASUREMENT_MODES: MeasurementMode[] = [
   {
-    label: 'Very near — 5 cm to ~50 cm',
-    hint: 'A hand in front of the sensor. Near context, minimum exposure, because a target this close saturates easily.',
-    range: RANGE.near,
+    id: 'close',
+    name: 'Close object',
+    band: '5 cm – 50 cm',
+    bandMinMm: 50,
+    bandMaxMm: 500,
+    goodFor:
+      'A hand, a cup, a face right in front of the sensor. Near context with the shortest exposure, because a target this close returns a great deal of light.',
+    watchOut:
+      'If a very close object reads as EMPTY rather than near, exposure is still too high — it is saturating and the zone gets rejected. Drop it to 1 ms.',
+    range: 1,
     exposureMs: 1,
     switchoverMm: 200,
+    resolution: 4, // 24x20 — ~4x the frame rate of full resolution
+    framePeriodMs: 0,
   },
   {
-    label: 'Near — 10 cm to ~1.5 m',
-    hint: 'Desk distance. ST use this context for their precision profiles.',
-    range: RANGE.near,
+    id: 'desk',
+    name: 'Desk / gesture',
+    band: '10 cm – 1.5 m',
+    bandMinMm: 100,
+    bandMaxMm: 1500,
+    goodFor:
+      'Arm’s reach. Hand tracking, presence at a desk, objects on a table. This is the context ST use for their precision profiles.',
+    watchOut:
+      'Still the near context, so anything past ~2 m will drop out. Switch to Room if the far half of the scene goes dark.',
+    range: 1,
     exposureMs: 2,
     switchoverMm: 400,
+    resolution: 4,
+    framePeriodMs: 0,
   },
   {
-    label: 'Room — 0.5 m to ~4 m',
-    hint: 'The default, and what every capture before 2026-09-12 used.',
-    range: RANGE.far,
+    id: 'room',
+    name: 'Room detection',
+    band: '0.5 m – 4 m',
+    bandMinMm: 500,
+    bandMaxMm: 4000,
+    goodFor:
+      'People in a room, the corner-mount case this project is built for. Full resolution, far context, moderate exposure.',
+    watchOut:
+      'Full resolution is ~334 ms per frame at 400 kHz, so about 2.5 fps. Fine for people, stuttery for a waving hand.',
+    range: 0,
     exposureMs: 4,
     switchoverMm: 650,
+    resolution: 5, // 54x42
+    framePeriodMs: 0,
   },
   {
-    label: 'Far — 2 m to 9.6 m',
-    hint: 'Long exposure for a weak return. 9.6 m is a hard ceiling: UM3683 fixes the ranging period at 64 ns and the device cannot see past it.',
-    range: RANGE.far,
+    id: 'far',
+    name: 'Long range',
+    band: '2 m – 9.6 m',
+    bandMinMm: 2000,
+    bandMaxMm: 9600,
+    goodFor:
+      'A corridor, the far wall, the full depth of a large room. Long exposure for a weak return.',
+    watchOut:
+      '9.6 m is a HARD ceiling, not a guideline — UM3683 fixes the ranging period at 64 ns and nothing sees past it. Close objects will saturate badly at this exposure.',
+    range: 0,
     exposureMs: 16,
     switchoverMm: 1500,
+    resolution: 5,
+    framePeriodMs: 0,
   },
 ];
+
+/** The mode a configuration corresponds to, or null if it has been hand-edited. */
+export function modeFor(c: {
+  rangeMode: number;
+  exposureMs: number;
+  switchoverMm: number;
+  resolution: number;
+}): MeasurementMode | null {
+  return (
+    MEASUREMENT_MODES.find(
+      (m) =>
+        m.range === c.rangeMode &&
+        m.exposureMs === c.exposureMs &&
+        m.switchoverMm === c.switchoverMm &&
+        m.resolution === c.resolution,
+    ) ?? null
+  );
+}
 
 export const OPCODE = {
   none: 0,
