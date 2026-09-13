@@ -164,7 +164,7 @@ static void label_runs(struct det *s)
 
 ### The mathematics shared by both
 
-**M1 — metric width, small-angle.** With zone pitch `p ≈ 16.6 mrad` and mean
+**M1 — metric width, small-angle.** With zone pitch `p = 1° = 17.45 mrad` (ST, equal-angle — corrected 2026-09-13 from a back-derived 16.6 mrad) and mean
 range `d̄`:
 
 ```
@@ -661,7 +661,7 @@ exactly the prior-entropy correction Otsu lacks.
 
 **Is the zone grid equal-angle or equal-tangent?** The deprojection assumes
 directions linear in *angle*; a SPAD array behind a rectilinear lens gives
-directions linear in *tangent*. Over a ±25.5° half-FoV those differ by 2–3% of the
+directions linear in *tangent*. *(Resolved 2026-09-13: ST gives 1° per zone, so the grid is equal-angle — see detection-evaluation.md §2.6. The half-field is ±27°, not ±25.5°.)* Over a ±25.5° half-FoV those differ by 2–3% of the
 half-angle at mid-field — **~100–150 mm of lateral error at 9.6 m with a
 systematic barrel signature.** Under the wrong model **the floor is not a plane**,
 RANSAC fits part of it, and the extrinsics budget is gone before you start.

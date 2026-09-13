@@ -150,10 +150,8 @@ A far person is ~30–100 zones; mmWave radar trackers work in exactly that regi
 
 ## Still to find
 
-- **The VL53L9CX optical model.** Victor, 2026-09-13: equal-angle. Still wanted:
-  **the ST source for it**, since "like a camera" usually implies a rectilinear,
-  equal-*tangent* lens. Up to ~110 mm at 9.6 m between the two. Not blocking —
-  the floor fit is run under both models and the residual decides.
+- ~~**The VL53L9CX optical model.**~~ **Closed 2026-09-13:** equal-angle. ST: 54°×42° at
+  1° angular resolution, so each zone subtends 1°. Floor fit confirms empirically.
 - **VL53L9CX power during the blob upload, and in standby.** Sets the
   power-down versus standby crossover. Not in UM3683 as far as we have found.
 - **Kittler–Illingworth on unequal priors** — a reference establishing the

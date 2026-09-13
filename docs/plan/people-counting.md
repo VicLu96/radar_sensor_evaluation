@@ -401,6 +401,8 @@ methodology for the paper. Findings are recorded below as they arrive.*
 
 #### The geometry table, which the reviewer calls the project's central result
 
+> **Corrected 2026-09-13:** ST gives **1° per zone = 17.45 mrad, 54°×42°, equal-angle**. The reviewer's figures below are ~5% small; no conclusion changes.
+
 Derived from our own figures: zone pitch **~16.6 mrad, ~0.95°/zone**, so ~51°×40°
 FoV. *VERIFY against ST's FoV spec — this was back-derived from our numbers.*
 

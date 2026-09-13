@@ -245,8 +245,8 @@ independent of the detection signal?**
 
 | risk | severity | why |
 |---|---|---|
-| **Projection model** — equal-angle vs equal-tangent zone grid | **medium — Victor: equal-angle (2026-09-13), confirm** | wrong model → up to ~110 mm lateral error at 9.6 m, largest half-way out → **the floor is not a plane** and the fit, the height band and the volume of interest degrade together. See note below |
-| **Zone pitch** 16.6 mrad | medium, unverified | back-derived from our own numbers, not from ST |
+| **Projection model** — equal-angle vs equal-tangent zone grid | **low — equal-angle, from ST's 1°/zone (closed 2026-09-13)** | the floor-fit test still confirms it for free. If it were wrong: up to ~130 mm lateral error at 9.6 m, and the floor would not fit as a plane |
+| **Zone pitch** | **resolved** — **1° = 17.45 mrad**, ST | replaces the back-derived 16.6 mrad used until 2026-09-13; see note below |
 | Far-field sparsity | medium | ~28 zones per person at 9.6 m spread over a 60×60 grid; thin, and **may collapse faster than the raster on the software-binning ladder** — genuinely unknown |
 | Seated people | medium | ~40% of the standing silhouette; needs a second height class or a lower band |
 | More tunables | low | cell size, height band, h for h-maxima, KI bins |
@@ -255,35 +255,49 @@ independent of the detection signal?**
 **A4 is the only algorithm gated by a bench measurement that has not been made.**
 A1–A3 work in the raster and do not care how zones map to space.
 
-#### The projection model — Victor's input, 2026-09-13
+#### The projection model — CLOSED 2026-09-13: equal-angle
 
-**Victor: the zone grid is equal-angle — "it works like a camera with each equal
-angle."** That is the model the deprojection already assumes, which is good news.
+**Equal-angle, and the source is ST.** `docs/hardware/sensor-vl53l9cx.md:21`
+records ST's figures: **54° × 42° field of view at 1° angular resolution** — 54
+zones across 54° and 42 across 42°, so **every zone subtends 1°**. That is an
+equal-angle statement in itself, and it is what Victor's reading of ST's
+angle-based accuracy figures pointed to.
 
-**One thing to confirm before calling it closed**, and it is a question of wording
-rather than doubt: *"like a camera"* usually means a **rectilinear** lens, and a
-rectilinear lens is equal-**tangent** — pixels equally spaced on a flat sensor, so
-their angles bunch toward the edge. **Equal-angle** is an f-theta lens, where each
-zone subtends the same angle. Both are plausible for a SPAD array, and they differ
-by an amount that matters only far out:
+Worth recording why the *datasheet figure* closes it and the *angular accuracy*
+alone would not have: nearly every sensor quotes its field of view and accuracy in
+degrees, rectilinear cameras included, so "specified in angles" does not
+distinguish the models. A **uniform 1° per zone** does. A rectilinear
+(equal-tangent) lens would give zones roughly 20% narrower in angle at the edge of
+a 54° field.
 
-| position across the half field | equal-angle | equal-tangent | error at 9.6 m |
+**Honest residual:** a datasheet angular resolution can be a nominal average
+(54° ÷ 54 zones) rather than a per-zone guarantee. That is why the floor-fit test
+below still runs both models — it costs nothing extra, and it turns a datasheet
+figure into a measurement:
+
+| position across the half field | equal-angle | equal-tangent | lateral difference at 9.6 m |
 |---|---|---|---|
-| ¼ | 6.38° | 6.80° | 71 mm |
-| ½ | 12.75° | 13.41° | **111 mm** |
-| ¾ | 19.12° | 19.68° | 94 mm |
+| ¼ | 6.75° | 7.26° | 85 mm |
+| ½ | 13.50° | 14.29° | **133 mm** |
+| ¾ | 20.25° | 20.91° | 111 mm |
 
-*Computed 2026-09-13 for a ±25.5° half field, both models agreeing at centre and
-edge.* If the equal-angle statement comes from ST's optical specification, it is
-closed. If it comes from the camera analogy, it is still `VERIFY`.
+*Computed 2026-09-13 for ST's ±27° horizontal half field, both models agreeing at
+centre and edge.* The angle tables are generated from a model switch
+(`EQUAL_ANGLE` default, `EQUAL_TANGENT`), so the answer changes one line either way.
 
-**Either way it does not block anything**, because of how the go/no-go below is
-now designed:
+#### Zone pitch — a correction that came with it
 
-- the per-row and per-column angle tables are **generated from a model switch**
-  (`EQUAL_ANGLE` / `EQUAL_TANGENT`) rather than hard-coded — one line changes;
-- the floor fit is run **under both models** on the same recorded empty room, and
-  **the lower residual picks the model empirically**.
+The plans have used **16.6 mrad (~0.95°/zone, ~51° × 40°)**. That number was
+**back-derived by a reviewer from our own zone-size estimates**, not taken from ST.
+ST's figure is **1° = 17.45 mrad**, ~5% larger, and it replaces it everywhere
+from here on.
+
+What it changes: every "zones per person" and "gap in zones" figure in the
+reviews shrinks by ~5% — **not enough to move any conclusion**, including the
+~5 m limit for splitting an abreast pair. What it does change is one overflow
+margin: `54 × 17453 × 9600 = 9,047,635,200`, so the already-reported width
+overflow in `counting-algorithms.md` is slightly worse, and its fix (compute
+mm-per-zone first) is unchanged.
 
 #### A go/no-go that costs an afternoon and no firmware
 
