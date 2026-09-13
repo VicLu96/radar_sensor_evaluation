@@ -507,39 +507,27 @@ transactionally like the config (validate everything, then apply), and it keeps 
 detection surface independent of the measurement surface — the same separation as
 the two selectors.
 
-#### D3 in the web interface — the part that needs care
+#### Image 2 in the web interface
 
-**"Count only" cannot be a runtime switch into the real D3.** The real D3 is a
-*different firmware image* with the frame service compiled out — that is the whole
-privacy claim. A button in a streaming build cannot remove code from the binary.
+*Revised 2026-09-13:* the count-only **preview** proposed here is dropped. Victor
+decided evaluation and measurement are separate images (§5), so **the web interface
+never switches into counting mode** — image 2 is flashed, not selected.
 
-So there are two distinct things, and the interface must never blur them:
+What the interface does when image 2 is on the board:
 
-| | **Count-only preview** — dev build | **D3 measurement build** |
-|---|---|---|
-| what it is | D2 with frame and label notifications stopped | frame service **absent from the binary** |
-| detector | identical | identical — bit-exact hash confirmed |
-| count reaches the browser | Count characteristic notify, over the connection | see below |
-| valid for | checking the count behaves without the stream | **every energy and battery number** |
-| label in the UI | *"Preview — not a measurement build"* | detected automatically, as today's "no frame service" banner |
-
-**Observing the count on the measurement build has a trap.** The deployed node is
-*connectionless*: the count goes out in the advertisement. **Holding a BLE
-connection open to read it changes the radio's energy** — connection events replace
-advertising events — so a measurement taken while the web interface is connected is
-not a measurement of the deployed node.
-
-Two acceptable ways to watch it during a measurement:
-
-1. **The advertisement scanner bridge** from `ble-streaming-and-web-ui.md` §8.1 — a
-   small Node + `noble` process relaying advertised counts to the page over a
-   WebSocket. Chrome cannot scan advertisements without an experimental flag, which
-   is why this exists. **It becomes necessary for D3, not optional.**
-2. **nRF Connect on a phone**, reading the manufacturer data, for spot checks.
-
-Connecting to read the Count characteristic is fine for **setup and debugging on the
-measurement build**, and must be **disconnected before an energy run starts**. The
-interface should say so when it detects the measurement build.
+- **Detects it automatically** from the missing frame service, as today's banner
+  already does, and hides the stream, evaluation and recording panels.
+- **Keeps setup available:** connection, configuration, health, and the Calibrate
+  panel — installation still needs them.
+- **Says, prominently, to disconnect before measuring.** A held BLE connection
+  replaces advertising events with connection events and changes the radio's
+  energy, so a measurement taken while connected is not a measurement of the
+  deployed node.
+- **Shows the count from the advertisement scanner bridge**
+  (`ble-streaming-and-web-ui.md` §8.1) over a WebSocket, not over the connection.
+  Chrome cannot scan advertisements without an experimental flag, which is why the
+  bridge exists — **for image 2 it is required, not optional.** nRF Connect on a
+  phone reads the manufacturer data for spot checks.
 
 ---
 
@@ -584,52 +572,149 @@ the library diagnostic rather than just large.
 
 ---
 
-## 5. Mode D3 — count only, and measurement
+## 5. Two firmware images, in sequence — decided 2026-09-13
 
-### 5.1 What it is
+**Victor's decision:** evaluation and measurement are **separate steps with separate
+images**. First an *extended* image, connected to the web interface, streaming
+blob images and counts until the algorithm is evaluated. Then a *new* image,
+generated from the result, energy-optimised, that only advertises the number of
+people detected.
 
-The count in the BLE advertisement, as already planned (8 bytes: version,
-instance, count, confidence, flags, report sequence, battery). No frame service in
-the binary. **This is the build every energy and battery number is taken on.**
+This supersedes the "count-only preview" in §3.5: **there is no runtime switch
+between the two, and none is needed.** The separation is by build, which is also
+the only separation the privacy claim can rest on.
 
-### 5.2 The rule that makes D2 evaluation valid for D3 measurements
+```
+   IMAGE 1 — EVALUATION                      IMAGE 2 — DEPLOYED / MEASUREMENT
+   ────────────────────                      ─────────────────────────────────
+   web interface connected                   no connection during operation
+   D0 raw · D1 calibrate · D2 detect stream  count in the advertisement only
+   all algorithms, every frame               the ONE chosen algorithm
+   label plane, blob images, all counts      no frame service in the binary
+   true-count control, recordings            energy-optimised
+   tunables changed live                     fitted parameters frozen
+          │                                          ▲
+          └──── evaluation gate (§5.3) ──── freeze ──┘
+```
 
-> **The detector must be bit-identical between D2 and D3. Only the output path may
-> differ.**
+### 5.1 Image 1 — evaluation
 
-If D3 runs different code — a different threshold, a skipped stage, a "cheaper"
-variant for power — then what was evaluated in D2 is not what was measured in D3,
-and the accuracy and energy numbers in the paper describe two different systems.
+Everything in §3: the three detection modes, every algorithm on every frame, the
+label plane, the web evaluation panel, recordings with the true count, and live
+tunables.
+
+**Nothing in it is optimised for energy, and nothing measured on it is an energy
+number.** It streams 9 KB per frame, holds a BLE connection, logs over RTT and keeps
+the sensor ranging freely. Its job is to find out *which* algorithm and *which*
+parameters — not what they cost.
+
+### 5.2 Image 2 — deployed and measurement
+
+Built from the evaluation result. What changes, and why each is an energy
+decision:
+
+| change | why |
+|---|---|
+| **frame service compiled out** (`APP_BLE_FRAME_SERVICE=n`) | no frames can leave — the privacy claim, as a property of the binary |
+| **only the chosen algorithm linked** | the comparison is already done (see below); keeps the image minimal |
+| **count in a non-connectable advertisement**, 1–10 s interval, plus a short connectable window for reconfiguration | connectionless is the design; a held connection changes the radio's energy |
+| **duty cycling on**: watch tier (18×14, depth-only) and track tier on activity, adaptive back-off when empty | where the energy actually goes — sensor-active time, ~95% of it I²C transfer |
+| **RTT and logging off** | immediate-mode logging costs CPU and blocks; needs a J-Link attached anyway |
+| **bring-up switches off**: `APP_BLE_FIRST`, `VL53L9CX_DEFER_BOOT`, `APP_BLE_AUTOSTREAM`, `VL53L9CX_EXPOSURE_BACKOFF`, `APP_LOG_FULL_GRID` | the node must range unattended, and the backoff silently changes the variable being measured |
+| **TX power chosen by measurement**, not left at the +8 dBm set for bring-up | +8 dBm roughly triples transmit current against 0 dBm |
+| **IMU off** unless the paper uses it | it has been silent since 2026-09-10 and costs current |
+
+**What stays:** the config and telemetry services, and Calibration Control — so a
+brief connection can still calibrate and configure the node at install. **Connect
+for setup, disconnect before any measurement.**
+
+**Removing the other algorithms is not an energy optimisation**, and should not be
+described as one. Detection is ~150 µs against a 334 ms I²C read; all four together
+would not register. It is done to keep the measured image minimal and unambiguous.
+
+### 5.3 The evaluation gate — what "evaluated" means
+
+Image 2 is only generated when these hold. Written down now so the gate is a
+decision rather than a feeling:
+
+1. **A scenario library exists** (§4.3) and every scenario has been replayed through
+   every algorithm on the PC harness.
+2. **One algorithm is chosen**, against a criterion stated before looking at the
+   results — for example, lowest time-weighted count MAE across the library, with no
+   scenario worse than the A1 baseline.
+3. **Its parameters are fitted and frozen** in one versioned parameter file, with a
+   hash.
+4. **The chosen algorithm's weak scenarios are written down**, from §2.5 and from
+   what the stream showed. They become the paper's stated limitations rather than
+   surprises in review.
+
+### 5.4 The rule that makes image-1 evaluation valid for image-2 measurement
+
+> **The chosen algorithm must be bit-identical between the two images. Only what
+> surrounds it may differ.**
+
+If image 2 runs different detection code — a different threshold, a skipped stage,
+a "cheaper" variant for power — then what was evaluated is not what was measured,
+and the paper's accuracy and energy numbers describe two different systems.
 
 How to guarantee it:
 
-- **One `lib/detect`, compiled into both builds.** D3 simply does not call the
-  label-plane serialiser.
-- **The bit-exact hash test** from the harness plan, run on a D3 build: same
-  synthetic frames in, same track state hash out, as D2 and the PC.
-- **Tunables written into both** from the same fitted parameter file, with its hash
-  in the build banner.
+- **One `lib/detect`, compiled into both images**, from the same commit. Image 2
+  links only the chosen algorithm's entry point; its code is unchanged.
+- **The frozen parameter file compiled into both**, with its hash printed in image
+  1's banner and carried in image 2's advertisement flags or its telemetry.
+- **The bit-exact hash test** — same synthetic frames in, same track-state hash out —
+  run on image 1, image 2 and the PC. All three must agree.
+- **Tag both images** from the same commit: `eval-<date>` and `deployed-<date>`,
+  with the parameter hash in both tag messages.
 
-### 5.3 One consequence to accept
+### 5.5 Where the algorithm comparison lives now
 
-**D3 may still run all four algorithms**, and it probably should during the paper's
-data collection: the advertisement carries one count, but the RTT log and a
-recording host can capture all four. That keeps the accuracy comparison available
-on the measurement build itself. CPU cost remains negligible; only the count in the
-advertisement is chosen.
+§5.3 of an earlier draft suggested the measurement build keep running all four
+algorithms so the comparison stayed available on it. **Superseded.** The
+comparison lives in **image 1's recordings, replayed offline** — the PC harness
+reproduces every algorithm's count on every recorded frame, bit-exactly. Image 2
+does not need to run them, and a measurement image with RTT logging on to capture
+four counts would not be an energy measurement.
+
+**One check does have to happen on image 2 itself:** a short validation session
+confirming its **advertised** count matches ground truth, observed through the
+advertisement scanner bridge. That confirms the frozen algorithm survived the
+rebuild — the hash test says the code is identical; this says the system around it
+did not break it.
+
+### 5.6 How the two images are built
+
+**Two `prj` files, not snippets.** Snippets failed to apply silently in the nRF
+Connect extension on 2026-09-10 and cost two bench runs. Zephyr's `FILE_SUFFIX`
+selects between them, and the extension shows each as its own build configuration:
+
+```
+firmware_test/prj.conf            image 1 — evaluation (today's file)
+firmware_test/prj_deployed.conf   image 2 — deployed / measurement
+```
+
+```bash
+west build -b water_sense_board/nrf54l15/cpuapp firmware_test -- -DFILE_SUFFIX=deployed
+```
+
+**The boot banner prints which image it is**, and the web interface already detects
+a missing frame service. Between the two, **"which image is on the board" can never
+be a question** — the lesson of 2026-09-11, when an evening was lost testing the
+wrong commit.
 
 ---
 
 ## 6. The mode ladder, updated
 
-| mode | runs | sends | for |
-|---|---|---|---|
-| **D0 Raw** | nothing | distance frames | range tuning, demos — **exists** |
-| **D1 Calibrate** | 64–128 frame background | progress + quality report | install |
-| **D2 Detect stream** | A1, A2, A3, A4, mass — all | distance + **label plane** + detection record + all counts; floor map on request | **evaluation and tuning** |
-| **D3 Count** | the same detector, bit-identical | **count in the advertisement** | **the product, and every paper measurement** |
+| image | mode | runs | sends | for |
+|---|---|---|---|---|
+| 1 | **D0 Raw** | nothing | distance frames | range tuning, demos — **exists** |
+| 1 | **D1 Calibrate** | 64–128 frame background | progress + quality report | install, evaluation |
+| 1 | **D2 Detect stream** | A1, A2, A3, A4, mass — all | distance + **label plane** + detection record + all counts; floor map on request | **evaluation and tuning** |
+| 2 | **D3 Count** | the chosen algorithm, bit-identical, duty-cycled | **count in the advertisement** | **the product, and every paper measurement** |
 
-D0–D2 require `CONFIG_APP_BLE_FRAME_SERVICE=y`. D3 is the build with it off.
+Image 1 is `CONFIG_APP_BLE_FRAME_SERVICE=y`. Image 2 is the build with it off.
 
 ---
 
@@ -651,7 +736,23 @@ D0–D2 require `CONFIG_APP_BLE_FRAME_SERVICE=y`. D3 is the build with it off.
    check the residual. An afternoon, no firmware.
 10. **A4 plan view** (and A4a nearly free), plus the top-down floor view in the web
     interface — only if 9 passes. Never blocks anything above it.
-11. **D3** — advertisement, frame service compiled out, bit-exact hash confirmed.
+
+**— evaluation gate, §5.3: algorithm chosen, parameters frozen and hashed —**
+
+12. **`prj_deployed.conf`** — image 2's profile, banner naming the image.
+13. **Duty cycling** — watch tier at 18×14 depth-only, track tier on activity,
+    three-test wake condition, adaptive back-off. Only in image 2; its tuning needs
+    the overnight and scenario recordings from image 1.
+14. **Count advertisement** — non-connectable, plus a bounded connectable window
+    for calibration and configuration.
+15. **Advertisement scanner bridge** — required, not optional, since energy runs
+    must not hold a connection.
+16. **Image 2 verification** — bit-exact hash on image 1, image 2 and the PC; a short
+    session confirming the advertised count against ground truth.
+17. **Tag** `eval-<date>` and `deployed-<date>` from the same commit, parameter hash
+    in both. Then, and only then, the energy measurements.
+
+Steps 1–11 are **image 1**; steps 12–17 are **image 2**.
 
 **Why D2 comes fourth, not last:** built last, it only shows the finished
 algorithm; built right after A1, it debugs A2 and A3 as they are written.
