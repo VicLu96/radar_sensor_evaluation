@@ -150,9 +150,10 @@ A far person is ~30–100 zones; mmWave radar trackers work in exactly that regi
 
 ## Still to find
 
-- **The VL53L9CX optical model** — is the zone grid equal-angle or equal-tangent?
-  Decides whether Algorithm A's deprojection is correct to within ~100–150 mm at
-  9.6 m. ST's optical specification, or a bench measurement with markers.
+- **The VL53L9CX optical model.** Victor, 2026-09-13: equal-angle. Still wanted:
+  **the ST source for it**, since "like a camera" usually implies a rectilinear,
+  equal-*tangent* lens. Up to ~110 mm at 9.6 m between the two. Not blocking —
+  the floor fit is run under both models and the residual decides.
 - **VL53L9CX power during the blob upload, and in standby.** Sets the
   power-down versus standby crossover. Not in UM3683 as far as we have found.
 - **Kittler–Illingworth on unequal priors** — a reference establishing the

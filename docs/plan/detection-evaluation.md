@@ -245,7 +245,7 @@ independent of the detection signal?**
 
 | risk | severity | why |
 |---|---|---|
-| **Projection model** — equal-angle vs equal-tangent zone grid | **high, unmeasured** | wrong model → ~100–150 mm lateral error at 9.6 m with a barrel signature → **the floor is not a plane** and the RANSAC fit, the height band and the volume of interest all degrade together |
+| **Projection model** — equal-angle vs equal-tangent zone grid | **medium — Victor: equal-angle (2026-09-13), confirm** | wrong model → up to ~110 mm lateral error at 9.6 m, largest half-way out → **the floor is not a plane** and the fit, the height band and the volume of interest degrade together. See note below |
 | **Zone pitch** 16.6 mrad | medium, unverified | back-derived from our own numbers, not from ST |
 | Far-field sparsity | medium | ~28 zones per person at 9.6 m spread over a 60×60 grid; thin, and **may collapse faster than the raster on the software-binning ladder** — genuinely unknown |
 | Seated people | medium | ~40% of the standing silhouette; needs a second height class or a lower band |
@@ -255,12 +255,44 @@ independent of the detection signal?**
 **A4 is the only algorithm gated by a bench measurement that has not been made.**
 A1–A3 work in the raster and do not care how zones map to space.
 
+#### The projection model — Victor's input, 2026-09-13
+
+**Victor: the zone grid is equal-angle — "it works like a camera with each equal
+angle."** That is the model the deprojection already assumes, which is good news.
+
+**One thing to confirm before calling it closed**, and it is a question of wording
+rather than doubt: *"like a camera"* usually means a **rectilinear** lens, and a
+rectilinear lens is equal-**tangent** — pixels equally spaced on a flat sensor, so
+their angles bunch toward the edge. **Equal-angle** is an f-theta lens, where each
+zone subtends the same angle. Both are plausible for a SPAD array, and they differ
+by an amount that matters only far out:
+
+| position across the half field | equal-angle | equal-tangent | error at 9.6 m |
+|---|---|---|---|
+| ¼ | 6.38° | 6.80° | 71 mm |
+| ½ | 12.75° | 13.41° | **111 mm** |
+| ¾ | 19.12° | 19.68° | 94 mm |
+
+*Computed 2026-09-13 for a ±25.5° half field, both models agreeing at centre and
+edge.* If the equal-angle statement comes from ST's optical specification, it is
+closed. If it comes from the camera analogy, it is still `VERIFY`.
+
+**Either way it does not block anything**, because of how the go/no-go below is
+now designed:
+
+- the per-row and per-column angle tables are **generated from a model switch**
+  (`EQUAL_ANGLE` / `EQUAL_TANGENT`) rather than hard-coded — one line changes;
+- the floor fit is run **under both models** on the same recorded empty room, and
+  **the lower residual picks the model empirically**.
+
 #### A go/no-go that costs an afternoon and no firmware
 
 Before writing any A4 firmware, **deproject a recorded empty-room frame on the PC**
 and fit the floor:
 
 ```
+run under:  both EQUAL_ANGLE and EQUAL_TANGENT; keep the lower residual
+
 go if:      RANSAC floor residual < ~50 mm RMS across the visible floor
             residual shows NO systematic growth toward the field edges
             a standing person reads within ±15 cm of true height at 3 m and 6 m
@@ -388,6 +420,112 @@ per-frame detection record, and the observer's true count. All three algorithms'
 counts on every frame means a session can be **re-scored offline against all of them
 at once** — and re-run through the PC harness with different tunables, which is how
 the ~10 parameters actually get fitted.
+
+### 3.5 Selecting detection modes and algorithms in the web interface
+
+*Added 2026-09-13.* §3.3 covered what the detection stream *shows*. It did not
+cover how you *get into it* — there was no detection-mode selector, no calibration
+panel in this plan, and no path for watching the count in D3. This is that part.
+
+#### Two selectors, deliberately separate
+
+The roadmap already distinguishes two axes, and the interface should too:
+
+| selector | chooses | exists |
+|---|---|---|
+| **Measurement mode** | how the sensor is configured — Close · fast … Room detection, Long range | **yes** |
+| **Detection mode** | what the firmware does with each frame — Raw · Calibrate · Detect stream · Count only | planned |
+
+Keeping them separate matters: detection runs on whatever the sensor is
+configured to produce, and the paper's resolution sweep changes the first while
+holding the second fixed. **Selecting a detection mode other than Raw proposes the
+Room detection measurement mode** (54×42, far, room exposure), and warns if the
+user overrides it — detection tuned at one resolution is not valid at another.
+
+#### The detection-mode selector
+
+```
+Detection  [ Raw ]  [ Calibrate ]  [ Detect stream ]  [ Count only ]
+```
+
+- **Raw (D0)** — today's behaviour. Nothing else changes.
+- **Calibrate (D1)** opens a panel, not a mode switch:
+  - a confirmation — *"The room must be empty. Calibration takes ~50 s."*;
+  - progress, `n / 128` frames;
+  - the quality report: *"2,268 zones: 1,932 reliable, 214 excluded for validity,
+    122 for spread"*;
+  - for A4, **the fitted mount height and tilt, and the floor-fit residual** — so a
+    bad fit is visible at install rather than discovered as bad counts;
+  - the painted exclusion mask: click zones on the heatmap to exclude a window or
+    a curtain.
+- **Detect stream (D2)** reveals the evaluation panel below.
+- **Count only** — see "D3 in the web interface" below; it is not what it looks like.
+
+#### The evaluation panel, visible in Detect stream
+
+```
+Algorithm shown   [ A1 ] [ A2 ] [ A3 ] [ A4 ] [ mass ]     ← which one the label plane shows
+View              [ distance ] [ foreground ] [ flags ] [ floor map ]
+Flag filter       [ ] NEAR  [ ] APPEARED  [ ] SHADOW  [ ] FILLED  [ ] MOTION  [ ] GATED_OUT
+
+Counts            A1  A2  A3  A4  mass  │  TRUE  [ − ]  3  [ + ]
+                  ── strip chart, last 60 s, all counts and truth ──
+
+A3 promotion      ( ) motion only    ( ) motion or size + persistence     ← §2.3 conflict
+Advanced          tunables, applied live, with the fitted-parameter hash shown
+```
+
+**`Algorithm shown` changes only the label plane.** All algorithms keep running
+and all counts keep arriving — switching what you look at never changes what is
+measured, and a recording made while flicking between them still carries every
+count on every frame.
+
+#### Where the settings live on the wire
+
+**The 16-byte config characteristic has one reserved byte left** (byte 13, after
+range mode took the rest on 2026-09-12). Detection does not fit there and should not
+be squeezed in.
+
+Use the **Detection Config characteristic `53f93003`**, already frozen in
+`ble_uuid.h` for exactly this: detection mode, algorithm shown, view, A3 promotion
+rule, and the tunables. It gets its own protocol version, it is written
+transactionally like the config (validate everything, then apply), and it keeps the
+detection surface independent of the measurement surface — the same separation as
+the two selectors.
+
+#### D3 in the web interface — the part that needs care
+
+**"Count only" cannot be a runtime switch into the real D3.** The real D3 is a
+*different firmware image* with the frame service compiled out — that is the whole
+privacy claim. A button in a streaming build cannot remove code from the binary.
+
+So there are two distinct things, and the interface must never blur them:
+
+| | **Count-only preview** — dev build | **D3 measurement build** |
+|---|---|---|
+| what it is | D2 with frame and label notifications stopped | frame service **absent from the binary** |
+| detector | identical | identical — bit-exact hash confirmed |
+| count reaches the browser | Count characteristic notify, over the connection | see below |
+| valid for | checking the count behaves without the stream | **every energy and battery number** |
+| label in the UI | *"Preview — not a measurement build"* | detected automatically, as today's "no frame service" banner |
+
+**Observing the count on the measurement build has a trap.** The deployed node is
+*connectionless*: the count goes out in the advertisement. **Holding a BLE
+connection open to read it changes the radio's energy** — connection events replace
+advertising events — so a measurement taken while the web interface is connected is
+not a measurement of the deployed node.
+
+Two acceptable ways to watch it during a measurement:
+
+1. **The advertisement scanner bridge** from `ble-streaming-and-web-ui.md` §8.1 — a
+   small Node + `noble` process relaying advertised counts to the page over a
+   WebSocket. Chrome cannot scan advertisements without an experimental flag, which
+   is why this exists. **It becomes necessary for D3, not optional.**
+2. **nRF Connect on a phone**, reading the manufacturer data, for spot checks.
+
+Connecting to read the Count characteristic is fine for **setup and debugging on the
+measurement build**, and must be **disconnected before an energy run starts**. The
+interface should say so when it detects the measurement build.
 
 ---
 
