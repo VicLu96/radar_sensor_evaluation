@@ -9,6 +9,9 @@ Written 2026-09-12, from the literature scan and expert reviews in
 > Review section at the end first** — it carries the corrections, and it changes
 > which algorithm to ship.
 
+**References:** [../research/literature.md](../research/literature.md) — every
+method below, with DOIs and verification status.
+
 **No learned components.** Every step is closed-form, integer, and inspectable.
 That is not asceticism: with no labelled data, no generalisation across mount
 geometry, and a paper whose contribution is a *characterisation*, a neural net
