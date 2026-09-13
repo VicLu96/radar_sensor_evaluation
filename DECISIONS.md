@@ -2008,3 +2008,30 @@ banners on the affected sections and remain the record of the reasoning.
 Found while consolidating: the web recorder stops at MAX_FRAMES = 4000, ~27 min at
 2.5 fps, held in browser memory - too short for the overnight empty-room recording and
 the 30-minute sit-down scenario. Long recordings are now WP1, ahead of the harness.
+
+## 2026-09-13 - radar_shield reviewed against DS14879 Rev 8 before the oscillator re-spin
+Victor asked for a schematic and layout review before adding the 12 MHz AP_CLK
+oscillator to the shield. Read-only; KiCad files unchanged (checksums). Full report:
+docs/hardware/radar-shield-review-2026-09-13.md. Sources: DS14879 Rev 8 (Table 6, Fig. 25,
+Fig. 30, sections 2.7-2.11, Tables 15-20), DB5799 Rev 1 (X-NUCLEO-53L9A1 schematic),
+UM3683 2.5.1, KiCad 9 CLI ERC/DRC with schematic parity.
+- SDA/SCL CROSSED, SETTLED: ST puts SCL on A11 and SDA on A12 (datasheet and ST's own
+  board agree). The shield labels A11 /SDA and A12 /SCL; the symbol pin names are right.
+  The sensor works with SCL on P1.08, so the harness must cross them back. Fix is to swap
+  the labels at J6 after a continuity check, copper unchanged. Closes the open question
+  from the 2026-09-06 review.
+- The current PCB equals the fabricated board (diffed against the backup written just
+  before the 2026-08-10 Gerbers). Schematic capacitors C207 (+1V2 buck output), C212
+  (AVDD at sensor) and C216 (IOVDD at sensor) were never placed, so the built board lacks
+  them; DVDD's only 4.7 uF is 3 mm from C12.
+- Footprint: pad sizes, names and orientation exact; perimeter pads within 0.02 mm;
+  thermal pads off by up to 0.132 mm with a 0.115 mm row gap (ST 0.200). No courtyard.
+- Thermal pads: 10 open via-in-pad, none in B9/D9; F.Cu GND pour merges all 12 pads.
+- Still open since 2026-09-06: host IO voltage unrecorded, no level translation, V_Host
+  dead-end. New: back-powering through the sensor IOs when the shield rails are off and
+  the shared I2C bus (IMU) is live - VERIFY, matters for duty cycling and energy numbers.
+- Oscillator guidance: 12 MHz CMOS XO powered from +1V8 (AP_CLK VIH/VIL are 90%/10% of
+  IOVDD, abs max 1.98 V), OE tied high, series-R footprint, J2.2 as DNP external-clock
+  option, route away from I2C (today's AP_CLK runs 0.65 mm from SDA under the module).
+  Keep ext-clock-frequency = 12000000 or change the overlay in the same commit.
+  Candidate from a datasheet on Victor's disk: ECS-2520MVLC-120-BN-TR (availability not checked).

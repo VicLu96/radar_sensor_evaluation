@@ -1,5 +1,9 @@
 # `radar_shield` KiCad review — two findings
 
+> **Superseded 2026-09-13** by [radar-shield-review-2026-09-13.md](radar-shield-review-2026-09-13.md),
+> a full review against DS14879 Rev 8. Finding 1 below is settled there: the SDA/SCL
+> crossing is real and it is the labels (ST: A11 = SCL, A12 = SDA).
+
 Reviewed 2026-09-06 from `radar_shield.kicad_sch` / `.kicad_pcb`, against the symptoms
 seen on the bench: a 100 mA supply limit on power enable, and a VL53L9CX that never
 acknowledges on I²C.

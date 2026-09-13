@@ -32,6 +32,12 @@ disagrees, implementation.md wins.
 Board files `firmware_test/boards/ethzurich/**` are Victor's: hands-off unless he asks in
 that message. Use the application overlay.
 
+**Shield re-spin (adds the 12 MHz oscillator):** reviewed 2026-09-13 against DS14879 Rev 8 —
+[docs/hardware/radar-shield-review-2026-09-13.md](docs/hardware/radar-shield-review-2026-09-13.md).
+SDA/SCL labels crossed at A11/A12 (harness compensates), three decoupling caps never placed,
+thermal pads off by up to 0.13 mm, host IO voltage still unrecorded with no level translation.
+Checklist at the end of the report.
+
 ## Next — in order (full detail in implementation.md §6)
 **Victor, bench:**
 1. **B1 full-resolution SNR** — amplitude at 54×42 against 126 at 24×20. Can move all
