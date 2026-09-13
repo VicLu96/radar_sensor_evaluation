@@ -125,7 +125,7 @@ opposite directions:
 |---|---|---|---|
 | **A1** background | ✓ | ✓ | ✗ phantom forever |
 | **A2** motion | ✓ | ✗ vanishes | ✓ |
-| **A3** fused | ✓ | ✓ | ✓ — never confirmed, because it never moved |
+| **A3** fused | ✓ | ✓ | ✓ *only if motion is the sole promotion rule* — see below |
 
 ```
 blobs    = A1's foreground blobs                        (what is present)
@@ -147,6 +147,23 @@ one recording.
 Its known failure: **someone already seated when the node powers up** has never
 moved in view. They need promotion on size and persistence alone — which is
 exactly where the size gate has to be trustworthy.
+
+> **These two claims conflict, and the conflict is real.** *Corrected 2026-09-13.*
+> The furniture row above holds only if motion is the **only** way to be
+> confirmed. But the seated-at-power-up case needs a second rule — promote a blob
+> that persists at a plausible person size — and **a person-sized chair that is
+> moved and left satisfies that rule too.** In the raster, a still chair and a
+> still person of similar size are indistinguishable by motion and by size.
+>
+> So A3 must pick one: motion-only promotion (chairs rejected, a person seated at
+> power-up is never counted) or size-and-persistence promotion (both counted,
+> including the chair). Make it a runtime switch and measure both on the
+> "chair moved and left" and "seated before power-up" scenarios.
+>
+> **This is the strongest argument for A4.** Height above floor separates them: a
+> seated adult's head is at roughly 1.2–1.3 m, a chair back at roughly
+> 0.8–1.0 m. *Estimates, not measurements* — but if they hold, the plan-view
+> height band resolves a conflict that no raster algorithm can.
 
 ### 2.4 Why these three are a legitimate comparison
 
