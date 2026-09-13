@@ -162,10 +162,10 @@ Keep two more alongside it:
 - **The mass-regression control** — `n = round(a·mass + b·perimeter + c)`, no
   segmentation at all. This *is* the independent control, and it is cheap. It
   answers *"does the count saturate even for an estimator that never segments?"*
-- **The plan-view method (Harville) is the upgrade, not a fourth parallel
-  algorithm.** Apply it to whichever of A1–A3 wins, once the raster versions are
-  debuggable. Starting in the raster is deliberate: **the detection stream is a
-  raster image, so raster algorithms are the ones you can see failing.**
+- **The plan-view method (Harville) is a second representation — A4, §2.6.**
+  Superseding the earlier note that called it merely an upgrade. Starting in the
+  raster is still deliberate: **the detection stream is a raster image, so raster
+  algorithms are the ones you can see failing first.**
 
 ### 2.5 Predictions, written down so they can be wrong
 
@@ -175,6 +175,125 @@ Keep two more alongside it:
 | A2 | anyone still for more than a few seconds (count decays toward zero) |
 | A3 | a person seated at power-up; DORMANT timeout set too short or too long |
 | mass regression | occlusion — 3–5 people in ~10 m² from a corner is the *common* case |
+| A4 plan view | a wrong floor fit or projection model (everything degrades together); seated people; far-field sparsity, especially when binned |
+
+---
+
+### 2.6 A4 — plan-view counting (Harville), evaluated 2026-09-13
+
+**Verdict: include it — but as a second *representation*, not a fourth
+detector.** That distinction is the whole value of it.
+
+§2.4 said plan view should be "the upgrade applied to the winner". That undersold
+it. A1–A3 differ in **which signal** marks a zone as foreground — static, motion,
+or fused — and all of them count in the zone raster. A4 differs in **where the
+counting happens**: deproject the foreground to 3D and count on the floor plane.
+Those are independent axes, so the comparison becomes a 2×2 rather than a list:
+
+| | **raster** (count in zone space) | **plan view** (count on the floor) |
+|---|---|---|
+| **background only** | A1 | A4a — optional, nearly free |
+| **fused background + motion** | A3 | **A4** |
+
+A2 (motion alone) stays raster-only: it is a component and a wake condition, not
+a candidate counter for occupancy.
+
+**The 2×2 is nearly free once one plan-view module exists**, because it takes a
+foreground mask as input and does not care which algorithm produced it. And it
+lets the paper answer something A1–A3 cannot: **does the representation matter,
+independent of the detection signal?**
+
+#### What only A4 can do
+
+- **Height above floor.** The most discriminative person cue available without
+  head detection, and the only way to tell a person from a tall box, a coat rack,
+  or a chair back. Every raster algorithm is blind to this — B's own failure list
+  in `counting-algorithms.md` conceded *"a tall box and a person are the same
+  thing"*.
+- **Floor rejection.** At a 45° corner mount the floor fills much of the field of
+  view, and every background error on it is a candidate blob in the raster. A
+  height band deletes all of them at once.
+- **Range-independent person size.** One person is ~0.3 × 0.5 m on the floor at
+  every range. The raster algorithms need per-zone d² weighting to approximate
+  this; plan view has it by construction.
+- **Splitting pairs at the same range.** The principal-axis split works for two
+  people walking straight toward the sensor corner — the case the reviewer showed
+  defeats any split along slant range, and the common case at a door.
+- **Its calibration is a result.** Mount height and two tilt angles from a RANSAC
+  floor fit, instead of per-installation thresholds. Describable in a paper.
+- **It produces a floor map natively** — which is also how the coverage polygon,
+  the 9.6 m gate and the occlusion ceiling are best presented.
+
+#### What it costs and risks
+
+| risk | severity | why |
+|---|---|---|
+| **Projection model** — equal-angle vs equal-tangent zone grid | **high, unmeasured** | wrong model → ~100–150 mm lateral error at 9.6 m with a barrel signature → **the floor is not a plane** and the RANSAC fit, the height band and the volume of interest all degrade together |
+| **Zone pitch** 16.6 mrad | medium, unverified | back-derived from our own numbers, not from ST |
+| Far-field sparsity | medium | ~28 zones per person at 9.6 m spread over a 60×60 grid; thin, and **may collapse faster than the raster on the software-binning ladder** — genuinely unknown |
+| Seated people | medium | ~40% of the standing silhouette; needs a second height class or a lower band |
+| More tunables | low | cell size, height band, h for h-maxima, KI bins |
+| RAM / CPU | negligible | ~12 KB, well inside the ~95–100 KB a deployed build has free |
+
+**A4 is the only algorithm gated by a bench measurement that has not been made.**
+A1–A3 work in the raster and do not care how zones map to space.
+
+#### A go/no-go that costs an afternoon and no firmware
+
+Before writing any A4 firmware, **deproject a recorded empty-room frame on the PC**
+and fit the floor:
+
+```
+go if:      RANSAC floor residual < ~50 mm RMS across the visible floor
+            residual shows NO systematic growth toward the field edges
+            a standing person reads within ±15 cm of true height at 3 m and 6 m
+
+fix the projection model first if:
+            residual grows toward the edges — the barrel signature of
+            equal-angle assumed where the lens is equal-tangent (or vice versa)
+```
+
+This uses recordings that already exist and the `.wstof` decoder in
+`recording-format.md`. It settles feasibility before a line of firmware, and the
+same bench session already scheduled for the FoV check produces the marker data
+that pins the model down if it fails.
+
+#### What it adds to the paper
+
+A result the raster algorithms cannot produce: **whether a metric representation
+changes the saturation point.** Two plausible and opposite outcomes, both
+publishable:
+
+- plan view **raises accuracy at every zone count** — height gating and scale
+  invariance buy real robustness; or
+- plan view **collapses faster at low zone counts** — the floor map starves of
+  points once zones are binned, so the representation that wins at 2268 zones
+  loses at 63.
+
+**Marked a hypothesis, not a prediction.** Which one happens is exactly the kind of
+thing the software-binning ladder can answer from one set of recordings, by running
+A3 and A4 side by side on every binned level.
+
+#### Effect on the detection stream
+
+- **The label plane still works:** each zone records the plan-view mode it
+  contributed to as its blob id, so A4's detections show on the 54×42 image like
+  the others.
+- **The flag byte is full**, so the reason a zone was rejected by A4 — outside the
+  height band, outside the volume of interest, too little mass — goes in the
+  per-blob detection record as a **gate-reason code**, not in the plane.
+- **Add a top-down floor view** in the web interface: the 60×60 occupancy map with
+  modes marked, streamed on request only (7.2 KB). It is the only view in which A4's
+  mistakes are legible — a raster image cannot show that two points are 45 cm apart
+  on the floor.
+- **Show the fitted mount height and tilt at calibration**, so a bad floor fit is
+  visible at install rather than discovered as bad counts.
+
+#### Where it goes in the build order
+
+After A3, and after the go/no-go above — **never blocking A1–A3 or the detection
+stream.** If the floor residual fails, A1–A3 and D2 proceed untouched while the
+projection model is fixed.
 
 ---
 
@@ -221,7 +340,8 @@ u8  algorithm_shown    which algorithm the label plane shows: A1 / A2 / A3
 u8  count_a1           ┐
 u8  count_a2           │  ALL THREE COUNTS, EVERY FRAME, from the same frame
 u8  count_a3           │
-u8  count_mass         ┘
+u8  count_mass         │
+u8  count_a4           ┘  (plan view, once built)
 u8  n_blobs
 per blob (≤16):  id, bbox, area, metric, mean_mm, motion_q8, state, split_decision
 ```
@@ -337,7 +457,7 @@ advertisement is chosen.
 |---|---|---|---|
 | **D0 Raw** | nothing | distance frames | range tuning, demos — **exists** |
 | **D1 Calibrate** | 64–128 frame background | progress + quality report | install |
-| **D2 Detect stream** | A1, A2, A3, mass — all | distance + **label plane** + detection record + all counts | **evaluation and tuning** |
+| **D2 Detect stream** | A1, A2, A3, A4, mass — all | distance + **label plane** + detection record + all counts; floor map on request | **evaluation and tuning** |
 | **D3 Count** | the same detector, bit-identical | **count in the advertisement** | **the product, and every paper measurement** |
 
 D0–D2 require `CONFIG_APP_BLE_FRAME_SERVICE=y`. D3 is the build with it off.
@@ -358,8 +478,11 @@ D0–D2 require `CONFIG_APP_BLE_FRAME_SERVICE=y`. D3 is the build with it off.
 6. **A3** fusion and the lifecycle.
 7. **Mass-regression control.**
 8. **`.wstof` v2** and the scenario library.
-9. **D3** — advertisement, frame service compiled out, bit-exact hash confirmed.
-10. **Plan-view upgrade** applied to the winner.
+9. **A4 go/no-go** — deproject a recorded empty room on the PC, fit the floor,
+   check the residual. An afternoon, no firmware.
+10. **A4 plan view** (and A4a nearly free), plus the top-down floor view in the web
+    interface — only if 9 passes. Never blocks anything above it.
+11. **D3** — advertisement, frame service compiled out, bit-exact hash confirmed.
 
 **Why D2 comes fourth, not last:** built last, it only shows the finished
 algorithm; built right after A1, it debugs A2 and A3 as they are written.

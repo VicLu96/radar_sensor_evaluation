@@ -63,7 +63,7 @@ What the firmware *does* with a frame. This is the axis that does not exist yet.
 |---|---|---|---|---|
 | **D0** | **Raw** | nothing | frames | **done** — this is today |
 | **D1** | **Calibrate** | 16 frames → background model, quality report | progress + reliable-zone % | planned |
-| **D2** | **Detect stream** | A1 background, A2 motion, A3 fused, mass control — **all, every frame** | distance + **label plane** (blob id + why-flags per zone) + all counts | planned — see [detection-evaluation.md](detection-evaluation.md) |
+| **D2** | **Detect stream** | A1 background, A2 motion, A3 fused, A4 plan view, mass control — **all, every frame** | distance + **label plane** (blob id + why-flags per zone) + all counts | planned — see [detection-evaluation.md](detection-evaluation.md) |
 | **D3** | **Count** | the same detection | **count only, 8 bytes, in an advertisement** | planned |
 
 **D2 and D3 run identical detection code.** The difference is only whether the
