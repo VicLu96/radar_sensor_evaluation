@@ -254,6 +254,10 @@ to reach.
 
 ## 6. Tier 4 — the counting algorithm. This is the product.
 
+> **SUPERSEDED 2026-09-13 — the algorithm is now A1–A4 plus a mass control, in detection-evaluation.md and implementation.md §4.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
+
 ### 6.1 Geometry: the corner mount changes everything
 
 **Angled from a ceiling corner**, not overhead. Two consequences.
@@ -560,6 +564,10 @@ already arrive in `dev-stream`.
 ---
 
 ## 10. Build order
+
+> **SUPERSEDED 2026-09-13 — phases 0, 1, 3, 4 and 5 are done (tag `demo-2026-09-11`). Phase 2's bridge is WP19, phase 6 is WP3/WP6, phase 7 is WP4–WP13, phase 8 is WP17, phase 9 is WP16 in implementation.md §6.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
 
 | # | Phase | Done when |
 |---|---|---|

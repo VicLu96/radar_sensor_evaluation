@@ -62,7 +62,7 @@ What the firmware *does* with a frame. This is the axis that does not exist yet.
 | # | mode | what runs | what leaves the device | state |
 |---|---|---|---|---|
 | **D0** | **Raw** | nothing | frames | **done** — this is today |
-| **D1** | **Calibrate** | 16 frames → background model, quality report | progress + reliable-zone % | planned |
+| **D1** | **Calibrate** | 64–128 frames → trimmed-mean background + spread, quality report | progress + zones reliable / excluded for validity / excluded for spread | planned — [implementation.md](implementation.md) §4.2 |
 | **D2** | **Detect stream** | A1 background, A2 motion, A3 fused, A4 plan view, mass control — **all, every frame** | distance + **label plane** (blob id + why-flags per zone) + all counts | planned — see [detection-evaluation.md](detection-evaluation.md) |
 | **D3** | **Count** | the ONE chosen algorithm, bit-identical, duty-cycled | **count only, 8 bytes, in an advertisement** | planned — **a separate image** built after evaluation, see [detection-evaluation.md](detection-evaluation.md) §5 |
 
@@ -189,33 +189,13 @@ The demo is the instrument the paper is measured with, and that is fine:
 
 ## 5. Stage 3 — people detection, ordered
 
-Full design in [ble-streaming-and-web-ui.md](ble-streaming-and-web-ui.md) §6.
-Ordered here by what unblocks what.
-
-**Prerequisites, both outstanding:**
-
-1. **Measure full-resolution SNR.** If amplitude at binning 2 is unusable, the
-   whole resolution axis changes shape and detection should be developed at
-   24×20 instead. **Do this first — it is one bench session and it can invalidate
-   a month of work.**
-2. **1 kΩ pull-ups → 1 MHz bus.** The track tier has no margin at 400 kHz.
-
-**Then:**
-
-3. **D1 Calibrate.** 16 frames, per-zone mean of valid distances, exclude zones
-   below 75% validity, report the reliable-zone percentage. That percentage is
-   itself a result: *"1,932 of 2,268 zones usable (85%)"* tells you the mount is
-   wrong before the counts do — and oblique incidence is expected to be much
-   worse than overhead.
-4. **Record a scenario library.** Empty room, one person still, one walking, two
-   abreast, two crossing, someone sitting down. **Now possible because recordings
-   exist** — and it converts detection tuning from "repeat the experiment with
-   people in the room" into fitting against a fixed dataset.
-5. **D2 Detect**, offline first against recordings, then on-device: foreground →
-   despeckle → connected components → range-normalised size gate → motion →
-   association → track lifecycle.
-6. **Two-tier duty cycling.**
-7. **D3 Count** and the deployed profile.
+**The ordered plan is [implementation.md](implementation.md)** — rewritten 2026-09-13
+as the single build order: bench gates B1–B7, then image 1 (WP1–WP15: harness,
+calibration, A1, the D2 detect stream with true count, A2, A3, mass control, scenario
+library, A4 go/no-go and A4, binning ladder, evaluation gate), then image 2 (WP16–WP21:
+deployed profile, duty cycling, count advertisement, scanner bridge, verification,
+tags). The earlier seven-step list that stood here is superseded; it still said
+"16 frames, 75% validity", which the reviews replaced.
 
 ### The three risks worth naming now
 
@@ -269,8 +249,9 @@ must be recomputed rather than adjusted.
 
 ## 7. The next three things
 
-1. **Measure full-resolution SNR and the range presets.** One bench session,
-   recorded. Unblocks stage 3 and produces the first citable numbers.
-2. **1 kΩ pull-ups**, then 1 MHz. Victor's hardware change; on the critical path.
-3. **A `measurement` build profile**, so the demo and the paper stop sharing a
-   configuration that has `EXPOSURE_BACKOFF` in it.
+Superseded 2026-09-13 by [implementation.md](implementation.md) §6. In short:
+
+1. **Bench (Victor):** B1 full-resolution SNR, B2 range presets, B5 1 kΩ pull-ups.
+2. **Software, no bench result needed:** WP1 long recordings (the recorder stops at
+   4000 frames, ~27 min) and WP2 the `lib/detect` harness.
+3. **Then** B4, the overnight empty-room recording, which WP1 makes possible.

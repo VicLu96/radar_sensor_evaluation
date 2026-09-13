@@ -5,6 +5,11 @@ Stage 3. The mode that makes this a product rather than an instrument.
 Opened 2026-09-12. **This is a planning document — nothing here is implemented.**
 Expert review findings are appended in §7 as they arrive; pick them up from there.
 
+> **Status 2026-09-13:** the build order and the corrected detection specification now
+> live in [implementation.md](implementation.md). This file is the reasoning: the
+> literature (§3), the user flow (§2) and the three expert reviews (§7). **§4's sketch
+> has known bugs — do not implement it.**
+
 ---
 
 ## 1. What the mode does
@@ -134,6 +139,10 @@ Sources: [VL53L5CX](https://www.st.com/en/imaging-and-photonics-solutions/vl53l5
 ---
 
 ## 4. Implementation sketch
+
+> **SUPERSEDED 2026-09-13 — do not implement this sketch; it carries the bugs listed in §7.1 and in counting-algorithms.md's Review.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
 
 Dummy code, to argue about rather than to compile. Types and sizes are real;
 the algorithms are placeholders.
@@ -295,6 +304,10 @@ decides the battery life.
 
 ## 5. Firmware and web interface work
 
+> **SUPERSEDED 2026-09-13 — the work list and order are §5–§6 of implementation.md.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
+
 **Firmware**
 
 1. `detect.c` / `detect.h` — pure, no Zephyr, no globals. Buildable for the host.
@@ -324,6 +337,10 @@ correct and intended.
 ---
 
 ## 5b. What the three reviews change — the corrected build order
+
+> **SUPERSEDED 2026-09-13 — the corrections below are folded into implementation.md §4; the order into §6.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
 
 Written after §7. **Read this before writing code; §4's sketch has known bugs.**
 

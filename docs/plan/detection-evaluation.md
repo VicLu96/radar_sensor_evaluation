@@ -1,6 +1,8 @@
 # Plan: three counting algorithms and a detection stream to evaluate them
 
 Written 2026-09-13, from Victor's proposal. **Planning only — nothing implemented.**
+**Implement from [implementation.md](implementation.md)**, which consolidates this file
+with the corrected front end.
 Builds on [people-counting.md](people-counting.md) and
 [counting-algorithms.md](counting-algorithms.md); references in
 [../research/literature.md](../research/literature.md).
@@ -719,6 +721,10 @@ Image 1 is `CONFIG_APP_BLE_FRAME_SERVICE=y`. Image 2 is the build with it off.
 ---
 
 ## 7. Build order
+
+> **SUPERSEDED 2026-09-13 — this order is carried into implementation.md §6 as work packages with dependencies and done-when criteria.** The ordered plan and the corrected
+> specification are in [implementation.md](implementation.md). This section is kept as
+> the record of the reasoning.
 
 1. **Bench gates** — full-resolution SNR, FoV and projection check, overnight
    empty room. Unchanged from the roadmap; nothing below is safe without them.

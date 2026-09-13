@@ -3,6 +3,11 @@
 Written 2026-09-12, from the literature scan and expert reviews in
 [people-counting.md](people-counting.md) §3 and §7.
 
+> **SUPERSEDED 2026-09-13.** Algorithm A became **A4** (plan view) and Algorithm B was
+> dropped as a control, per the Review below. The corrected specification is
+> [implementation.md](implementation.md) §4. Keep this file for the mathematics and the
+> review.
+>
 > **DO NOT IMPLEMENT THE CODE BELOW AS WRITTEN.** A classical-CV specialist
 > reviewed it and found four defects that change behaviour on the first frame,
 > eleven further correctness bugs and six structural criticisms. **Read the

@@ -19,7 +19,8 @@ energy-accuracy trade-off of high-resolution dToF sensing.
 |---|---|
 | [CONTEXT.md](CONTEXT.md) | Current state and the ordered TODO. Read first |
 | [DECISIONS.md](DECISIONS.md) | Append-only: what was decided and why |
-| [docs/plan/implementation.md](docs/plan/implementation.md) | Six phases, test rig, scenarios, risks |
+| [docs/plan/implementation.md](docs/plan/implementation.md) | **The ordered build plan**: bench gates, work packages, detection spec, interfaces |
+| [docs/plan/roadmap.md](docs/plan/roadmap.md) | Modes, flow, demo-versus-paper separation |
 | [docs/plan/paper.md](docs/plan/paper.md) | The contribution, venues, what threatens it |
 
 ## Research

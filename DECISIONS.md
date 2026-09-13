@@ -1952,3 +1952,59 @@ Insight SiP for the real numbers.
 ble_beacon carries the same properties now. Without them that build would have been
 invisible too, and "even the stock sample cannot advertise" would have been read as
 exonerating our code when it only reflected the same missing clock configuration.
+
+## 2026-09-12 - Measurement range configurable; named measurement modes; recording format.
+Recorded 2026-09-13; the decisions were made and committed on 2026-09-12 (1c165a8..8a51ec5).
+THE DRIVER WAS LOCKED TO THE LONG RANGING CONTEXT, which is why nothing resolved close to
+the sensor. vl53l9cx_set_range_mode() now selects SHORT or LONG (UM3683 contexts, with
+their calibration offsets) and a switchover distance, carried in config byte 12 and
+bytes 14-15. Byte 13 is the last reserved byte - detection does not go there.
+Five named measurement modes in the web interface (close fast, close detail at 54x42,
+desk, room, far), each showing the distance band it is good at and the settings it
+applies. THEIR EXPOSURES ARE ESTIMATES until the range-preset bench session (B2).
+Recording: CSV for reading, .wstof binary v1 for size, the configuration in the header
+and a new epoch on every config change; decoding documented in recording-format.md.
+A 1 MHz I2C bus is planned and gated on Victor fitting 1 kOhm pull-ups; the IMU
+(LSM6DSV16BX) supports Fast-mode Plus, so it does not cap the bus.
+
+## 2026-09-13 - Stage 3 design: three algorithms as an ablation, A4, a detect stream, two images.
+From Victor's proposal and the expert reviews of 2026-09-12. Details in
+docs/plan/detection-evaluation.md; the ordered plan in docs/plan/implementation.md.
+- A1 background subtraction, A2 frame differencing (signed, with a motion history
+  image), A3 fusion with a track lifecycle. AN ABLATION, not independent controls. The
+  independent control is a no-segmentation mass regression, n = round(a*mass + b*perimeter + c).
+- A4 plan-view counting is a second REPRESENTATION, not a fourth detector: A1/A3 x
+  raster/plan-view is a 2x2. Gated by an afternoon's go/no-go on a recorded empty room
+  (floor-fit residual); it never blocks A1-A3.
+- The earlier two-algorithm plan (counting-algorithms.md) is superseded: its A became
+  A4, its B was dropped as a control, per the classical-CV review.
+- A3's promotion rule is NOT decided: motion-only rejects a moved chair but never counts
+  someone seated before power-up; motion-or-size-persistence counts both. Both are
+  implemented behind a switch and measured.
+- D2 detect stream: a uint16 label plane per zone (blob id + why-flags), a detection
+  record with every algorithm's count on every frame, and the observer's true count
+  recorded frame-aligned from the first recording.
+- PROJECTION MODEL CLOSED AS EQUAL-ANGLE. ST specifies the FoV as 54 x 42 degrees at
+  1 degree per zone and quotes accuracy in angles (Victor). Zone pitch is therefore
+  17.45 mrad; THE 16.6 mrad FIGURE WAS BACK-DERIVED FROM OUR OWN NUMBERS AND IS
+  WITHDRAWN. The A4 floor fit still tests equal-tangent once, as a check.
+- TWO FIRMWARE IMAGES, IN SEQUENCE (Victor). Image 1 (prj.conf) is the evaluation image:
+  web interface connected, detect stream, all algorithms, recordings. Image 2
+  (prj_deployed.conf, selected by FILE_SUFFIX - not snippets, which failed silently on
+  2026-09-10) is energy-optimised and only advertises the count, with the frame service
+  compiled out. NO RUNTIME SWITCH between them; the count-only preview idea is dropped.
+  Every energy and paper number comes from image 2.
+- THE CHOSEN ALGORITHM IS BIT-IDENTICAL IN BOTH IMAGES: one lib/detect, one frozen
+  parameter file with a hash, one hash test on PC, image 1 and image 2. The algorithm is
+  chosen at an evaluation gate against a criterion written down before results.
+
+## 2026-09-13 - implementation.md rewritten as the single build order.
+The planning had five overlapping build orders (roadmap 5 and 7, people-counting 5b,
+counting-algorithms' revised build, detection-evaluation 7, ble-streaming 10) and two
+code sketches with known bugs. docs/plan/implementation.md now holds the one order
+(bench gates B1-B7, image 1 WP1-WP15, the gate, image 2 WP16-WP21, paper measurements)
+and the consolidated, corrected detection specification. The others carry SUPERSEDED
+banners on the affected sections and remain the record of the reasoning.
+Found while consolidating: the web recorder stops at MAX_FRAMES = 4000, ~27 min at
+2.5 fps, held in browser memory - too short for the overnight empty-room recording and
+the 30-minute sit-down scenario. Long recordings are now WP1, ahead of the harness.
