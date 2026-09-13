@@ -14,6 +14,7 @@ after the KiCad CLI runs).
 | **ST DS14879 Rev 8** (VL53L9CX datasheet, `Downloads\DS_vl53l9cx.pdf`) | §2.6 pinout, §2.7 application schematic, §2.9 PCB guidelines, §2.10 supplies, §2.11 clock, §7 electrical, §9 Fig. 24–25 substrate pads, §12.1 Fig. 30 solder pattern |
 | **ST DB5799 Rev 1** (X-NUCLEO-53L9A1 schematic, ST's own board) | sensor, oscillator and level-shifter sheets, as a second ST reference |
 | **UM3683 Rev 3** | §2.5.1 power-on conditions |
+| **Host board** `C:\Users\luder\Desktop\Water_Sense\Water_Sense_main\water_sense` | schematic saved 2026-09-07, PCB 2026-09-04, Gerbers 2026-08-19. Opened on 2026-09-13 because findings 1 and 2 depend on it. Read-only; 0 schematic-parity issues, so its schematic describes the built board |
 | KiCad 9.0.0 CLI | netlist export, ERC, DRC with schematic parity |
 
 Method: the PCB's pad-to-net list is taken as the truth for connectivity; symbol pin names
@@ -26,15 +27,17 @@ the land pattern reconstructed from DS14879 Fig. 25 and Fig. 30.
 
 | # | Severity | Finding |
 |---|---|---|
-| 1 | **High** | **SDA and SCL are crossed at the sensor.** Copper takes J6 pin 1 (labelled SDA) to ball A11, which ST defines as **SCL**. It works on the bench, so the wiring from the host must cross them back. |
-| 2 | **High, unresolved since 2026-09-06** | **No level translation and no isolation.** All six IOs run straight from the host to a 1.98 V absolute-maximum IO domain. `V_Host` goes nowhere. The host's IO voltage is still not recorded. Separately, when the shield's rails are off, the shared I²C bus can back-power the sensor through its IO pins. |
+| 1 | **High** | **SDA and SCL are crossed at the sensor.** Copper takes J6 pin 1 (labelled SDA) to ball A11, which ST defines as **SCL**. The host board puts SDA on its own J6 pin 1, so a straight pin-to-pin harness would be wrong — the working bench harness must cross them. |
+| 2 | **Highest — confirmed 2026-09-13** | **The sensor is being run outside its absolute maximum ratings.** The host board runs the nRF54L15 module at **3.3 V** and pulls SDA and SCL up to **+3V3** through 4.7 kΩ. The shield has no level translation, so a 1.98 V absolute-maximum IO domain sits on a 3.3 V bus. This is no longer a hypothesis. |
 | 3 | **Medium** | **Three schematic capacitors were never placed.** C207, C212 and C216 are missing from the PCB, so the built board has none of them. DVDD's only 4.7 µF sits 3 mm from the pin, with a ground return of about 6 mm. |
 | 4 | **Medium** | **Thermal pads in the footprint are off** by up to **0.132 mm**, and the gap between the pad rows is 0.115 mm instead of 0.200 mm. The perimeter pads are accurate. The footprint has no courtyard. |
 | 5 | **Medium** | **Thermal pads are built differently from ST's guidance.** There are 10 open vias in the pads (none in B9 or D9). The top GND pour joins all 12 pads with only thin solder-mask strips between them. ST asks for 12 independent pads, one open mask area and tented vias. |
 | 6 | **Medium** | **The oscillator to add.** Requirements and a suggested circuit are in §6. |
 | 7 | Low–medium | `XSHUT`, `SYNC_IN` and `/Power_Enable` have no pull resistors, so they float whenever the host pin is high-impedance. |
 | 8 | Low–medium | VBAT decoupling: 10 µF in 0402 loses much of its value at 4 V bias; the capacitor ground pads face away from the laser-driver ground (VSS_DRIVER); there is no GND via within 1.5 mm of A1–A4. |
-| 9 | Low | Housekeeping: ERC (7 errors, 38 warnings), DRC (2 courtyard overlaps), J4 in the schematic vs J1 on the PCB, MIC23150 footprints marked `through_hole`, no silkscreen labels. |
+| 9 | **Medium, new** | **AVDD cannot hold its 3.13 V minimum.** `+BATT` is a single Li-ion cell (MCP73831 charger on the host), and AVDD comes from a 3.3 V buck fed by it. Use AVDD = 2.8 V. |
+| 10 | Low | Housekeeping: ERC (7 errors, 38 warnings), DRC (2 courtyard overlaps), J4 in the schematic vs J1 on the PCB, MIC23150 footprints marked `through_hole`, no silkscreen labels. |
+| 11 | Low, host board | Its schematic uses the **ISP1907-LL symbol for the ISP2454-LX**, so every module pin name in it (`P0_24`, `P0_25`, `nRF52_RESET`) is from the wrong part. Pin numbers and the footprint look right, since the board works. U103 is still valued `LSM6DS3` though the fitted part is the LSM6DSV16BX. |
 | — | **Correct** | 40 of 42 balls match ST. Every symbol pin name matches ST. Pad sizes are exact. The footprint is not mirrored. Rails, reserved pins and ground pins are right. The pin headers are clear of the field-of-view and illumination cones. |
 
 ---
@@ -56,53 +59,114 @@ schematic.
 
 **Why the board still works.** Firmware drives SCL on P1.08 and SDA on P1.13
 (`water_sense_board_nrf54l15_cpuapp-pinctrl.dtsi`, unchanged since 2026-09-04). The sensor
-has answered on I²C and streamed frames since 2026-09-10, so **P1.08 (SCL) must reach
-J6 pin 1 (labelled SDA)**. The crossing is undone somewhere in the wiring between the two
-boards. There is no silkscreen on J6, so nothing on the board shows it.
+has answered on I²C and streamed frames since 2026-09-10, so **P1.08 (SCL) must reach ball
+A11**, which is the shield pin labelled `/SDA`. The crossing is undone in the wiring between
+the two boards. There is no silkscreen on J6, so nothing on either board shows it.
 
-**Check before changing anything:** continuity from nRF P1.08 to shield J6 pin 1.
+**The host board confirms it is more than a labelling slip.** Its own J6 carries `/SDA` on
+pin 1 and `/SCL` on pin 2 — the opposite sense to the shield's copper. The two connectors
+are not pin-compatible anyway (§2.1), so the boards must already be joined with per-signal
+jumpers rather than a straight ribbon.
 
-**Fix, if the check confirms it:** swap the two net labels at J6, so pin 1 is `SCL` and
-pin 2 is `SDA`. **The copper does not change** and the working harness stays compatible.
-Only re-route the shield if the host side has a fixed connector pin order that requires
-SDA on pin 1. Add pin labels to the J6, J2 and J3 silkscreen either way.
+**Fix for the re-spin:** make shield J6 pin 1 reach **A12** (SDA) and pin 2 reach **A11**
+(SCL), matching the host. It is a small re-route — both nets already surface from B.Cu on
+short F.Cu stubs just outside the module outline. Then a straight pin-to-pin harness is
+correct and the labels tell the truth. Add pin names to the J2, J3 and J6 silkscreen.
+
+**Before changing anything, record how it is wired today** (continuity from nRF P1.08 to
+shield J6 pin 1): the existing harness will need re-working when the new board arrives.
 
 This supersedes finding 1 of [`radar-shield-review.md`](radar-shield-review.md)
 (2026-09-06). That review found the same crossing but did not have the datasheet to
 decide which side was wrong. The datasheet and ST's reference board both say it is the labels.
 
-## 2. IO voltage, level translation and back-powering
+## 2. The sensor is running outside its absolute maximum ratings
 
-Nothing has changed since 2026-09-06. `/SDA`, `/SCL`, `/XSHUT`, `/SYNC_IN`, `/Interrupt`
-and `/AP_CLK` run straight from the headers to the sensor. The only thing on those lines
-is the pads. `V_Host` (J3 pin 2) connects to nothing.
+**Confirmed 2026-09-13 from the host board's own schematic** (`Water_Sense_main`, 0
+schematic-parity issues against its PCB, Gerbers 2026-08-19):
 
-- **IOVDD absolute maximum is 1.98 V** (DS14879 Table 15). The host drives its IOs at the
-  nRF54L15's VDD, **which is not recorded anywhere in this repository** (open since 2026-09-06). If it is above ~1.98 V,
-  every one of those lines exceeds the absolute maximum.
-- ST's reference design does not connect the host directly. It uses two PI4ULS3V204
-  4-bit bidirectional translators with a jumper-selected host reference (DB5799 Fig. 4).
-- **Back-powering, whatever the host voltage.** The I²C bus is shared with the IMU on the
-  host board. When `/Power_Enable` switches the shield's rails off (the duty cycling
-  planned for the deployed firmware image), the host's pull-ups keep SDA and SCL high.
-  Current can then flow through the sensor's IO protection diodes into the dead 1.8 V
-  rail. That can load the whole bus low (the IMU included) and adds leakage the energy
-  measurement would count. DS14879 does not say the IOs tolerate voltage while unpowered;
-  this is `VERIFY`, not established.
+| Host board | Value |
+|---|---|
+| Module supply | **`IC2.26 VCC_NRF → +3V3`** — the ISP2454-LX runs at 3.3 V, so its GPIOs drive 3.3 V |
+| I²C pull-ups | **R107, R108 = 4.7 kΩ to `+3V3`**, both placed on the PCB |
+| Shared bus | the IMU (U103, at 3.3 V) sits on the same `/SDA` and `/SCL` |
+| `+3V3` source | MIC23150 buck (U202) from `+BATT` |
 
-**For the re-spin:**
+On the shield, `/SDA`, `/SCL`, `/XSHUT`, `/SYNC_IN`, `/Interrupt` and `/AP_CLK` run
+straight from the headers to the balls. Nothing is on those lines. `V_Host` (J3 pin 2)
+connects to nothing.
 
-1. **Measure the nRF54L15 VDD first.** Both options below depend on it.
-2. **Host above 1.8 V:** a translator is required. Use `V_Host` as the host-side reference
-   and `+1V8` as the sensor side. Choose a part whose datasheet guarantees
-   high-impedance IOs when either supply is off. That also fixes back-powering.
-   PI4ULS3V204 is ST's choice and the obvious candidate to evaluate.
-3. **Host at 1.8 V:** no translation needed, but still isolate the bus when the shield is
-   off, with a bus switch or a translator that supports power-down. Otherwise keep
-   `+1V8` powered whenever the host uses the bus.
-4. Add I²C pull-up footprints to `+1V8` on the sensor side. Fit **2.2 kΩ**, the value
-   DS14879 §2.7 gives for 1 Mbps, if the translator separates the two bus segments.
-   This also unblocks the 1 MHz bus without touching the host board.
+> **The VL53L9CX's IO domain is IOVDD = 1.8 V with an absolute maximum of 1.98 V
+> (DS14879 Table 15). SDA and SCL are pulled to 3.3 V whenever the bus is idle, and every
+> host output drives 3.3 V. The part has been operated beyond its absolute maximum on
+> those pins for as long as the two boards have been connected.**
+
+What follows from it:
+
+- Each pulled-up line injects roughly `(3.3 − 1.8 − 0.4) / 4.7 kΩ ≈ 0.2 mA` through the
+  sensor's input protection diodes into the 1.8 V rail. Push-pull outputs (XSHUT,
+  Power_Enable if it ever reached the sensor, AP_CLK when the MCU drove it) are limited
+  only by the driver and the diode.
+- ST does not connect a host directly either: the X-NUCLEO-53L9A1 uses two PI4ULS3V204
+  4-bit translators with a jumper-selected host reference (DB5799 Fig. 4).
+- **This does not prove what happened on 2026-09-10/11**, when the IMU and then the sensor
+  stopped answering. Progressive IO overstress was listed then as one of the alternatives
+  not excluded (DECISIONS 2026-09-11). It now moves from *possible* to *present*: the
+  overstress is real and continuous. Whether it caused that failure is still unproven.
+- **A single bus cannot serve a 3.3 V IMU and a 1.8 V sensor without translation.** This
+  is structural, not a tuning detail.
+
+### 2.1 The two connectors are not pin-compatible
+
+Comparing the host schematic with the shield, position by position:
+
+| Pin | Host board | Shield | Same? |
+|---|---|---|---|
+| J6.1 | `/SDA` | `/SDA` → ball A11 (**SCL**) | net names agree, **the ball does not** |
+| J6.2 | `/SCL` | `/SCL` → ball A12 (**SDA**) | as above |
+| J6.3 | `/GPIO_Analog` | `/XSHUT` | no |
+| J6.4 | `/GPIO` | `/SYNC_IN` | no |
+| J2.1 | `/AD5941_RESET` | `/Power_Enable` | no |
+| J2.2 | `/AD5941_GPIO` | `/AP_CLK` | no |
+| J2.3 | `/AD5941_Power_Enable` | `/Interrupt` | no |
+| J3.1 | `+3V3` | `+BATT` | no |
+| J3.2 | `+BATT` | `V_Host` | no |
+| J3.3 | `GND` | `GND` | yes |
+
+The host connectors still carry names from the AD5941 bio-impedance design they were
+inherited from. So the boards are wired signal by signal with jumpers, and **the wiring
+map exists only in the harness**. Worth writing down in `notes/` as it is today, before
+the new board arrives.
+
+Two conveniences fall out of the table: **host J3.1 already offers 3.3 V**, which is
+exactly the host-side reference `V_Host` was drawn for; and the shield's J3.2 is where to
+land it.
+
+### 2.2 Back-powering when the shield is off
+
+Independently of the level problem: the deployed firmware image is meant to cut the
+shield's rails between measurements while the host keeps using the bus for the IMU. With
+the rails off, the host's pull-ups still sit on the sensor's SDA and SCL, so current flows
+through its protection diodes into a dead 1.8 V rail. That can drag the whole bus down —
+the IMU included — and it adds leakage that the energy measurement would count as the
+node's own. DS14879 does not say the IOs are fail-safe when unpowered: `VERIFY`.
+
+### 2.3 What to do
+
+1. **Fit a level translator on the shield.** `V_Host` becomes the host-side reference
+   (3.3 V from host J3.1), `+1V8` the sensor side. Choose a part whose datasheet
+   guarantees high-impedance IOs when **either** supply is off — that fixes §2.2 at the
+   same time. PI4ULS3V204 is ST's own choice and the obvious first candidate. SDA and SCL
+   need a bidirectional, open-drain-capable channel; XSHUT, SYNC_IN and AP_CLK are
+   unidirectional into the sensor; INTR is unidirectional out.
+2. **Put the I²C pull-ups for the sensor side on the shield, to `+1V8`.** DS14879 §2.7
+   gives 2.2 kΩ for 1 Mbps. The host's 4.7 kΩ then pull only the 3.3 V segment, which also
+   unblocks the 1 MHz bus without touching the host board.
+3. **Until the new board exists**, this is the one finding that argues for care on the
+   bench: every hour of running is outside the datasheet's absolute maximum. A stop-gap on
+   the current hardware is possible — series resistors in the four host-driven lines and
+   moving the pull-ups to 1.8 V — but it is rework on a working board, and that is your
+   call, not mine.
 
 ## 3. The schematic and the PCB are out of sync
 
@@ -302,19 +366,27 @@ share on its own rail rather than estimating it.
 - The load-switch output (S2.1) reaches the capacitor bus through 0.2 mm tracks. That is
   adequate for the average current; widen it to ≥ 0.4 mm if there is room.
 
-## 9. Supply headroom — a question, not a fault
+## 9. AVDD cannot stay in spec on a Li-ion cell
 
-- AVDD comes from a 3.3 V buck (U203) fed by `+BATT`. DS14879 Table 16 requires
-  **3.13–3.45 V** in 3.3 V mode. **If `+BATT` is a single Li-ion cell**, a buck cannot hold
-  3.13 V once the cell falls toward ~3.3 V, which is a large part of the discharge curve.
-  AVDD at **2.8 V** (2.65–2.95 V, selected by the `vdda-microvolt` driver setting) has more
-  headroom. **What is the `+BATT` range?**
+**`+BATT` is a single Li-ion cell** — the host board carries an MCP73831 single-cell
+charger (U201) and a 2-pin battery connector (Con202), and `+BATT` runs from there to host
+J3 pin 2 and on to the shield. So `+BATT` is roughly **3.0–4.2 V**.
+
+- AVDD comes from a **3.3 V buck (U203) fed by that cell**, and DS14879 Table 16 requires
+  **3.13–3.45 V** in 3.3 V mode. A buck cannot produce 3.3 V from 3.3 V: once the cell
+  falls below about 3.4 V — most of the second half of a Li-ion discharge — **AVDD drops
+  out of specification**, and it does so exactly when a battery-life measurement is running.
+- **Use AVDD = 2.8 V** (2.65–2.95 V, and the driver already selects it through
+  `vdda-microvolt`, which would change from 3300000 to 2800000), or feed AVDD from a boost
+  or a 3.3 V rail that is regulated up. 2.8 V holds down to roughly a 3.0 V cell.
+- Same arithmetic for the host's own `+3V3` buck, though the nRF54L15 runs from 1.7 V, so
+  it degrades gracefully. The sensor does not.
 - All three sensor rails come from switching bucks. ST's reference board uses LDOs for
   every sensor rail (DB5799 Fig. 3). Bucks are the right choice for the energy paper, but
   switching ripple on AVDD could show up as ranging noise. It is worth an A/B test
   (LDO vs buck on AVDD) if the precision numbers look worse than ST's tables.
 
-## 10. Housekeeping
+## 10. Housekeeping, both boards
 
 - **ERC:** 7 × *power pin not driven*. Add `PWR_FLAG` to `+1V2`, `+1V8`, `+3V3`,
   `+VBat_switched`, `+BATT` and `GND`. There are also 38 warnings: symbols come from
@@ -328,6 +400,13 @@ share on its own rail rather than estimating it.
   would not place them.
 - **No silkscreen at all:** no reference designators and no connector pin names. Adding
   J2/J3/J6 pin names would have made finding 1 visible.
+- **Host board:** its schematic draws the ISP2454-LX with `myLibrary:ISP1907_LL_HS`, the
+  symbol for a different (nRF52-based) module. Every pin name in it is therefore wrong:
+  the schematic calls the I²C pins `P0_24` and `P0_25` where the firmware uses **P1.08 and
+  P1.13**, and the reset net is named `/nRF52_RESET`. The pin numbers must be right, since
+  the board works — but the names are exactly the kind of mismatch that produced finding 1.
+  U103's value is still `LSM6DS3`; the fitted part is the LSM6DSV16BX (WHO_AM_I 0x71,
+  2026-09-10).
 - Not reviewed against their own datasheets: SiP4282 load switch and MIC23150 bucks
   (footprints, exposed pads). The rails measure correctly on the bench.
 
@@ -385,15 +464,17 @@ share on its own rail rather than estimating it.
 
 ## Re-spin checklist
 
-- [ ] Continuity P1.08 → J6.1. Then swap the SDA/SCL labels at J6 (copper unchanged) and add pin names to the silkscreen
-- [ ] Measure nRF54L15 VDD. Add translation/isolation per §2, using `V_Host` as the host reference
-- [ ] I²C pull-up footprints to `+1V8` (2.2 kΩ for 1 Mbps)
+- [ ] **Level translator per §2.3** — host at 3.3 V is confirmed, so this is required, not conditional. `V_Host` ← host J3.1, sensor side `+1V8`, IOs high-impedance when either supply is off
+- [ ] Sensor-side I²C pull-ups on the shield to `+1V8` (2.2 kΩ for 1 Mbps)
+- [ ] Re-route so J6.1 → A12 (SDA) and J6.2 → A11 (SCL), matching the host; add pin names to the J2/J3/J6 silkscreen; write down the present harness map first
+- [ ] Make J2/J3/J6 pin-compatible with the host connectors, or rename the host's inherited AD5941 nets
 - [ ] Oscillator per §6, on `+1V8`, OE tied high, series-R and J2.2 options, 12 MHz (or update the overlay)
 - [ ] Update PCB from schematic: place C212/C216 at E6–E8 and C213 at C12, each with its own GND via
 - [ ] Footprint: thermal pads to the §4 coordinates, snap E row and column 12, add courtyard and fab outline, remove stray layers
 - [ ] Thermal pads: filled and capped vias (B9/D9 too) or windowed paste; copper keep-out between the pads
 - [ ] Pulls: XSHUT 100 kΩ↓, SYNC_IN 100 kΩ↑ to 1V8, Power_Enable 100 kΩ↓
 - [ ] VBAT capacitors: 0603/0805 ≥ 10 V, GND pads toward A1–A4, GND vias at both ends
-- [ ] Decide AVDD 3.3 V vs 2.8 V once the `+BATT` range is known
+- [ ] Switch AVDD to 2.8 V (§9) and change `vdda-microvolt` in the overlay in the same commit
+- [ ] Host board, when it is next opened: correct the ISP2454-LX symbol and the IMU value (§10)
 - [ ] PWR_FLAGs, fix the libraries, MIC23150 footprint attribute → SMD, J1/J4 annotation, courtyard overlaps
 - [ ] Re-run ERC and DRC with schematic parity: 0 errors, 0 parity issues

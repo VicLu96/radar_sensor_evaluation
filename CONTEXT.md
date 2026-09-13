@@ -34,9 +34,10 @@ that message. Use the application overlay.
 
 **Shield re-spin (adds the 12 MHz oscillator):** reviewed 2026-09-13 against DS14879 Rev 8 —
 [docs/hardware/radar-shield-review-2026-09-13.md](docs/hardware/radar-shield-review-2026-09-13.md).
-SDA/SCL labels crossed at A11/A12 (harness compensates), three decoupling caps never placed,
-thermal pads off by up to 0.13 mm, host IO voltage still unrecorded with no level translation.
-Checklist at the end of the report.
+**The host drives 3.3 V into a 1.98 V absolute-maximum IO domain** (host `VCC_NRF` = +3V3,
+I²C pull-ups to +3V3, no translation anywhere) — confirmed from the host project on 2026-09-13.
+Also: SDA/SCL crossed at A11/A12, AVDD out of spec below a ~3.4 V cell (use 2.8 V), three
+decoupling caps never placed, thermal pads off by up to 0.13 mm. Checklist at the end of the report.
 
 ## Next — in order (full detail in implementation.md §6)
 **Victor, bench:**

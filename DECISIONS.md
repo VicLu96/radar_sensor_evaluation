@@ -2035,3 +2035,34 @@ UM3683 2.5.1, KiCad 9 CLI ERC/DRC with schematic parity.
   option, route away from I2C (today's AP_CLK runs 0.65 mm from SDA under the module).
   Keep ext-clock-frequency = 12000000 or change the overlay in the same commit.
   Candidate from a datasheet on Victor's disk: ECS-2520MVLC-120-BN-TR (availability not checked).
+
+## 2026-09-13 - HOST IS 3.3 V: the VL53L9CX has been running outside its absolute maximum
+Found while finishing the shield review. A background file search turned up the host board
+project (Desktop\Water_Sense\Water_Sense_main\water_sense, schematic 2026-09-07, PCB
+2026-09-04, Gerbers 2026-08-19, 0 schematic-parity issues). Read-only; nothing edited.
+THE FACT: IC2.26 VCC_NRF -> +3V3, so the ISP2454-LX drives its GPIOs at 3.3 V, and the
+I2C pull-ups R107/R108 (4.7 kOhm) go to +3V3. Both resistors are placed. The shield has no
+level translation, so SDA, SCL, XSHUT, SYNC_IN, INTR and AP_CLK connect a 3.3 V host
+directly to an IO domain whose ABSOLUTE MAXIMUM IS 1.98 V (DS14879 Table 15). SDA and SCL
+sit at 3.3 V whenever the bus is idle. This has been true since the boards were first
+connected. The question open since 2026-09-06 - "what voltage does the host drive?" - is
+now answered, and the answer is the bad one.
+WHAT IT DOES NOT PROVE: that this caused the IMU and the sensor to stop on 2026-09-10/11.
+Progressive IO overstress was already on the alternatives list that day. It moves from
+possible to present; causation stays unproven.
+STRUCTURAL, NOT A DETAIL: one I2C bus cannot serve a 3.3 V IMU and a 1.8 V sensor without
+translation. The re-spin needs a translator (V_Host from host J3.1 as the host reference,
++1V8 as the sensor side, IOs high-impedance when either supply is off - which also fixes
+back-powering when the shield's rails are switched off during duty cycling) and
+sensor-side pull-ups to +1V8 (2.2 kOhm per DS14879 2.7 for 1 Mbps).
+ALSO ANSWERED: +BATT is a single Li-ion cell (MCP73831 charger U201 + 2-pin connector on
+the host), so roughly 3.0-4.2 V. AVDD comes from a 3.3 V buck fed by that cell and
+DS14879 Table 16 requires 3.13-3.45 V, so AVDD falls out of spec below a ~3.4 V cell -
+during exactly the battery-life measurement the paper needs. SWITCH AVDD TO 2.8 V and
+change vdda-microvolt from 3300000 to 2800000 in the same commit.
+AND: the two boards' connectors are not pin-compatible (J2 order, J3 rails and J6 pins 3/4
+all differ; host J6.1 is SDA while the shield's J6.1 reaches ball A11 = SCL), so they are
+joined with per-signal jumpers and the wiring map exists only in the harness. Write it
+down before the new board arrives. The host schematic also draws the ISP2454-LX with the
+ISP1907-LL symbol, so every module pin name in it is wrong (it calls the I2C pins P0_24
+and P0_25 where the firmware uses P1.08 and P1.13) - the same class of error as finding 1.
