@@ -42,6 +42,11 @@ asks in that message. Everything the driver needs lives in the application overl
 
 ## Next session — TODO, in order
 
+0. **DETECTION EVALUATION PLAN: [docs/plan/detection-evaluation.md](docs/plan/detection-evaluation.md).**
+   Three algorithms as an ablation (A1 background, A2 motion, A3 fused) plus a
+   mass-regression control, a D2 detection stream with a per-zone label plane, and
+   D3 count-only for measurement. Rule: the detector is bit-identical in D2 and D3.
+
 0a. **STAGE 3 IS PLANNED: [docs/plan/people-counting.md](docs/plan/people-counting.md).**
    The people-counting mode, the calibration flow, a literature scan, a dummy-code
    implementation sketch, and eight open questions. Section 7 holds the expert
